@@ -12,12 +12,14 @@ const { sleep, randomDelay, atomicWriteFileSync, cleanText } = require('../../ut
 const { summarizeAds, summarizeHarEntries, truncate, formatBytes, formatMs } = require('../../utils/diagnostics');
 
 const DEFAULTS = Object.freeze({
-  // ⚡ TURBO-MODE : 10 requêtes In-Page simultanées, délais très courts.
-  minDelayMs: 500,
-  maxDelayMs: 1000,
+  // Mode séquentiel anti-blocage : les fetchs sont maintenant un par un avec
+  // délai humain (voir fetchBatchInPage). batchSize = nb d'annonces par batch
+  // avant pause inter-batch. Garde un rythme humain pour éviter les 403.
+  minDelayMs: 1500,
+  maxDelayMs: 3000,
   headless: false,
   outDir: '.',
-  batchSize: 10, // 10 requêtes simultanées = Vitesse multipliée par 5 !
+  batchSize: 5,
   recycleContextEvery: 200, // Recycler la mémoire tous les 200 produits extraits
 });
 
@@ -278,24 +280,30 @@ class DescriptionEnricher {
   async fetchBatchInPage(page, batchItems) {
     return await page.evaluate(async (items) => {
       const results = {};
-      await Promise.all(
-        items.map(async (item) => {
-          try {
-            const res = await fetch(item.url, {
-              headers: { 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' },
-            });
-            if (!res.ok) {
-              if (res.status === 403 || res.status === 429) results[item.id] = { error: 'BLOCKED_403' };
-              else results[item.id] = { error: 'HTTP_' + res.status };
-              return;
-            }
+      // SEQUENTIEL avec délai humain : 10 fetchs simultanés déclenchent
+      // l'anti-bot de Leboncoin (403). On fait les requêtes une par une
+      // avec une pause aléatoire entre chaque pour simuler un humain.
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      for (const item of items) {
+        try {
+          const res = await fetch(item.url, {
+            headers: { 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' },
+          });
+          if (!res.ok) {
+            if (res.status === 403 || res.status === 429) results[item.id] = { error: 'BLOCKED_403' };
+            else results[item.id] = { error: 'HTTP_' + res.status };
+          } else {
             const html = await res.text();
             results[item.id] = { html };
-          } catch (e) {
-            results[item.id] = { error: e.message };
           }
-        })
-      );
+        } catch (e) {
+          results[item.id] = { error: e.message };
+        }
+        // Délai humain entre chaque annonce (800-1800ms) — sauf après la dernière.
+        if (items.indexOf(item) < items.length - 1) {
+          await sleep(800 + Math.random() * 1000);
+        }
+      }
       return results;
     }, batchItems);
   }
@@ -326,8 +334,8 @@ class DescriptionEnricher {
       return;
     }
 
-    this.logger.info(`\nExtraction des descriptions pour ${targets.length} annonce(s) (Turbo-Mode x10)...`);
-    this.logger.debug(`[DescriptionEnricher] Cibles : ${targets.length} | déjà avec description : ${alreadyHasDesc} | sans URL : ${noUrlCount} | batchSize : ${this.opts.batchSize || 10} | headless : ${this.opts.headless}`);
+    this.logger.info(`\nExtraction des descriptions pour ${targets.length} annonce(s) (mode séquentiel anti-blocage)...`);
+    this.logger.debug(`[DescriptionEnricher] Cibles : ${targets.length} | déjà avec description : ${alreadyHasDesc} | sans URL : ${noUrlCount} | batchSize : ${this.opts.batchSize || 5} | headless : ${this.opts.headless}`);
 
     const { chromium } = require('playwright');
     this.logger.debug(`[DescriptionEnricher] Lancement Chromium (headless=${this.opts.headless})...`);
@@ -386,7 +394,7 @@ class DescriptionEnricher {
     let notFoundCount = 0;
     let httpErrorCount = 0;
     let blockedCount = 0;
-    const batchSize = this.opts.batchSize || 10;
+    const batchSize = this.opts.batchSize || 5;
     let batchIndex = 0;
 
     for (let i = 0; i < targets.length; i += batchSize) {
@@ -531,8 +539,8 @@ async function main() {
     error: (msg) => console.log(`\x1b[31m[${ts()}] [ERROR] ${msg}\x1b[0m`),
   };
 
-  logger.info('=== Pipeline Leboncoin (In-Page Batching Ultime) ===');
-  logger.debug(`[main] Options : harPath=${opts.harPath} | outDir=${opts.outDir} | headless=${opts.headless} | csv=${opts.csv} | noDesc=${opts.noDesc} | limit=${opts.limit ?? '(aucun)'} | fresh=${opts.fresh} | batchSize=${opts.batchSize || 10}`);
+  logger.info('=== Pipeline Leboncoin (Mode Séquentiel Anti-Blocage) ===');
+  logger.debug(`[main] Options : harPath=${opts.harPath} | outDir=${opts.outDir} | headless=${opts.headless} | csv=${opts.csv} | noDesc=${opts.noDesc} | limit=${opts.limit ?? '(aucun)'} | fresh=${opts.fresh} | batchSize=${opts.batchSize || 5}`);
 
   const writeOutputs = writeOutputsFactory(opts.outDir, opts);
   const jsonPath = path.join(opts.outDir, 'annonces.json');
