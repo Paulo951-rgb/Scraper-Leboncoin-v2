@@ -12,8 +12,9 @@ const { ExcelExporter } = require('./modules/excelExporter');
 const { MarketAnalyzer } = require('./modules/marketAnalyzer');
 const { JobSchedulerManager } = require('./modules/jobScheduler');
 const { GlobalAnalyzer } = require('./modules/globalAnalyzer');
-const { JOBS_DIR } = require('./config/constants');
+const { JOBS_DIR, BASE_OUT_DIR } = require('./config/constants');
 const { redact, summarizeAds, formatBytes, describeError } = require('./utils/diagnostics');
+const { shell } = require('electron');
 
 // Persistance légère des paramètres (durée de rétention HAR, etc.)
 const SETTINGS_PATH = path.join(__dirname, 'config', 'user-settings.json');
@@ -296,7 +297,8 @@ function setupIpcHandlers(mainWindow) {
 
   ipcMain.handle('file:openFolder', async (event, folderPath) => {
     try {
-      FileManager.openFolder(folderPath || 'output');
+      const target = folderPath || BASE_OUT_DIR;
+      FileManager.openFolder(target);
       return { success: true };
     } catch (err) {
       return { success: false, error: err.message };
@@ -306,6 +308,16 @@ function setupIpcHandlers(mainWindow) {
   ipcMain.handle('file:openFile', async (event, filePath) => {
     try {
       FileManager.openFile(filePath);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('shell:openExternal', async (event, url) => {
+    try {
+      if (!url) return { success: false, error: 'URL vide' };
+      await shell.openExternal(url);
       return { success: true };
     } catch (err) {
       return { success: false, error: err.message };
