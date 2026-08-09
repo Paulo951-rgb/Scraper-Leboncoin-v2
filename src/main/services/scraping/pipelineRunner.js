@@ -18,7 +18,7 @@ class PipelineRunner extends EventEmitter {
 
   run(options) {
     return new Promise((resolve, reject) => {
-      const { harPath, outDir, noDesc = false, csv = true, limit, fresh = false } = options;
+      const { harPath, outDir, noDesc = false, csv = true, limit, fresh = false, speed, headless = true } = options;
 
       if (!harPath) return reject(new Error('harPath est requis pour exécuter le pipeline.'));
       if (!outDir) return reject(new Error('outDir est requis pour exécuter le pipeline.'));
@@ -27,8 +27,9 @@ class PipelineRunner extends EventEmitter {
 
       // fork() gère de manière native et parfaite les espaces dans les chemins Windows !
       // Le premier argument de fork est le script, le deuxième est le tableau des arguments restants (harPath, --out, etc.)
-      // On ajoute --headless pour que l'extraction des descriptions soit invisible
-      const remainingArgs = [harPath, '--out', outDir, '--headless']; 
+      const remainingArgs = [harPath, '--out', outDir];
+      if (headless) remainingArgs.push('--headless');
+      if (speed) remainingArgs.push('--speed', speed); 
 
       if (noDesc) remainingArgs.push('--no-desc');
       if (csv) remainingArgs.push('--csv');

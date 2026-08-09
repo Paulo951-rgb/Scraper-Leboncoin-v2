@@ -53,6 +53,9 @@ function parseArgs(argv) {
       case '--out':
         opts.outDir = argv[++i];
         break;
+      case '--speed':
+        opts.speed = argv[++i];
+        break;
       default:
         if (a.startsWith('--')) throw new CliError(`Option inconnue : ${a}`);
         positional.push(a);
@@ -285,30 +288,54 @@ class DescriptionEnricher {
   }
 
   async fetchBatchInPage(page, batchItems) {
-    return await page.evaluate(async (items) => {
+    const sequential = this.opts.sequential === true;
+    return await page.evaluate(async (items, seq) => {
       const results = {};
-      // MODE RAPIDE : fetchs parallèles (Promise.all) comme le code original.
-      // 10 requêtes simultanées pour aller vite. La détection 403 et l'arrêt
-      // préventif restent gérés côté enrichAll (consecutiveBlocks >= 3).
-      const promises = items.map(async (item) => {
-        try {
-          const res = await fetch(item.url, {
-            headers: { 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' },
-          });
-          if (!res.ok) {
-            if (res.status === 403 || res.status === 429) results[item.id] = { error: 'BLOCKED_403' };
-            else results[item.id] = { error: 'HTTP_' + res.status };
-          } else {
-            const html = await res.text();
-            results[item.id] = { html };
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+      if (seq) {
+        // MODE PRUDENT : séquentiel avec délais humains (anti-blocage max)
+        for (const item of items) {
+          try {
+            const res = await fetch(item.url, {
+              headers: { 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' },
+            });
+            if (!res.ok) {
+              if (res.status === 403 || res.status === 429) results[item.id] = { error: 'BLOCKED_403' };
+              else results[item.id] = { error: 'HTTP_' + res.status };
+            } else {
+              const html = await res.text();
+              results[item.id] = { html };
+            }
+          } catch (e) {
+            results[item.id] = { error: e.message };
           }
-        } catch (e) {
-          results[item.id] = { error: e.message };
+          if (items.indexOf(item) < items.length - 1) {
+            await sleep(800 + Math.random() * 1000);
+          }
         }
-      });
-      await Promise.all(promises);
+      } else {
+        // MODE RAPIDE/ÉQUILIBRÉ : fetchs parallèles (Promise.all)
+        const promises = items.map(async (item) => {
+          try {
+            const res = await fetch(item.url, {
+              headers: { 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' },
+            });
+            if (!res.ok) {
+              if (res.status === 403 || res.status === 429) results[item.id] = { error: 'BLOCKED_403' };
+              else results[item.id] = { error: 'HTTP_' + res.status };
+            } else {
+              const html = await res.text();
+              results[item.id] = { html };
+            }
+          } catch (e) {
+            results[item.id] = { error: e.message };
+          }
+        });
+        await Promise.all(promises);
+      }
       return results;
-    }, batchItems);
+    }, batchItems, sequential);
   }
 
   parseHtmlDescription(html, adId) {
@@ -534,6 +561,18 @@ async function main() {
     process.exit(0);
   }
 
+  // Preset de vitesse : ajuste batchSize et délais selon le choix utilisateur
+  const SPEED_PRESETS = {
+    fast:     { batchSize: 10, minDelayMs: 500,  maxDelayMs: 1000, mode: 'parallèle' },
+    balanced: { batchSize: 5,  minDelayMs: 1000, maxDelayMs: 2000, mode: 'parallèle' },
+    safe:     { batchSize: 5,  minDelayMs: 1500, maxDelayMs: 3000, mode: 'séquentiel' },
+  };
+  const preset = SPEED_PRESETS[opts.speed] || SPEED_PRESETS.fast;
+  opts.batchSize = preset.batchSize;
+  opts.minDelayMs = preset.minDelayMs;
+  opts.maxDelayMs = preset.maxDelayMs;
+  opts.sequential = (opts.speed === 'safe');
+
   const ts = () => new Date().toLocaleTimeString();
   const logger = {
     debug: (msg) => console.log(`[${ts()}] [DEBUG] ${msg}`),
@@ -542,8 +581,8 @@ async function main() {
     error: (msg) => console.log(`\x1b[31m[${ts()}] [ERROR] ${msg}\x1b[0m`),
   };
 
-  logger.info('=== Pipeline Leboncoin (Mode Séquentiel Anti-Blocage) ===');
-  logger.debug(`[main] Options : harPath=${opts.harPath} | outDir=${opts.outDir} | headless=${opts.headless} | csv=${opts.csv} | noDesc=${opts.noDesc} | limit=${opts.limit ?? '(aucun)'} | fresh=${opts.fresh} | batchSize=${opts.batchSize || 5}`);
+  logger.info(`=== Pipeline Leboncoin (Vitesse: ${opts.speed || 'fast'} — ${preset.mode}, batchSize=${preset.batchSize}) ===`);
+  logger.debug(`[main] Options : harPath=${opts.harPath} | outDir=${opts.outDir} | headless=${opts.headless} | csv=${opts.csv} | noDesc=${opts.noDesc} | limit=${opts.limit ?? '(aucun)'} | fresh=${opts.fresh} | speed=${opts.speed || 'fast'} | batchSize=${opts.batchSize} | minDelay=${opts.minDelayMs} | maxDelay=${opts.maxDelayMs}`);
 
   const writeOutputs = writeOutputsFactory(opts.outDir, opts);
   const jsonPath = path.join(opts.outDir, 'annonces.json');

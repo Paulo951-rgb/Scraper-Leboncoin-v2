@@ -1,16 +1,8 @@
 'use strict';
 
-// 🎨 THÈMES
-const themeSelect = document.getElementById('themeSelect');
+// 🎨 THÈME — appliqué au chargement depuis localStorage (le sélecteur est dans la modale Paramètres)
 const savedTheme = localStorage.getItem('app-theme') || 'theme-dark';
 document.body.className = savedTheme;
-themeSelect.value = savedTheme;
-
-themeSelect.addEventListener('change', (e) => {
-  const selectedTheme = e.target.value;
-  document.body.className = selectedTheme;
-  localStorage.setItem('app-theme', selectedTheme);
-});
 
 // ONGLETS
 document.querySelectorAll('.tab-btn').forEach((btn) => {
@@ -316,22 +308,61 @@ const openSettingsModalBtn = document.getElementById('openSettingsModalBtn');
 const settingsModal = document.getElementById('settingsModal');
 const closeSettingsModalBtn = document.getElementById('closeSettingsModalBtn');
 const saveSettingsBtn = document.getElementById('saveSettingsBtn');
+const resetSettingsBtn = document.getElementById('resetSettingsBtn');
+const cfgTheme = document.getElementById('cfgTheme');
+const cfgScrapeSpeed = document.getElementById('cfgScrapeSpeed');
+const cfgPageDelay = document.getElementById('cfgPageDelay');
+const cfgHeadless = document.getElementById('cfgHeadless');
 const cfgCleanHarDays = document.getElementById('cfgCleanHarDays');
+
+function applySettingsToUI(cfg) {
+  cfgTheme.value = localStorage.getItem('app-theme') || cfg.theme || 'theme-dark';
+  cfgScrapeSpeed.value = cfg.scrapeSpeed || 'fast';
+  cfgPageDelay.value = cfg.pageDelayMs ?? 1000;
+  cfgHeadless.checked = cfg.headless !== false;
+  cfgCleanHarDays.value = cfg.autoCleanHarDays || 7;
+}
 
 openSettingsModalBtn.addEventListener('click', async () => {
   const cfg = await window.api.getConfig();
-  cfgCleanHarDays.value = cfg.autoCleanHarDays || 7;
+  applySettingsToUI(cfg);
   settingsModal.classList.remove('hidden');
 });
 
 closeSettingsModalBtn.addEventListener('click', () => settingsModal.classList.add('hidden'));
 
+// Aperçu du thème en temps réel quand on change dans la modale
+cfgTheme.addEventListener('change', () => {
+  document.body.className = cfgTheme.value;
+});
+
 saveSettingsBtn.addEventListener('click', async () => {
+  const theme = cfgTheme.value;
+  localStorage.setItem('app-theme', theme);
+  document.body.className = theme;
+
   await window.api.saveConfig({
+    scrapeSpeed: cfgScrapeSpeed.value,
+    pageDelayMs: parseInt(cfgPageDelay.value, 10) || 1000,
+    headless: cfgHeadless.checked,
     autoCleanHarDays: parseInt(cfgCleanHarDays.value, 10) || 7,
   });
   settingsModal.classList.add('hidden');
   alert('Paramètres enregistrés avec succès !');
+});
+
+resetSettingsBtn.addEventListener('click', async () => {
+  if (!confirm('Réinitialiser tous les paramètres aux valeurs par défaut ?')) return;
+  localStorage.setItem('app-theme', 'theme-dark');
+  document.body.className = 'theme-dark';
+  await window.api.saveConfig({
+    scrapeSpeed: 'fast',
+    pageDelayMs: 1000,
+    headless: true,
+    autoCleanHarDays: 7,
+  });
+  applySettingsToUI({ scrapeSpeed: 'fast', pageDelayMs: 1000, headless: true, autoCleanHarDays: 7 });
+  alert('Paramètres réinitialisés.');
 });
 
 // Modal Suppression & Detail
