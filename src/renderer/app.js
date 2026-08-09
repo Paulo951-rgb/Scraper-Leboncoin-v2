@@ -875,6 +875,9 @@ async function renderMap(ads) {
       // shipping est un booléen Leboncoin (true = livraison possible, false/null = remise main propre)
       return !a.shipping;
     });
+    console.log(`[Carte] Filtre main propre ON : ${targetAds.length}/${ads.length} annonces (shipping=true exclus)`);
+  } else {
+    console.log(`[Carte] Filtre main propre OFF : ${ads.length} annonces affichées`);
   }
 
   for (const a of targetAds) {

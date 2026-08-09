@@ -233,7 +233,14 @@ function normalizeAd(raw) {
     main_image: imagesList.length > 0 ? imagesList[0] : null,
     city: city || null,
     zipcode: zipcode || null,
-    shipping: raw.has_option?.shipping ?? null,
+    shipping: firstDefined(
+      raw.has_option?.shipping,
+      raw.options?.shipping,
+      raw.has_shipping,
+      raw.shipping,
+      raw.delivery?.shipping,
+      null
+    ) ?? null,
     seller: firstDefined(raw.owner?.name, raw.owner_name),
     isPro: raw.owner?.type === 'pro',
     date: firstDefined(raw.first_publication_date, raw.index_date, raw.date),
@@ -598,7 +605,11 @@ async function main() {
 
     writeOutputs(ads);
     logger.info(`Étape HAR -> Annonces terminée : ${ads.length} annonces extraites.`);
+    const shippingTrue = ads.filter((a) => a.shipping === true).length;
+    const shippingFalse = ads.filter((a) => a.shipping === false).length;
+    const shippingNull = ads.filter((a) => a.shipping == null).length;
     logger.debug(`[main] ${summarizeAds(ads)}`);
+    logger.debug(`[main] Livraison : ${shippingTrue} avec shipping=true | ${shippingFalse} avec shipping=false | ${shippingNull} sans info shipping (null).`);
   }
 
   if (opts.limit) {
