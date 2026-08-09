@@ -306,13 +306,9 @@ openCompareModalBtn.addEventListener('click', () => {
 
 closeCompareModalBtn.addEventListener('click', () => compareModal.classList.add('hidden'));
 
-// Widget Flottant
+// Widget Flottant — fenêtre always-on-top qui affiche la progression du scraping
 document.getElementById('toggleWidgetBtn').addEventListener('click', () => {
-  if (typeof window.api.toggleWidget === 'function') {
-    window.api.toggleWidget();
-  } else {
-    alert("Le Widget Flottant n'est pas encore disponible dans cette version.");
-  }
+  window.api.toggleWidget();
 });
 
 // Modal Paramètres
@@ -473,6 +469,10 @@ window.api.onProgress(({ percent, status, eta }) => {
   if (status) statusText.textContent = `Statut : ${status}`;
   if (eta) etaText.textContent = `ETA : ${eta}`;
   else etaText.textContent = '';
+  // Transmet au widget flottant (si ouvert)
+  if (typeof window.api.sendWidgetProgress === 'function') {
+    window.api.sendWidgetProgress({ percent, status });
+  }
 });
 
 window.api.onStatusChange(({ state, message }) => {
@@ -483,6 +483,10 @@ window.api.onStatusChange(({ state, message }) => {
     stopBtn.disabled = true;
     progressBar.style.width = '100%';
     etaText.textContent = '';
+  }
+  // Transmet au widget flottant (si ouvert)
+  if (typeof window.api.sendWidgetStatus === 'function') {
+    window.api.sendWidgetStatus({ state, message });
   }
 });
 

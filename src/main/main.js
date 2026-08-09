@@ -11,7 +11,7 @@ process.on('unhandledRejection', (reason) => {
 });
 
 const path = require('path');
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, ipcMain } = require('electron');
 
 let setupIpcHandlers;
 try {
@@ -22,6 +22,60 @@ try {
 }
 
 let mainWindow;
+let widgetWindow = null;
+
+function createWidgetWindow() {
+  if (widgetWindow && !widgetWindow.isDestroyed()) {
+    widgetWindow.focus();
+    return;
+  }
+
+  widgetWindow = new BrowserWindow({
+    width: 220,
+    height: 160,
+    frame: false,
+    resizable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    transparent: false,
+    title: 'Widget Scraper',
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false,
+    },
+  });
+
+  widgetWindow.loadFile(path.join(__dirname, '../renderer/widget.html'));
+
+  widgetWindow.on('closed', () => {
+    widgetWindow = null;
+  });
+}
+
+// IPC pour le widget flottant
+ipcMain.on('widget:toggle', () => {
+  if (widgetWindow && !widgetWindow.isDestroyed()) {
+    widgetWindow.close();
+  } else {
+    createWidgetWindow();
+  }
+});
+
+ipcMain.on('widget:close', () => {
+  if (widgetWindow && !widgetWindow.isDestroyed()) {
+    widgetWindow.close();
+  }
+});
+
+// Envoie les mises à jour de progression/statut au widget flottant
+function sendToWidget(channel, data) {
+  if (widgetWindow && !widgetWindow.isDestroyed()) {
+    widgetWindow.webContents.send(channel, data);
+  }
+}
+
+ipcMain.on('widget:progress', (event, data) => sendToWidget('widget:progress', data));
+ipcMain.on('widget:status', (event, data) => sendToWidget('widget:status', data));
 
 function createWindow() {
   console.log('Création de la fenêtre Electron...');
