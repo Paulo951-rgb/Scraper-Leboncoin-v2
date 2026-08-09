@@ -337,7 +337,11 @@ class DescriptionEnricher {
 
     const parentDir = path.dirname(this.opts.outDir);
     const statePath = path.join(parentDir, 'session-state.json');
-    const globalStatePath = path.join(path.dirname(parentDir), 'global-session.json');
+    // outDir = JOBS_DIR/job-<timestamp>/results → parentDir = jobDir
+    // La session globale est dans BASE_OUT_DIR/global-session.json, soit 2 niveaux
+    // au-dessus de outDir (parentDir = jobDir, path.dirname(parentDir) = JOBS_DIR,
+    // path.dirname(path.dirname(parentDir)) = BASE_OUT_DIR).
+    const globalStatePath = path.join(path.dirname(path.dirname(parentDir)), 'global-session.json');
 
     const createStealthContext = async () => {
       const contextOptions = {
