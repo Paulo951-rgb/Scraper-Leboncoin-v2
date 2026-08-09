@@ -126,16 +126,19 @@ function setupIpcHandlers(mainWindow) {
         // 🧠 ANALYSE IA CONDITIONNELLE (Seulement si coche activée)
         if (autoAiMarket) {
           sendStatus({ state: 'processing', message: 'Analyse du marché IA multi-sources...' });
-          sendLog({ level: 'info', message: '🧠 Lancement de l\'Analyse de Marché IA Multi-Sources...' });
+          sendLog({ level: 'info', message: `🧠 Lancement de l'Analyse de Marché IA Multi-Sources (${ads.length} annonces, parallèle x${aiConfig.concurrency || 5})...` });
 
           const t0Ai = Date.now();
-          ads = await MarketAnalyzer.analyzeAds(ads, aiConfig, (prog) => {
+          const aiLog = (msg, level = 'debug') => sendLog({ level, message: `[IA] ${msg}` });
+          ads = await MarketAnalyzer.analyzeAds(ads, { ...aiConfig, concurrency: userSettings.aiConcurrency || 5, _log: aiLog }, (prog) => {
             sendProgress({
               percent: 75 + Math.round((prog.percent / 100) * 25),
               status: prog.status,
             });
           });
-          sendLog({ level: 'debug', message: `[job:start] Phase analyse IA terminée en ${Math.round((Date.now() - t0Ai) / 1000)}s.` });
+          const aiElapsed = Math.round((Date.now() - t0Ai) / 1000);
+          sendLog({ level: 'info', message: `✅ Analyse IA terminée en ${aiElapsed}s (${ads.length} annonces).` });
+          sendLog({ level: 'debug', message: `[job:start] Phase analyse IA terminée en ${aiElapsed}s.` });
 
           fs.writeFileSync(jsonPath, JSON.stringify(ads, null, 2));
         } else {
@@ -206,7 +209,9 @@ function setupIpcHandlers(mainWindow) {
 
     let ads = JSON.parse(fs.readFileSync(targetJob.files.json, 'utf8'));
 
-    ads = await MarketAnalyzer.analyzeAds(ads, aiConfig, (prog) => {
+    const reanalyzeSettings = loadSettings();
+    const aiLog2 = (msg, level = 'debug') => sendLog({ level, message: `[IA] ${msg}` });
+    ads = await MarketAnalyzer.analyzeAds(ads, { ...aiConfig, concurrency: reanalyzeSettings.aiConcurrency || 5, _log: aiLog2 }, (prog) => {
       sendProgress({ percent: prog.percent, status: prog.status });
     });
 

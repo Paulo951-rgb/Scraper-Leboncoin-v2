@@ -4,11 +4,13 @@ const { summarizeAds, formatMs, redact } = require('../../utils/diagnostics');
 
 class MarketAnalyzer {
   static async analyzeAds(ads, config = {}, onProgress) {
+    const log = config._log || ((msg, level = 'debug') => console.log(`[MarketAnalyzer] ${msg}`));
+
     if (!Array.isArray(ads) || ads.length === 0) {
-      console.warn('[MarketAnalyzer] Aucune annonce à analyser (tableau vide ou non-tableau).');
+      log('Aucune annonce à analyser (tableau vide ou non-tableau).', 'warn');
       return [];
     }
-    console.log(`[MarketAnalyzer] Début analyse de ${ads.length} annonce(s). ${summarizeAds(ads)}`);
+    log(`Début analyse de ${ads.length} annonce(s). ${summarizeAds(ads)}`, 'info');
 
     const validPrices = ads
       .map((a) => (typeof a.price === 'number' ? a.price : parseFloat(a.price)))
@@ -16,7 +18,7 @@ class MarketAnalyzer {
       .sort((a, b) => a - b);
 
     if (validPrices.length === 0) {
-      console.warn('[MarketAnalyzer] Aucun prix valide dans le dataset — analyse IA ignorée (retour des annonces brutes).');
+      log('Aucun prix valide dans le dataset — analyse IA ignorée (retour des annonces brutes).', 'warn');
       return ads;
     }
 
@@ -25,76 +27,72 @@ class MarketAnalyzer {
       validPrices.length % 2 !== 0
         ? validPrices[mid]
         : (validPrices[mid - 1] + validPrices[mid]) / 2;
-    console.log(`[MarketAnalyzer] Dataset prix : ${validPrices.length} valides | min=${validPrices[0]}€ | median=${datasetMedian}€ | max=${validPrices[validPrices.length - 1]}€.`);
+    log(`Dataset prix : ${validPrices.length} valides | min=${validPrices[0]}€ | median=${datasetMedian}€ | max=${validPrices[validPrices.length - 1]}€.`, 'debug');
 
-    const { provider = 'ollama', apiKey, model = 'llama3', ollamaUrl = 'http://127.0.0.1:11434' } = config;
-    console.log(`[MarketAnalyzer] Config IA : provider=${provider} | model=${model} | ollamaUrl=${ollamaUrl} | apiKey=${redact(apiKey)}`);
+    const { provider = 'ollama', apiKey, model = 'llama3', ollamaUrl = 'http://127.0.0.1:11434', concurrency = 5 } = config;
+    log(`Config IA : provider=${provider} | model=${model} | ollamaUrl=${ollamaUrl} | apiKey=${redact(apiKey)} | concurrency=${concurrency}`, 'debug');
 
-    const enriched = [];
+    const enriched = new Array(ads.length);
     let aiSuccessCount = 0;
     let aiFallbackCount = 0;
     const t0All = Date.now();
 
-    for (let i = 0; i < ads.length; i++) {
-      const ad = ads[i];
-      const t0Ad = Date.now();
+    for (let i = 0; i < ads.length; i += concurrency) {
+      const batch = ads.slice(i, i + concurrency);
+      const batchIds = batch.map((a) => a.id);
+      log(`Batch IA ${Math.floor(i / concurrency) + 1} : ${batch.length} annonce(s) envoyées en parallèle — IDs [${batchIds.join(', ')}]`, 'debug');
 
-      if (onProgress) {
-        onProgress({
-          done: i + 1,
-          total: ads.length,
-          percent: Math.round(((i + 1) / ads.length) * 100),
-          status: `Analyse IA (${i + 1}/${ads.length}) : ${(ad.title || '').slice(0, 30)}...`,
-        });
+      const results = await Promise.all(
+        batch.map((ad, j) => {
+          const idx = i + j;
+          const t0Ad = Date.now();
+          return this.extractSpecsWithAi(ad, { provider, apiKey, model, ollamaUrl })
+            .then((specs) => {
+              const evaluation = this.computeMarketValue(ad, specs, datasetMedian);
+              if (specs.summaryReason && specs.summaryReason.includes('Échec de l')) {
+                aiFallbackCount++;
+              } else {
+                aiSuccessCount++;
+              }
+              log(`[${idx + 1}/${ads.length}] "${(ad.title || '').slice(0, 50)}" (${ad.price}€) → ${evaluation.classification} (score ${evaluation.score}/100) — ${formatMs(Date.now() - t0Ad)}`, 'info');
+              return { idx, ad, evaluation };
+            })
+            .catch((err) => {
+              aiFallbackCount++;
+              log(`[${idx + 1}/${ads.length}] Erreur analyse IA sur "${(ad.title || ad.id).slice(0, 50)}" : ${err.message}`, 'error');
+              return { idx, ad, evaluation: null };
+            });
+        })
+      );
+
+      for (const { idx, ad, evaluation } of results) {
+        enriched[idx] = evaluation ? { ...ad, marketAnalysis: evaluation } : ad;
       }
 
-      try {
-        const specs = await this.extractSpecsWithAi(ad, { provider, apiKey, model, ollamaUrl }, onProgress);
-        const evaluation = this.computeMarketValue(ad, specs, datasetMedian);
-
-        if (specs.summaryReason && specs.summaryReason.includes('Échec de l')) {
-          aiFallbackCount++;
-        } else {
-          aiSuccessCount++;
-        }
-
-        enriched.push({
-          ...ad,
-          marketAnalysis: evaluation,
+      const done = Math.min(i + concurrency, ads.length);
+      if (onProgress) {
+        onProgress({
+          done,
+          total: ads.length,
+          percent: Math.round((done / ads.length) * 100),
+          status: `Analyse IA (${done}/${ads.length}) — batch parallèle x${concurrency}`,
         });
-        console.log(`[MarketAnalyzer] [${i + 1}/${ads.length}] "${(ad.title || '').slice(0, 40)}" — ${evaluation.classification} (score ${evaluation.score}) en ${formatMs(Date.now() - t0Ad)}.`);
-      } catch (err) {
-        aiFallbackCount++;
-        console.error(`[MarketAnalyzer] [${i + 1}/${ads.length}] Erreur analyse IA sur l'annonce ${ad.id} : ${err.message}`);
-        enriched.push(ad);
       }
     }
 
-    console.log(`[MarketAnalyzer] Fin analyse : ${aiSuccessCount} réussies | ${aiFallbackCount} en fallback — durée totale ${formatMs(Date.now() - t0All)}.`);
+    log(`Fin analyse : ${aiSuccessCount} réussies | ${aiFallbackCount} en fallback — durée totale ${formatMs(Date.now() - t0All)}.`, 'info');
     return enriched;
   }
 
-  static async extractSpecsWithAi(ad, { provider, apiKey, model, ollamaUrl }, onProgress) {
-    const prompt = `Tu es un expert technique en identification. Analyse cette annonce :
-Titre : "${ad.title || 'Inconnu'}"
-Description : "${(ad.description || 'Aucune description').slice(0, 800)}"
+  static async extractSpecsWithAi(ad, { provider, apiKey, model, ollamaUrl }) {
+    const prompt = `Expert technique. Analyse cette annonce Leboncoin et réponds en JSON strict.
 
-Ta mission :
-1. Identifie le produit EXACT.
-2. Évalue la gamme : "ENTREE_DE_GAMME", "MILIEU_DE_GAMME" ou "HAUT_DE_GAMME".
-3. Identifie l'état réel mentionné : "NEUF", "TRES_BON_ETAT", "BON_ETAT", "ETAT_MOYEN", "HS_POUR_PIECES".
-4. Évalue la qualité de la photo ("AUTHENTIQUE" si vraie photo maison, "CONSTRUCTEUR" si photo web officielle).
-5. Es-tu CERTAIN de ton coup ? Si l'annonce manque d'informations cruciales ou est trop vague (ex: "vend pc portable" sans marque ni modèle), indique "isVague": true.
+Titre: "${ad.title || 'Inconnu'}"
+Description: "${(ad.description || 'Aucune').slice(0, 500)}"
+Prix: ${ad.price || '?'}€
 
-Réponds STRICTEMENT sous forme d'objet JSON :
-{
-  "identifiedProduct": "Nom précis et composants identifiés",
-  "tier": "ENTREE_DE_GAMME" | "MILIEU_DE_GAMME" | "HAUT_DE_GAMME",
-  "condition": "NEUF" | "TRES_BON_ETAT" | "BON_ETAT" | "ETAT_MOYEN" | "HS_POUR_PIECES",
-  "photoType": "AUTHENTIQUE" | "CONSTRUCTEUR",
-  "isVague": true ou false,
-  "summaryReason": "Court résumé expliquant les caractéristiques principales détectées"
-}`;
+JSON attendu:
+{"identifiedProduct":"nom précis","tier":"ENTREE_DE_GAMME|MILIEU_DE_GAMME|HAUT_DE_GAMME","condition":"NEUF|TRES_BON_ETAT|BON_ETAT|ETAT_MOYEN|HS_POUR_PIECES","photoType":"AUTHENTIQUE|CONSTRUCTEUR","isVague":true/false,"summaryReason":"résumé court"}`;
 
     let aiData = null;
     const t0Ai = Date.now();
@@ -118,12 +116,10 @@ Réponds STRICTEMENT sous forme d'objet JSON :
         } else {
           const warnMsg = `⚠️ IA OpenAI injoignable (HTTP ${res.status}) — données par défaut appliquées.`;
           console.warn(warnMsg);
-          if (onProgress) onProgress({ status: warnMsg });
         }
       } else if (provider === 'openai' && !apiKey) {
         const warnMsg = `⚠️ Provider OpenAI sélectionné mais clé API manquante — données par défaut appliquées.`;
         console.warn(warnMsg);
-        if (onProgress) onProgress({ status: warnMsg });
       } else if (provider === 'ollama') {
         const res = await fetch(`${ollamaUrl}/api/generate`, {
           method: 'POST',
@@ -142,17 +138,14 @@ Réponds STRICTEMENT sous forme d'objet JSON :
         } else {
           const warnMsg = `⚠️ IA Ollama injoignable (HTTP ${res.status} sur ${ollamaUrl}) — données par défaut appliquées.`;
           console.warn(warnMsg);
-          if (onProgress) onProgress({ status: warnMsg });
         }
       } else {
         const warnMsg = `⚠️ Provider IA inconnu "${provider}" — données par défaut appliquées.`;
         console.warn(warnMsg);
-        if (onProgress) onProgress({ status: warnMsg });
       }
     } catch (err) {
       const warnMsg = `⚠️ IA injoignable (${provider}) : ${err.message} — données par défaut appliquées.`;
       console.warn(warnMsg);
-      if (onProgress) onProgress({ status: warnMsg });
     }
 
     // 🟢 SÉCURITÉ : Si l'IA échoue, l'annonce est étiquetée comme vague à confiance FAIBLE

@@ -329,6 +329,9 @@ Accessible via le bouton **⚙️ Paramètres** dans le header. Centralise tous 
 - **Délai entre les pages de recherche** (ms) : contrôle la vitesse de navigation entre les pages de résultats Leboncoin (défaut 1000ms).
 - **Mode de capture** : invisible (headless) ou visible. En headless, le navigateur s'affiche automatiquement en cas de CAPTCHA.
 
+**🧠 Analyse IA Locale** (nouveau)
+- **Analyses simultanées** (parallélisme IA) : nombre d'annonces analysées en parallèle par l'IA locale (Ollama). Plus élevé = plus rapide, mais demande plus de RAM/VRAM. Recommandé : 3-5 pour CPU, 5-10 pour GPU. Défaut : 5.
+
 **🧹 Maintenance**
 - **Nettoyage auto des fichiers .har** (jours) : les fichiers .har plus anciens que ce nombre sont supprimés au démarrage (défaut 7).
 

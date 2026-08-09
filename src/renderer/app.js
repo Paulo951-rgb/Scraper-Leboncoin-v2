@@ -313,6 +313,7 @@ const cfgTheme = document.getElementById('cfgTheme');
 const cfgScrapeSpeed = document.getElementById('cfgScrapeSpeed');
 const cfgPageDelay = document.getElementById('cfgPageDelay');
 const cfgHeadless = document.getElementById('cfgHeadless');
+const cfgAiConcurrency = document.getElementById('cfgAiConcurrency');
 const cfgCleanHarDays = document.getElementById('cfgCleanHarDays');
 
 function applySettingsToUI(cfg) {
@@ -320,6 +321,7 @@ function applySettingsToUI(cfg) {
   cfgScrapeSpeed.value = cfg.scrapeSpeed || 'fast';
   cfgPageDelay.value = cfg.pageDelayMs ?? 1000;
   cfgHeadless.checked = cfg.headless !== false;
+  cfgAiConcurrency.value = cfg.aiConcurrency ?? 5;
   cfgCleanHarDays.value = cfg.autoCleanHarDays || 7;
 }
 
@@ -345,6 +347,7 @@ saveSettingsBtn.addEventListener('click', async () => {
     scrapeSpeed: cfgScrapeSpeed.value,
     pageDelayMs: parseInt(cfgPageDelay.value, 10) || 1000,
     headless: cfgHeadless.checked,
+    aiConcurrency: parseInt(cfgAiConcurrency.value, 10) || 5,
     autoCleanHarDays: parseInt(cfgCleanHarDays.value, 10) || 7,
   });
   settingsModal.classList.add('hidden');
@@ -359,9 +362,10 @@ resetSettingsBtn.addEventListener('click', async () => {
     scrapeSpeed: 'fast',
     pageDelayMs: 1000,
     headless: true,
+    aiConcurrency: 5,
     autoCleanHarDays: 7,
   });
-  applySettingsToUI({ scrapeSpeed: 'fast', pageDelayMs: 1000, headless: true, autoCleanHarDays: 7 });
+  applySettingsToUI({ scrapeSpeed: 'fast', pageDelayMs: 1000, headless: true, aiConcurrency: 5, autoCleanHarDays: 7 });
   alert('Paramètres réinitialisés.');
 });
 
