@@ -124,6 +124,10 @@ Réponds STRICTEMENT sous forme d'objet JSON :
           console.warn(warnMsg);
           if (onProgress) onProgress({ status: warnMsg });
         }
+      } else if (provider === 'openai' && !apiKey) {
+        const warnMsg = `⚠️ Provider OpenAI sélectionné mais clé API manquante — données par défaut appliquées.`;
+        console.warn(warnMsg);
+        if (onProgress) onProgress({ status: warnMsg });
       } else if (provider === 'ollama') {
         const res = await fetch(`${ollamaUrl}/api/generate`, {
           method: 'POST',

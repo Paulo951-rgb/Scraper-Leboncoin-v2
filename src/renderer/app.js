@@ -47,7 +47,7 @@ document.addEventListener('keydown', (e) => {
   if (e.code === 'Space' && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
     e.preventDefault();
     if (viewMode === 'table') viewGridBtn.click();
-    else viewGridBtn.click();
+    else viewTableBtn.click();
   }
   if (e.key === 'Escape') {
     confirmModal.classList.add('hidden');
@@ -178,7 +178,6 @@ const statRisks = document.getElementById('statRisks');
 const statTotalAds = document.getElementById('statTotalAds');
 
 // Déclarations de sécurité pour l'historique et la suppression
-const latestDeleteBtn = document.getElementById('latestDeleteBtn');
 const openMainFolderBtn = document.getElementById('openMainFolderBtn');
 
 // Scheduler Elements
@@ -309,7 +308,11 @@ closeCompareModalBtn.addEventListener('click', () => compareModal.classList.add(
 
 // Widget Flottant
 document.getElementById('toggleWidgetBtn').addEventListener('click', () => {
-  window.api.toggleWidget();
+  if (typeof window.api.toggleWidget === 'function') {
+    window.api.toggleWidget();
+  } else {
+    alert("Le Widget Flottant n'est pas encore disponible dans cette version.");
+  }
 });
 
 // Modal Paramètres
@@ -360,8 +363,9 @@ const modalDescription = document.getElementById('modalDescription');
 const modalOpenLeboncoinBtn = document.getElementById('modalOpenLeboncoinBtn');
 
 let allJobsCache = [];
-let priceChartInstance = null;
+let dealsChartInstance = null;
 let sellerChartInstance = null;
+let mapInstance = null;
 let pendingDeleteJobId = null;
 
 // État de la vue (Tableau vs Galerie) & Favoris
@@ -456,6 +460,12 @@ window.api.onLog(({ level, message }) => {
   line.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
   logsConsole.appendChild(line);
   logsConsole.scrollTop = logsConsole.scrollHeight;
+
+  // Plafond de lignes pour éviter la fuite de mémoire DOM sur les longues sessions
+  const MAX_LOG_LINES = 1000;
+  while (logsConsole.childElementCount > MAX_LOG_LINES) {
+    logsConsole.removeChild(logsConsole.firstChild);
+  }
 });
 
 window.api.onProgress(({ percent, status, eta }) => {
@@ -858,9 +868,8 @@ async function renderMap(ads) {
   let targetAds = ads;
   if (mapHandDeliveryOnly) {
     targetAds = ads.filter((a) => {
-      const ship = String(a.shipping || '').toLowerCase();
-      // Si livraison n'est pas disponible ou contient "main propre"
-      return !a.shipping || ship.includes('main propre') || ship.includes('remise');
+      // shipping est un booléen Leboncoin (true = livraison possible, false/null = remise main propre)
+      return !a.shipping;
     });
   }
 
@@ -944,15 +953,21 @@ function renderCharts(ads) {
 }
 
 function escapeHtml(str) {
-  return String(str || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return String(str == null ? '' : str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function escapePath(pathStr) {
-  return pathStr ? pathStr.replace(/\\/g, '\\\\') : '';
+  if (!pathStr) return '';
+  return String(pathStr).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 
 window.openUrl = (urlStr) => {
-  if (urlStr) window.api.openFile(urlStr);
+  if (urlStr) window.api.openExternal(urlStr);
 };
 
 window.openFolder = (folderPath) => {
@@ -984,7 +999,7 @@ modalConfirmBtn.addEventListener('click', async () => {
 });
 
 document.getElementById('openMainFolderBtn').addEventListener('click', () => {
-  window.api.openFolder('output');
+  window.api.openFolder('');
 });
 
 clearLogsBtn.addEventListener('click', () => {
@@ -994,4 +1009,90 @@ clearLogsBtn.addEventListener('click', () => {
 // Écouteur pour rafraîchir la carte si on coche/décoche la remise en main propre
 document.getElementById('mapHandDeliveryOnly').addEventListener('change', () => {
   renderStatsView();
+});
+
+// ============================================================
+// PAGE PLANIFICATEUR — chargement, ajout, suppression, déclenchement
+// ============================================================
+
+async function loadSchedulerPage() {
+  try {
+    const tasks = await window.api.listSchedules();
+    renderSchedulerTable(tasks);
+  } catch (err) {
+    schedTableBody.innerHTML = `<tr><td colspan="4" class="text-center">Erreur planificateur : ${escapeHtml(err.message)}</td></tr>`;
+  }
+}
+
+function renderSchedulerTable(tasks) {
+  if (!tasks || tasks.length === 0) {
+    schedTableBody.innerHTML = '<tr><td colspan="4" class="text-center">Aucune tâche planifiée activée</td></tr>';
+    return;
+  }
+
+  schedTableBody.innerHTML = tasks
+    .map((t) => {
+      const nextRunTxt = t.nextRun ? new Date(t.nextRun).toLocaleString('fr-FR') : '-';
+      const lastRunTxt = t.lastRun ? new Date(t.lastRun).toLocaleString('fr-FR') : 'Jamais';
+      return `
+      <tr>
+        <td>${escapeHtml(t.searchUrl || '-')}</td>
+        <td>${t.intervalMinutes || '?'} min</td>
+        <td>Prochaine : ${escapeHtml(nextRunTxt)}<br><small class="text-muted">Dernière : ${escapeHtml(lastRunTxt)}</small></td>
+        <td><button class="btn btn-danger btn-small" onclick="removeSchedule('${escapeHtml(t.id)}')">🗑️ Supprimer</button></td>
+      </tr>
+    `;
+    })
+    .join('');
+}
+
+addSchedBtn.addEventListener('click', async () => {
+  const url = schedUrl.value.trim();
+  if (!url) {
+    alert('Veuillez entrer une URL à surveiller.');
+    return;
+  }
+  const interval = parseInt(schedInterval.value, 10) || 30;
+  const task = {
+    id: `sched-${Date.now()}`,
+    searchUrl: url,
+    pages: parseInt(document.getElementById('pages').value, 10) || 1,
+    intervalMinutes: interval,
+    noDesc: document.getElementById('noDesc').checked,
+    csv: document.getElementById('csv').checked,
+    autoAiMarket: autoAiMarket.checked,
+    limit: document.getElementById('limit').value ? parseInt(document.getElementById('limit').value, 10) : undefined,
+    aiConfig: {
+      provider: aiProvider.value,
+      model: aiModelName.value.trim() || 'llama3',
+      apiKey: aiApiKey.value,
+    },
+    proxyUrl: proxyUrl.value.trim() || undefined,
+  };
+
+  try {
+    addSchedBtn.disabled = true;
+    const tasks = await window.api.addSchedule(task);
+    renderSchedulerTable(tasks);
+    schedUrl.value = '';
+  } catch (err) {
+    alert(`Erreur planification : ${err.message}`);
+  } finally {
+    addSchedBtn.disabled = false;
+  }
+});
+
+window.removeSchedule = async (id) => {
+  try {
+    const tasks = await window.api.removeSchedule(id);
+    renderSchedulerTable(tasks);
+  } catch (err) {
+    alert(`Erreur suppression tâche : ${err.message}`);
+  }
+};
+
+// Déclenchement d'une tâche planifiée par le main process → on lance le scraping
+window.api.onSchedulerTrigger((config) => {
+  statusText.textContent = '⏰ Tâche planifiée déclenchée — lancement automatique...';
+  window.api.startScraping(config);
 });

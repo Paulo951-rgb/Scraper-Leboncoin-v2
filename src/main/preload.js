@@ -37,6 +37,7 @@ contextBridge.exposeInMainWorld('api', {
 
   openFolder: (pathStr) => ipcRenderer.invoke('file:openFolder', pathStr),
   openFile: (pathStr) => ipcRenderer.invoke('file:openFile', pathStr),
+  openExternal: (urlStr) => ipcRenderer.invoke('shell:openExternal', urlStr),
 
   getConfig: () => ipcRenderer.invoke('config:get'),
   saveConfig: (patch) => ipcRenderer.invoke('config:save', patch),
