@@ -12,14 +12,14 @@ const { sleep, randomDelay, atomicWriteFileSync, cleanText } = require('../../ut
 const { summarizeAds, summarizeHarEntries, truncate, formatBytes, formatMs } = require('../../utils/diagnostics');
 
 const DEFAULTS = Object.freeze({
-  // Mode séquentiel anti-blocage : les fetchs sont maintenant un par un avec
-  // délai humain (voir fetchBatchInPage). batchSize = nb d'annonces par batch
-  // avant pause inter-batch. Garde un rythme humain pour éviter les 403.
-  minDelayMs: 1500,
-  maxDelayMs: 3000,
+  // Mode rapide : fetchs parallèles (Promise.all) comme le code original.
+  // batchSize = nb d'annonces par batch en parallèle. La détection 403 et
+  // l'arrêt préventif après 3 blocages consécutifs restent actifs.
+  minDelayMs: 500,
+  maxDelayMs: 1000,
   headless: false,
   outDir: '.',
-  batchSize: 5,
+  batchSize: 10,
   recycleContextEvery: 200, // Recycler la mémoire tous les 200 produits extraits
 });
 
@@ -287,11 +287,10 @@ class DescriptionEnricher {
   async fetchBatchInPage(page, batchItems) {
     return await page.evaluate(async (items) => {
       const results = {};
-      // SEQUENTIEL avec délai humain : 10 fetchs simultanés déclenchent
-      // l'anti-bot de Leboncoin (403). On fait les requêtes une par une
-      // avec une pause aléatoire entre chaque pour simuler un humain.
-      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-      for (const item of items) {
+      // MODE RAPIDE : fetchs parallèles (Promise.all) comme le code original.
+      // 10 requêtes simultanées pour aller vite. La détection 403 et l'arrêt
+      // préventif restent gérés côté enrichAll (consecutiveBlocks >= 3).
+      const promises = items.map(async (item) => {
         try {
           const res = await fetch(item.url, {
             headers: { 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' },
@@ -306,11 +305,8 @@ class DescriptionEnricher {
         } catch (e) {
           results[item.id] = { error: e.message };
         }
-        // Délai humain entre chaque annonce (800-1800ms) — sauf après la dernière.
-        if (items.indexOf(item) < items.length - 1) {
-          await sleep(800 + Math.random() * 1000);
-        }
-      }
+      });
+      await Promise.all(promises);
       return results;
     }, batchItems);
   }
@@ -341,7 +337,7 @@ class DescriptionEnricher {
       return;
     }
 
-    this.logger.info(`\nExtraction des descriptions pour ${targets.length} annonce(s) (mode séquentiel anti-blocage)...`);
+    this.logger.info(`\nExtraction des descriptions pour ${targets.length} annonce(s) (mode rapide parallèle)...`);
     this.logger.debug(`[DescriptionEnricher] Cibles : ${targets.length} | déjà avec description : ${alreadyHasDesc} | sans URL : ${noUrlCount} | batchSize : ${this.opts.batchSize || 5} | headless : ${this.opts.headless}`);
 
     const { chromium } = require('playwright');

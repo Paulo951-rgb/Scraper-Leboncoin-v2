@@ -29,8 +29,8 @@ class HarCapturer extends EventEmitter {
     // lors du pré-check captcha (voir _warmupSession).
     this.headless = options.headless !== undefined ? options.headless : true;
     this.proxyUrl = options.proxyUrl || null;
-    this.minPageDelayMs = options.minPageDelayMs || 2500;
-    this.maxPageDelayMs = options.maxPageDelayMs || 4500;
+    this.minPageDelayMs = options.minPageDelayMs || 800;
+    this.maxPageDelayMs = options.maxPageDelayMs || 1500;
     this.isCancelled = false;
   }
 

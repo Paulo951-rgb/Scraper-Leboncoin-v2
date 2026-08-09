@@ -48,7 +48,7 @@ L'application est pensée pour un usage **semi-automatisé** : l'utilisateur peu
 - 🚀 **Scraping automatisé** d'une URL de recherche Leboncoin sur plusieurs pages.
 - 🔑 **Session globale persistante** ("Master Session") pour éviter de repasser un captcha à chaque lancement.
 - 🤖 **Détection automatique de blocage/captcha** avec pause et reprise après résolution manuelle.
-- 📝 **Extraction des descriptions complètes** des annonces en mode séquentiel anti-blocage (requêtes HTTP une par une avec délais humains aléatoires de 0,8-1,8s, exécutées directement dans la page pour hériter des cookies/session).
+- 📝 **Extraction des descriptions complètes** des annonces en mode rapide parallèle (10 requêtes HTTP simultanées par batch via `Promise.all`, exécutées directement dans la page pour hériter des cookies/session).
 - 🧠 **Analyse IA par annonce** (`marketAnalyzer.js`) : identification du produit, gamme, état, type de photo, puis calcul d'un **score de 0 à 100**, d'une **classification** (Très bonne affaire / Bonne affaire / Prix correct / Légèrement cher / Trop cher), d'une **marge de revente estimée (ROI)** et d'un **score d'arnaque (scam score)**.
 - 🧠 **Analyse Globale IA (Gemini)** : un moteur d'analyse "grand contexte" (Gemini 2.0 Flash, jusqu'à 1M tokens) capable d'analyser l'ensemble d'un job en une fois pour produire un classement des meilleures opportunités avec instructions personnalisées.
 - 📊 **Export Excel (.xlsx)** stylisé (couleurs, filtres automatiques, liens hypertextes, mise en forme conditionnelle des bonnes/mauvaises affaires) via `exceljs`.
@@ -194,7 +194,7 @@ Voici le cycle de vie complet d'un scraping, du clic sur "Démarrer" jusqu'au fi
 5. **Écriture atomique** des résultats intermédiaires (`annonces.json`, `annonces.txt`, `annonces.csv` si activé) — écriture dans un fichier temporaire puis renommage, pour éviter la corruption en cas de crash.
 6. **Enrichissement des descriptions** (`DescriptionEnricher`) : les résultats de recherche Leboncoin ne contiennent pas toujours la description complète. Le pipeline :
    - relance un navigateur Chromium (avec la session globale, images/CSS bloquées pour la vitesse) ;
-   - envoie des requêtes `fetch()` **directement depuis la page** (pour hériter des cookies du navigateur) vers chaque URL d'annonce, **une par une en mode séquentiel** avec des délais humains aléatoires (0,8-1,8s entre chaque) pour éviter les blocages anti-bot ;
+   - envoie des requêtes `fetch()` **directement depuis la page** (pour hériter des cookies du navigateur) vers chaque URL d'annonce, **par batchs de 10 en parallèle** (`Promise.all`) pour aller vite ;
    - parse le HTML retourné pour en extraire la description via le JSON `__NEXT_DATA__` ;
    - **s'arrête préventivement** après 3 blocages HTTP 403/429 consécutifs, pour éviter un bannissement IP, et sauvegarde immédiatement la progression déjà acquise ;
    - sauvegarde périodiquement (tous les 10 items) et recycle le contexte navigateur tous les 200 items traités.
@@ -347,8 +347,8 @@ L'application intègre plusieurs mécanismes pour limiter les risques de blocage
 - **Arrêt préventif de la capture** : si une page retourne un 403 pendant la capture, la boucle s'arrête **immédiatement** au lieu de gaspiller des requêtes sur les pages suivantes.
 - **Masquage de l'empreinte "webdriver"** (`navigator.webdriver = undefined`) pour réduire la détection d'automatisation.
 - **User-Agent réaliste** (Chrome Windows) et **locale `fr-FR`** fixés sur tous les contextes navigateur.
-- **Enrichissement séquentiel avec délais humains** : les descriptions d'annonces sont fetchées **une par une** (plus de batchs parallèles) avec des pauses aléatoires de 0,8-1,8s entre chaque, pour simuler un comportement humain et éviter les 403 sur les pages d'annonces individuelles.
-- **Délais aléatoires** (jitter) entre les pages de recherche (2,5-4,5s) et entre les batches d'enrichissement (1,5-3s).
+- **Enrichissement parallèle rapide** : les descriptions d'annonces sont fetchées **par batchs de 10 en parallèle** (`Promise.all`) avec une courte pause inter-batch (0,5-1s) pour limiter — sans éliminer — le risque de blocage.
+- **Délais aléatoires** (jitter) entre les pages de recherche (0,8-1,5s) et entre les batches d'enrichissement (0,5-1s).
 - **Arrêt préventif automatique** après 3 réponses HTTP 403/429 consécutives lors de l'enrichissement, pour éviter un bannissement IP prolongé — les données déjà collectées sont sauvegardées.
 - **Support de proxy HTTP rotatif** optionnel (avec authentification).
 - **Recyclage périodique du navigateur/contexte** pour limiter la consommation mémoire sur de gros volumes.
@@ -446,7 +446,7 @@ Résultat attendu : `=== RÉSULTAT : 109 réussis, 0 échoués ===`
 - Le scraping de Leboncoin repose sur la structure actuelle de leurs pages/API (`__NEXT_DATA__`, endpoints de recherche) : toute évolution significative du site peut nécessiter une adaptation du parsing (`leboncoin-pipeline.js`).
 - La résolution de captcha reste **manuelle** (l'app ne la contourne pas automatiquement, elle ouvre une fenêtre visible et attend l'intervention humaine).
 - L'analyse IA (marché, scoring, résumé) dépend de la qualité du modèle utilisé (un modèle local léger comme `llama3` peut être moins précis qu'un modèle cloud).
-- L'enrichissement des descriptions est **séquentiel** (~1,5s par annonce avec délai humain) pour éviter les blocages anti-bot : c'est plus lent qu'un mode parallèle, mais ne déclenche pas de 403 systématique.
+- L'enrichissement des descriptions est **parallèle** (10 requêtes simultanées par batch) pour la vitesse : si tu te fais bloquer (403), l'app s'arrête automatiquement après 3 blocages consécutifs et sauvegarde ce qui a déjà été collecté.
 - Un blocage IP déjà actif (suite à de trop nombreux lancements rapprochés) peut nécessiter d'attendre quelques heures ou d'utiliser un proxy.
 
 ---
