@@ -289,7 +289,7 @@ class DescriptionEnricher {
 
   async fetchBatchInPage(page, batchItems) {
     const sequential = this.opts.sequential === true;
-    return await page.evaluate(async (items, seq) => {
+    return await page.evaluate(async ({ items, seq }) => {
       const results = {};
       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -335,7 +335,7 @@ class DescriptionEnricher {
         await Promise.all(promises);
       }
       return results;
-    }, batchItems, sequential);
+    }, { items: batchItems, seq: sequential });
   }
 
   parseHtmlDescription(html, adId) {
