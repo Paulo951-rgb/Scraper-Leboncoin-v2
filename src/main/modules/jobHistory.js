@@ -3,10 +3,11 @@
 const fs = require('fs');
 const path = require('path');
 const { DealFinder } = require('./dealFinder');
+const { JOBS_DIR } = require('../config/constants');
 
 class JobHistoryManager {
   static getJobsDir() {
-    return path.join(process.cwd(), 'output', 'jobs');
+    return JOBS_DIR;
   }
 
   static listAllJobs() {

@@ -11,6 +11,34 @@ const { StorageCleaner } = require('./modules/storageCleaner');
 const { ExcelExporter } = require('./modules/excelExporter');
 const { MarketAnalyzer } = require('./modules/marketAnalyzer');
 const { JobSchedulerManager } = require('./modules/jobScheduler');
+const { GlobalAnalyzer } = require('./modules/globalAnalyzer');
+const { JOBS_DIR } = require('./config/constants');
+
+// Persistance légère des paramètres (durée de rétention HAR, etc.)
+const SETTINGS_PATH = path.join(__dirname, 'config', 'user-settings.json');
+const SETTINGS_DEFAULTS = Object.freeze({ autoCleanHarDays: 7 });
+
+function loadSettings() {
+  try {
+    if (!fs.existsSync(SETTINGS_PATH)) return { ...SETTINGS_DEFAULTS };
+    const data = JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf8'));
+    return { ...SETTINGS_DEFAULTS, ...(data && typeof data === 'object' ? data : {}) };
+  } catch (err) {
+    console.warn('Lecture paramètres impossible :', err.message);
+    return { ...SETTINGS_DEFAULTS };
+  }
+}
+
+function saveSettings(patch) {
+  const merged = { ...loadSettings(), ...(patch && typeof patch === 'object' ? patch : {}) };
+  try {
+    fs.mkdirSync(path.dirname(SETTINGS_PATH), { recursive: true });
+    fs.writeFileSync(SETTINGS_PATH, JSON.stringify(merged, null, 2), 'utf8');
+  } catch (err) {
+    console.warn('Sauvegarde paramètres impossible :', err.message);
+  }
+  return merged;
+}
 
 function setupIpcHandlers(mainWindow) {
   let activeCapturer = null;
@@ -21,8 +49,9 @@ function setupIpcHandlers(mainWindow) {
     mainWindow.webContents.send('scheduler:trigger', config);
   });
 
+  const settings = loadSettings();
   setTimeout(() => {
-    StorageCleaner.cleanOldHars(7);
+    StorageCleaner.cleanOldHars(settings.autoCleanHarDays || 7);
   }, 3000);
 
   const sendLog = (data) => mainWindow.webContents.send('log', data);
@@ -36,7 +65,7 @@ function setupIpcHandlers(mainWindow) {
     const { searchUrl, pages = 1, noDesc = false, csv = true, autoAiMarket = true, limit, aiConfig, proxyUrl } = config;
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const jobDir = path.join(process.cwd(), 'output', 'jobs', `job-${timestamp}`);
+    const jobDir = path.join(JOBS_DIR, `job-${timestamp}`);
     const harPath = path.join(jobDir, 'capture.har');
     const resultsDir = path.join(jobDir, 'results');
 
@@ -46,7 +75,8 @@ function setupIpcHandlers(mainWindow) {
       sendStatus({ state: 'capturing', message: 'Capture HAR automatique en cours...' });
       sendLog({ level: 'info', message: '--- DÉMARRAGE DU SCRAPING ---' });
 
-      activeCapturer = new HarCapturer({ headless: true, proxyUrl }); // 🟢 CHANGÉ EN true : Le navigateur sera 100% invisible
+      // Le HarCapturer gère lui-même la bascule headless/visible (pré-check captcha).
+      activeCapturer = new HarCapturer({ proxyUrl });
 
       activeCapturer.on('log', sendLog);
       activeCapturer.on('progress', ({ currentPage, totalPages, percent, status }) => {
@@ -155,9 +185,12 @@ function setupIpcHandlers(mainWindow) {
 
   ipcMain.handle('market:analyze', async (event, { jobId, aiConfig }) => {
     const jobs = JobHistoryManager.listAllJobs();
-    const targetJob = jobs.find((j) => j.id === jobId) || jobs[0];
+    const targetJob = jobs.find((j) => j.id === jobId);
 
-    if (!targetJob || !targetJob.files.json) {
+    if (!targetJob) {
+      throw new Error(`Job introuvable (id: ${jobId}). Aucune analyse possible.`);
+    }
+    if (!targetJob.files.json) {
       throw new Error('Aucun fichier de résultats trouvé pour ce job.');
     }
 
@@ -173,6 +206,46 @@ function setupIpcHandlers(mainWindow) {
     }
 
     return JobHistoryManager.getLatestJob();
+  });
+
+  ipcMain.handle('globalai:analyze', async (event, { jobId, presetKey, customInstruction, geminiApiKey, geminiModel }) => {
+    if (!geminiApiKey) throw new Error('Clé API Gemini manquante.');
+
+    const jobs = JobHistoryManager.listAllJobs();
+    let ads = [];
+
+    if (!jobId || jobId === 'ALL') {
+      jobs.forEach((j) => {
+        if (Array.isArray(j.ads)) ads.push(...j.ads);
+      });
+    } else {
+      const job = jobs.find((j) => j.id === jobId);
+      if (!job) throw new Error(`Job introuvable (id: ${jobId}).`);
+      ads = Array.isArray(job.ads) ? job.ads : [];
+    }
+
+    if (ads.length === 0) throw new Error('Aucune annonce à analyser dans ce dataset.');
+
+    sendStatus({ state: 'processing', message: 'Analyse Globale Gemini en cours...' });
+
+    const report = await GlobalAnalyzer.analyze(ads, {
+      presetKey,
+      customInstruction,
+      geminiApiKey,
+      geminiModel: geminiModel || 'gemini-2.0-flash',
+    }, (prog) => {
+      sendProgress({ percent: prog.percent, status: prog.status });
+    });
+
+    return report;
+  });
+
+  ipcMain.handle('config:get', async () => {
+    return loadSettings();
+  });
+
+  ipcMain.handle('config:save', async (event, patch) => {
+    return saveSettings(patch);
   });
 
   ipcMain.handle('scheduler:add', async (event, task) => {

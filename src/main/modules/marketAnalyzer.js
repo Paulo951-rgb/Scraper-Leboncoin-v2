@@ -37,7 +37,7 @@ class MarketAnalyzer {
       }
 
       try {
-        const specs = await this.extractSpecsWithAi(ad, { provider, apiKey, model, ollamaUrl });
+        const specs = await this.extractSpecsWithAi(ad, { provider, apiKey, model, ollamaUrl }, onProgress);
         const evaluation = this.computeMarketValue(ad, specs, datasetMedian);
 
         enriched.push({
@@ -53,7 +53,7 @@ class MarketAnalyzer {
     return enriched;
   }
 
-  static async extractSpecsWithAi(ad, { provider, apiKey, model, ollamaUrl }) {
+  static async extractSpecsWithAi(ad, { provider, apiKey, model, ollamaUrl }, onProgress) {
     const prompt = `Tu es un expert technique en identification. Analyse cette annonce :
 Titre : "${ad.title || 'Inconnu'}"
 Description : "${(ad.description || 'Aucune description').slice(0, 800)}"
@@ -92,6 +92,10 @@ Réponds STRICTEMENT sous forme d'objet JSON :
         if (res.ok) {
           const data = await res.json();
           aiData = JSON.parse(data.choices[0].message.content);
+        } else {
+          const warnMsg = `⚠️ IA OpenAI injoignable (HTTP ${res.status}) — données par défaut appliquées.`;
+          console.warn(warnMsg);
+          if (onProgress) onProgress({ status: warnMsg });
         }
       } else if (provider === 'ollama') {
         const res = await fetch(`${ollamaUrl}/api/generate`, {
@@ -107,10 +111,16 @@ Réponds STRICTEMENT sous forme d'objet JSON :
         if (res.ok) {
           const data = await res.json();
           aiData = JSON.parse(data.response);
+        } else {
+          const warnMsg = `⚠️ IA Ollama injoignable (HTTP ${res.status} sur ${ollamaUrl}) — données par défaut appliquées.`;
+          console.warn(warnMsg);
+          if (onProgress) onProgress({ status: warnMsg });
         }
       }
-    } catch {
-      /* Ignorer */
+    } catch (err) {
+      const warnMsg = `⚠️ IA injoignable (${provider}) : ${err.message} — données par défaut appliquées.`;
+      console.warn(warnMsg);
+      if (onProgress) onProgress({ status: warnMsg });
     }
 
     // 🟢 SÉCURITÉ : Si l'IA échoue, l'annonce est étiquetée comme vague à confiance FAIBLE
