@@ -103,20 +103,25 @@ class HarCapturer extends EventEmitter {
     await sleep(1500);
 
     const blocked = await this._checkCaptcha(p);
-    await p.close().catch(() => {});
-    await ctx.close().catch(() => {});
 
     if (!blocked) {
-      // Pas de captcha : on persiste quand même la session fraîche si elle n'existait pas.
+      // Pas de captcha : on persiste la session fraîche si elle n'existait pas,
+      // AVANT de fermer le contexte (storageState sur un contexte fermé échoue).
       if (!fs.existsSync(GLOBAL_SESSION_PATH)) {
         await ctx.storageState({ path: GLOBAL_SESSION_PATH }).catch((e) => {
           this.emit('log', { level: 'warn', message: `[warmup] Sauvegarde session fraîche impossible : ${e.message}` });
         });
         this.emit('log', { level: 'debug', message: `[warmup] Session fraîche persistée : ${GLOBAL_SESSION_PATH}` });
       }
+      await p.close().catch(() => {});
+      await ctx.close().catch(() => {});
       this.emit('log', { level: 'info', message: '✅ Pré-check OK : aucun CAPTCHA, reprise invisible.' });
       return;
     }
+
+    // CAPTCHA détecté : ferme le contexte invisible avant d'en ouvrir un visible.
+    await p.close().catch(() => {});
+    await ctx.close().catch(() => {});
 
     // CAPTCHA détecté : ouverture d'une fenêtre VISIBLE pour résolution humaine.
     this.emit('log', { level: 'warn', message: '⚠️ CAPTCHA détecté — affichage de la fenêtre (résolution humaine requise).' });
@@ -177,6 +182,8 @@ class HarCapturer extends EventEmitter {
       browser = await chromium.launch(this._launchOptions(true));
       this.emit('log', { level: 'debug', message: '[capture] Chromium lancé (headless=true pour la capture).' });
 
+      let globalSessionSaved = false;
+
       // Pré-check captcha + bascule visible si nécessaire (avant la boucle HAR).
       await this._warmupSession(browser, buildPageUrl(searchUrl, 1));
       if (this.isCancelled) {
@@ -226,6 +233,17 @@ class HarCapturer extends EventEmitter {
           const httpStatus = resp ? resp.status() : '?';
           this.emit('log', { level: 'debug', message: `[Page ${pageNum}] Page chargée — HTTP ${httpStatus}.` });
 
+          // Sauvegarde la session globale dès la 1ère page réussie (HTTP < 400).
+          // On NE la réécrit PAS ensuite : les pages suivantes peuvent être 403
+          // (anti-bot) et empoisonneraient la session avec des cookies de blocage.
+          if (typeof httpStatus === 'number' && httpStatus < 400 && !globalSessionSaved) {
+            await context.storageState({ path: GLOBAL_SESSION_PATH }).catch((e) => {
+              this.emit('log', { level: 'warn', message: `[capture] Sauvegarde session globale impossible après page ${pageNum} : ${e.message}` });
+            });
+            globalSessionSaved = true;
+            this.emit('log', { level: 'debug', message: `[capture] Session globale sauvegardée après page ${pageNum} (HTTP ${httpStatus}).` });
+          }
+
           // 🤖 DÉTECTION DE CAPTCHA / BLOCAGE (filet de sécurité après pré-check)
           let isBlocked = await this._checkCaptcha(page);
           if (isBlocked) {
@@ -246,8 +264,10 @@ class HarCapturer extends EventEmitter {
       this.emit('log', { level: 'info', message: 'Finalisation et sauvegarde de la session...' });
       await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
 
-      // Sauvegarder les cookies validés dans la session globale et locale
-      await context.storageState({ path: GLOBAL_SESSION_PATH });
+      // Session locale (par-job) : toujours sauvegardée pour le pipeline d'enrichissement.
+      // La session globale (GLOBAL_SESSION_PATH) a déjà été sauvegardée après la 1ère page
+      // réussie ci-dessus — on ne l'écrase PAS ici pour éviter de la corrompre avec d'éventuels
+      // cookies anti-bot accumulés sur les pages suivantes (403).
       await context.storageState({ path: statePath });
 
       await context.close();
