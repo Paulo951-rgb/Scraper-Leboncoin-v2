@@ -295,6 +295,84 @@ JSON attendu:
       score, // Ajout du score sur 100
     };
   }
+
+  /**
+   * Recalcule le score d'une annonce en intégrant les résultats d'analyse visuelle.
+   * Appelée après l'analyse d'images pour affiner le scoring.
+   */
+  static applyImageAnalysis(ad) {
+    if (!ad.marketAnalysis || !ad.imageAnalysis) return ad;
+
+    const vision = ad.imageAnalysis;
+    let score = ad.marketAnalysis.score;
+    let scamScore = ad.marketAnalysis.scamScore || 0;
+
+    // Bonus/malus basé sur l'authenticité de la photo
+    if (vision.photoType === 'STOCK_PHOTO') {
+      // Photo constructeur = risque d'arnaque plus élevé
+      scamScore = Math.min(99, scamScore + 10);
+      score -= 5;
+    } else if (vision.photoType === 'REAL_PRODUCT') {
+      // Photo authentique = confiance accrue
+      score += 5;
+    }
+
+    // Bonus/malus basé sur l'état visible
+    const conditionMap = {
+      NEW: 10,
+      LIKE_NEW: 7,
+      GOOD: 3,
+      WORN: -8,
+      DAMAGED: -20,
+    };
+    score += conditionMap[vision.visibleCondition] || 0;
+
+    // Malus si défauts visibles détectés
+    if (Array.isArray(vision.visibleDefects) && vision.visibleDefects.length > 0) {
+      score -= vision.visibleDefects.length * 5;
+    }
+
+    // Bonus si l'authenticité est haute
+    if (vision.authenticityScore >= 80) {
+      score += 3;
+    } else if (vision.authenticityScore < 30) {
+      score -= 5;
+    }
+
+    score = Math.max(0, Math.min(100, score));
+
+    // Recalcul de la classification
+    let classification = 'Prix correct';
+    let badgeClass = 'tag-deal-normal';
+    if (score >= 80) {
+      classification = 'Très bonne affaire';
+      badgeClass = 'tag-deal-super';
+    } else if (score >= 60) {
+      classification = 'Bonne affaire';
+      badgeClass = 'tag-deal-good';
+    } else if (score < 35) {
+      classification = 'Trop cher';
+      badgeClass = 'tag-deal-superhigh';
+    } else if (score < 50) {
+      classification = 'Légèrement cher';
+      badgeClass = 'tag-deal-high';
+    }
+
+    ad.marketAnalysis = {
+      ...ad.marketAnalysis,
+      score,
+      classification,
+      badgeClass,
+      scamScore,
+      photoType: vision.photoType,
+      visionSummary: vision.summary,
+      visibleCondition: vision.visibleCondition,
+      visibleDefects: vision.visibleDefects,
+      authenticityScore: vision.authenticityScore,
+    };
+
+    return ad;
+  }
 }
 
 module.exports = { MarketAnalyzer };

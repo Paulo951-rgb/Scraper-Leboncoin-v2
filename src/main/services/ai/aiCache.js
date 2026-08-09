@@ -35,16 +35,20 @@ function _save() {
   }
 }
 
-function get(listId) {
-  if (!listId) return null;
-  const cache = _load();
-  return cache[String(listId)] || null;
+function _key(listId, prefix) {
+  return prefix ? `${prefix}:${String(listId)}` : String(listId);
 }
 
-function set(listId, specs) {
+function get(listId, prefix) {
+  if (!listId) return null;
+  const cache = _load();
+  return cache[_key(listId, prefix)] || null;
+}
+
+function set(listId, specs, prefix) {
   if (!listId || !specs) return;
   const cache = _load();
-  cache[String(listId)] = {
+  cache[_key(listId, prefix)] = {
     specs,
     cachedAt: Date.now(),
   };
