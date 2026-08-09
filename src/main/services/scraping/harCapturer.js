@@ -4,9 +4,9 @@ const fs = require('fs');
 const path = require('path');
 const { EventEmitter } = require('events');
 const { chromium } = require('playwright');
-const { sleep } = require('../utils/helpers');
-const { GLOBAL_SESSION_PATH } = require('../config/constants');
-const { formatBytes, formatMs, describeError } = require('../utils/diagnostics');
+const { sleep } = require('../../utils/helpers');
+const { GLOBAL_SESSION_PATH } = require('../../config/constants');
+const { formatBytes, formatMs, describeError } = require('../../utils/diagnostics');
 
 const BLOCK_MARKERS = ['captcha', 'vitesse surhumaine', 'robot', 'restreint', 'captcha-delivery'];
 

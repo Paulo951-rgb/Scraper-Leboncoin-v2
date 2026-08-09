@@ -2,45 +2,20 @@
 
 const path = require('path');
 const fs = require('fs');
-const { ipcMain } = require('electron');
-const { HarCapturer } = require('./modules/harCapturer');
-const { PipelineRunner } = require('./modules/pipelineRunner');
-const { FileManager } = require('./modules/fileManager');
-const { JobHistoryManager } = require('./modules/jobHistory');
-const { StorageCleaner } = require('./modules/storageCleaner');
-const { ExcelExporter } = require('./modules/excelExporter');
-const { MarketAnalyzer } = require('./modules/marketAnalyzer');
-const { JobSchedulerManager } = require('./modules/jobScheduler');
-const { GlobalAnalyzer } = require('./modules/globalAnalyzer');
-const { JOBS_DIR, BASE_OUT_DIR } = require('./config/constants');
-const { redact, summarizeAds, formatBytes, describeError } = require('./utils/diagnostics');
-const { shell } = require('electron');
-
-// Persistance légère des paramètres (durée de rétention HAR, etc.)
-const SETTINGS_PATH = path.join(__dirname, 'config', 'user-settings.json');
-const SETTINGS_DEFAULTS = Object.freeze({ autoCleanHarDays: 7 });
-
-function loadSettings() {
-  try {
-    if (!fs.existsSync(SETTINGS_PATH)) return { ...SETTINGS_DEFAULTS };
-    const data = JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf8'));
-    return { ...SETTINGS_DEFAULTS, ...(data && typeof data === 'object' ? data : {}) };
-  } catch (err) {
-    console.warn('Lecture paramètres impossible :', err.message);
-    return { ...SETTINGS_DEFAULTS };
-  }
-}
-
-function saveSettings(patch) {
-  const merged = { ...loadSettings(), ...(patch && typeof patch === 'object' ? patch : {}) };
-  try {
-    fs.mkdirSync(path.dirname(SETTINGS_PATH), { recursive: true });
-    fs.writeFileSync(SETTINGS_PATH, JSON.stringify(merged, null, 2), 'utf8');
-  } catch (err) {
-    console.warn('Sauvegarde paramètres impossible :', err.message);
-  }
-  return merged;
-}
+const { ipcMain, shell } = require('electron');
+const { HarCapturer } = require('../services/scraping/harCapturer');
+const { PipelineRunner } = require('../services/scraping/pipelineRunner');
+const { FileManager } = require('../infrastructure/fileManager');
+const { JobHistoryManager } = require('../services/jobs/jobHistory');
+const { StorageCleaner } = require('../services/maintenance/storageCleaner');
+const { ExcelExporter } = require('../infrastructure/excelExporter');
+const { MarketAnalyzer } = require('../services/ai/marketAnalyzer');
+const { JobSchedulerManager } = require('../services/jobs/jobScheduler');
+const { GlobalAnalyzer } = require('../services/ai/globalAnalyzer');
+const { Notifier } = require('../infrastructure/notifications');
+const { JOBS_DIR, BASE_OUT_DIR } = require('../config/constants');
+const { redact, summarizeAds, formatBytes, describeError } = require('../utils/diagnostics');
+const { loadSettings, saveSettings } = require('./settings');
 
 function setupIpcHandlers(mainWindow) {
   let activeCapturer = null;
@@ -163,7 +138,7 @@ function setupIpcHandlers(mainWindow) {
         const goodDeals = ads.filter((a) => a.marketAnalysis?.classification === 'Très bonne affaire');
         if (goodDeals.length > 0) {
           sendLog({ level: 'debug', message: `[job:start] ${goodDeals.length} "Très bonne affaire" détectée(s) — notification déclenchée pour la 1ère : "${(goodDeals[0].title || '').slice(0, 40)}".` });
-          JobSchedulerManager.notifyGoodDeal(goodDeals[0]);
+          Notifier.notifyGoodDeal(goodDeals[0]);
         } else {
           sendLog({ level: 'debug', message: '[job:start] Aucune "Très bonne affaire" détectée dans ce dataset.' });
         }

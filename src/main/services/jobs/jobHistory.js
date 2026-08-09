@@ -2,8 +2,8 @@
 
 const fs = require('fs');
 const path = require('path');
-const { DealFinder } = require('./dealFinder');
-const { JOBS_DIR } = require('../config/constants');
+const { DealFinder } = require('../analysis/dealFinder');
+const { JOBS_DIR } = require('../../config/constants');
 
 class JobHistoryManager {
   static getJobsDir() {

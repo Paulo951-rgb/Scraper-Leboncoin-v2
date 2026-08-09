@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { JOBS_DIR } = require('../config/constants');
+const { JOBS_DIR } = require('../../config/constants');
 
 class StorageCleaner {
   /**

@@ -5,7 +5,7 @@
 
 'use strict';
 
-const { formatBytes, formatMs, redact, summarizeAds, truncate } = require('../utils/diagnostics');
+const { formatBytes, formatMs, redact, summarizeAds, truncate } = require('../../utils/diagnostics');
 
 const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models';
 
