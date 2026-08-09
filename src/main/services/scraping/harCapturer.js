@@ -103,20 +103,25 @@ class HarCapturer extends EventEmitter {
     await sleep(1500);
 
     const blocked = await this._checkCaptcha(p);
-    await p.close().catch(() => {});
-    await ctx.close().catch(() => {});
 
     if (!blocked) {
-      // Pas de captcha : on persiste quand même la session fraîche si elle n'existait pas.
+      // Pas de captcha : on persiste la session fraîche si elle n'existait pas,
+      // AVANT de fermer le contexte (storageState sur un contexte fermé échoue).
       if (!fs.existsSync(GLOBAL_SESSION_PATH)) {
         await ctx.storageState({ path: GLOBAL_SESSION_PATH }).catch((e) => {
           this.emit('log', { level: 'warn', message: `[warmup] Sauvegarde session fraîche impossible : ${e.message}` });
         });
         this.emit('log', { level: 'debug', message: `[warmup] Session fraîche persistée : ${GLOBAL_SESSION_PATH}` });
       }
+      await p.close().catch(() => {});
+      await ctx.close().catch(() => {});
       this.emit('log', { level: 'info', message: '✅ Pré-check OK : aucun CAPTCHA, reprise invisible.' });
       return;
     }
+
+    // CAPTCHA détecté : ferme le contexte invisible avant d'en ouvrir un visible.
+    await p.close().catch(() => {});
+    await ctx.close().catch(() => {});
 
     // CAPTCHA détecté : ouverture d'une fenêtre VISIBLE pour résolution humaine.
     this.emit('log', { level: 'warn', message: '⚠️ CAPTCHA détecté — affichage de la fenêtre (résolution humaine requise).' });

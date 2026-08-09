@@ -1,7 +1,3 @@
-// =========================================================================
-// FICHIER : src/main/modules/marketAnalyzer.js
-// =========================================================================
-
 'use strict';
 
 const { summarizeAds, formatMs, redact } = require('../../utils/diagnostics');

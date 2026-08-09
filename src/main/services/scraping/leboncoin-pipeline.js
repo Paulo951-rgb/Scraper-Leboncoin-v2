@@ -9,7 +9,7 @@
 const fs = require('fs');
 const path = require('path');
 const { sleep, randomDelay, atomicWriteFileSync, cleanText } = require('../../utils/helpers');
-const { summarizeAds, summarizeHarEntries, truncate, safeStringify, formatBytes, formatMs, countBy } = require('../../utils/diagnostics');
+const { summarizeAds, summarizeHarEntries, truncate, formatBytes, formatMs } = require('../../utils/diagnostics');
 
 const DEFAULTS = Object.freeze({
   // ⚡ TURBO-MODE : 10 requêtes In-Page simultanées, délais très courts.

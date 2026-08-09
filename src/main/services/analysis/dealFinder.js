@@ -1,7 +1,3 @@
-// =========================================================================
-// FICHIER : src/main/modules/dealFinder.js
-// =========================================================================
-
 'use strict';
 
 // Mots-clés de risque centralisés dans config/risk-keywords.js (logique métier isolée)

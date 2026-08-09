@@ -1,8 +1,3 @@
-// =========================================================================
-// FICHIER : src/main/modules/globalAnalyzer.js
-// Analyse globale d'un dataset d'annonces via Google Gemini.
-// =========================================================================
-
 'use strict';
 
 const { formatBytes, formatMs, redact, summarizeAds, truncate } = require('../../utils/diagnostics');
