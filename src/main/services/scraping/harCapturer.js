@@ -95,14 +95,26 @@ class HarCapturer extends EventEmitter {
 
     const { ctx, p } = await this._newStealthContext(browser, ctxOpts);
     const t0Goto = Date.now();
-    await p.goto(checkUrl, { waitUntil: 'domcontentloaded', timeout: 35000 }).catch((e) => {
-      this.emit('log', { level: 'warn', message: `Pré-check : navigation initiale impossible (${e.message}).` });
-      this.emit('log', { level: 'debug', message: `[warmup] Détail erreur goto : ${describeError(e)}` });
-    });
-    this.emit('log', { level: 'debug', message: `[warmup] Navigation pré-check terminée en ${formatMs(Date.now() - t0Goto)}.` });
+    let warmupStatus = null;
+    await p.goto(checkUrl, { waitUntil: 'domcontentloaded', timeout: 35000 })
+      .then((resp) => { warmupStatus = resp ? resp.status() : null; })
+      .catch((e) => {
+        this.emit('log', { level: 'warn', message: `Pré-check : navigation initiale impossible (${e.message}).` });
+        this.emit('log', { level: 'debug', message: `[warmup] Détail erreur goto : ${describeError(e)}` });
+      });
+    this.emit('log', { level: 'debug', message: `[warmup] Navigation pré-check terminée en ${formatMs(Date.now() - t0Goto)}${warmupStatus ? ` — HTTP ${warmupStatus}` : ''}.` });
     await sleep(1500);
 
-    const blocked = await this._checkCaptcha(p);
+    // Un blocage peut se manifester par un CAPTCHA (texte détectable) OU par un
+    // code HTTP d'erreur (403/429). On vérifie les deux pour ne pas rater un
+    // blocage "silencieux" (403 sans page CAPTCHA).
+    const captchaBlocked = await this._checkCaptcha(p);
+    const httpBlocked = typeof warmupStatus === 'number' && warmupStatus >= 400;
+    const blocked = captchaBlocked || httpBlocked;
+
+    if (httpBlocked && !captchaBlocked) {
+      this.emit('log', { level: 'warn', message: `[warmup] HTTP ${warmupStatus} détecté (blocage anti-bot sans CAPTCHA visible) — ouverture navigateur visible pour résolution manuelle.` });
+    }
 
     if (!blocked) {
       // Pas de captcha : on persiste la session fraîche si elle n'existait pas,
@@ -119,13 +131,13 @@ class HarCapturer extends EventEmitter {
       return;
     }
 
-    // CAPTCHA détecté : ferme le contexte invisible avant d'en ouvrir un visible.
+    // Blocage détecté (CAPTCHA ou HTTP 403/429) : ferme le contexte invisible
+    // avant d'ouvrir une fenêtre VISIBLE pour résolution humaine.
     await p.close().catch(() => {});
     await ctx.close().catch(() => {});
 
-    // CAPTCHA détecté : ouverture d'une fenêtre VISIBLE pour résolution humaine.
-    this.emit('log', { level: 'warn', message: '⚠️ CAPTCHA détecté — affichage de la fenêtre (résolution humaine requise).' });
-    this.emit('progress', { currentPage: 0, totalPages: 0, percent: 0, status: 'CAPTCHA : veuillez valider dans la fenêtre ouverte...' });
+    this.emit('log', { level: 'warn', message: '⚠️ Blocage détecté — affichage de la fenêtre (résolution humaine requise).' });
+    this.emit('progress', { currentPage: 0, totalPages: 0, percent: 0, status: 'Blocage : veuillez résoudre dans la fenêtre ouverte...' });
 
     // Relance un navigateur visible (le navigateur headless actuel ne peut pas
     // devenir visible à chaud) afin que l'utilisateur puisse interagir.
@@ -134,24 +146,39 @@ class HarCapturer extends EventEmitter {
       const vOpts = this._baseContextOptions();
       if (fs.existsSync(GLOBAL_SESSION_PATH)) vOpts.storageState = GLOBAL_SESSION_PATH;
       const { ctx: vCtx, p: vPage } = await this._newStealthContext(visibleBrowser, vOpts);
-      await vPage.goto(checkUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch((e) => {
-        this.emit('log', { level: 'warn', message: `[warmup] Navigation fenêtre visible échouée : ${e.message}` });
-      });
+      let vStatus = null;
+      await vPage.goto(checkUrl, { waitUntil: 'domcontentloaded', timeout: 60000 })
+        .then((resp) => { vStatus = resp ? resp.status() : null; })
+        .catch((e) => {
+          this.emit('log', { level: 'warn', message: `[warmup] Navigation fenêtre visible échouée : ${e.message}` });
+        });
 
-      let isBlocked = await this._checkCaptcha(vPage);
+      // Vérifie le blocage : CAPTCHA (texte) OU HTTP >= 400.
+      const checkVBlocked = async () => {
+        const captcha = await this._checkCaptcha(vPage);
+        const http = typeof vStatus === 'number' && vStatus >= 400;
+        return captcha || http;
+      };
+
+      let isBlocked = await checkVBlocked();
       let waitAttempts = 0;
       while (isBlocked && !this.isCancelled) {
         waitAttempts++;
         if (waitAttempts % 5 === 0) {
-          this.emit('log', { level: 'debug', message: `[warmup] En attente de résolution CAPTCHA... (${waitAttempts * 2}s écoulées)` });
+          this.emit('log', { level: 'debug', message: `[warmup] En attente de résolution... (${waitAttempts * 2}s écoulées)` });
         }
         await sleep(2000);
-        isBlocked = await this._checkCaptcha(vPage);
+        // Re-vérifie : l'utilisateur a peut-être résolu le CAPTCHA ou le blocage IP a expiré.
+        try {
+          const resp = await vPage.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
+          vStatus = resp ? resp.status() : vStatus;
+        } catch { /* ignore reload errors, keep waiting */ }
+        isBlocked = await checkVBlocked();
       }
       if (this.isCancelled) {
-        this.emit('log', { level: 'warn', message: '[warmup] Résolution CAPTCHA annulée par lutilisateur.' });
+        this.emit('log', { level: 'warn', message: '[warmup] Résolution annulée par lutilisateur.' });
       } else {
-        this.emit('log', { level: 'debug', message: `[warmup] CAPTCHA résolu après ${waitAttempts * 2}s d'attente.` });
+        this.emit('log', { level: 'debug', message: `[warmup] Blocage résolu après ${waitAttempts * 2}s d'attente.` });
       }
 
       // Persiste la session validée pour les jobs suivants (plus de fenêtre visible).
@@ -159,7 +186,7 @@ class HarCapturer extends EventEmitter {
       this.emit('log', { level: 'debug', message: `[warmup] Session validée persistée : ${GLOBAL_SESSION_PATH} (${formatBytes(fs.statSync(GLOBAL_SESSION_PATH).size)})` });
       await vPage.close().catch(() => {});
       await vCtx.close().catch(() => {});
-      this.emit('log', { level: 'info', message: '✅ CAPTCHA résolu — reprise invisible.' });
+      this.emit('log', { level: 'info', message: '✅ Blocage résolu — reprise invisible.' });
     } finally {
       await visibleBrowser.close().catch(() => {});
     }
@@ -244,11 +271,15 @@ class HarCapturer extends EventEmitter {
             this.emit('log', { level: 'debug', message: `[capture] Session globale sauvegardée après page ${pageNum} (HTTP ${httpStatus}).` });
           }
 
-          // 🤖 DÉTECTION DE CAPTCHA / BLOCAGE (filet de sécurité après pré-check)
-          let isBlocked = await this._checkCaptcha(page);
-          if (isBlocked) {
-            this.emit('log', { level: 'warn', message: `⚠️ [Page ${pageNum}] BLOCAGE RÉSIDUEL DÉTECTÉ en invisible. Arrêt de la capture (relancez après validation).` });
-            this.emit('log', { level: 'debug', message: `[capture] Arrêt à la page ${pageNum}/${maxPages} — captcha non résolu malgré le pré-check.` });
+          // 🤖 DÉTECTION DE BLOCAGE : CAPTCHA (texte) OU HTTP >= 400 (anti-bot).
+          // Un 403 sans texte CAPTCHA est un blocage silencieux : on arrête
+          // immédiatement au lieu de gaspiller des requêtes sur les pages suivantes.
+          const captchaBlocked = await this._checkCaptcha(page);
+          const httpBlocked = typeof httpStatus === 'number' && httpStatus >= 400;
+          if (captchaBlocked || httpBlocked) {
+            const reason = httpBlocked ? `HTTP ${httpStatus}` : 'CAPTCHA';
+            this.emit('log', { level: 'warn', message: `⚠️ [Page ${pageNum}] BLOCAGE DÉTECTÉ (${reason}) — arrêt de la capture. Relancez après résolution dans le navigateur visible.` });
+            this.emit('log', { level: 'debug', message: `[capture] Arrêt à la page ${pageNum}/${maxPages} — blocage ${reason} malgré le pré-check.` });
             break;
           }
         } catch (gotoErr) {
