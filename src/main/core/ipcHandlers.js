@@ -10,6 +10,7 @@ const { JobHistoryManager } = require('../services/jobs/jobHistory');
 const { StorageCleaner } = require('../services/maintenance/storageCleaner');
 const { ExcelExporter } = require('../infrastructure/excelExporter');
 const { MarketAnalyzer } = require('../services/ai/marketAnalyzer');
+const { ImageAnalyzer } = require('../services/ai/imageAnalyzer');
 const { JobSchedulerManager } = require('../services/jobs/jobScheduler');
 const { GlobalAnalyzer } = require('../services/ai/globalAnalyzer');
 const { Notifier } = require('../infrastructure/notifications');
@@ -20,6 +21,7 @@ const { loadSettings, saveSettings } = require('./settings');
 function setupIpcHandlers(mainWindow) {
   let activeCapturer = null;
   let activeRunner = null;
+  let activeImageAnalyzer = null;
   let isRunning = false;
 
   const scheduler = new JobSchedulerManager((config) => {
@@ -42,7 +44,7 @@ function setupIpcHandlers(mainWindow) {
     }
     isRunning = true;
 
-    const { searchUrl, pages = 1, noDesc = false, csv = true, autoAiMarket = true, limit, aiConfig, proxyUrl } = config;
+    const { searchUrl, pages = 1, noDesc = false, csv = true, autoAiMarket = true, analyzeImages = false, limit, aiConfig, proxyUrl } = config;
     const userSettings = loadSettings();
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -50,7 +52,7 @@ function setupIpcHandlers(mainWindow) {
     const harPath = path.join(jobDir, 'capture.har');
     const resultsDir = path.join(jobDir, 'results');
 
-    sendLog({ level: 'debug', message: `[job:start] Config reçue — searchUrl=${searchUrl} | pages=${pages} | noDesc=${noDesc} | csv=${csv} | autoAiMarket=${autoAiMarket} | limit=${limit ?? '(aucun)'} | proxy=${proxyUrl || 'aucun'} | aiConfig.provider=${aiConfig?.provider || '?'} | aiConfig.apiKey=${redact(aiConfig?.apiKey)}` });
+    sendLog({ level: 'debug', message: `[job:start] Config reçue — searchUrl=${searchUrl} | pages=${pages} | noDesc=${noDesc} | csv=${csv} | autoAiMarket=${autoAiMarket} | analyzeImages=${analyzeImages} | limit=${limit ?? '(aucun)'} | proxy=${proxyUrl || 'aucun'} | aiConfig.provider=${aiConfig?.provider || '?'} | aiConfig.apiKey=${redact(aiConfig?.apiKey)}` });
     sendLog({ level: 'debug', message: `[job:start] Dossiers — jobDir=${jobDir} | harPath=${harPath} | resultsDir=${resultsDir}` });
 
     let stoppedEarly = false;
@@ -145,6 +147,42 @@ function setupIpcHandlers(mainWindow) {
           sendLog({ level: 'debug', message: '[job:start] Analyse IA ignorée (autoAiMarket=false).' });
         }
 
+        // 🖼️ ANALYSE D'IMAGES PAR IA VISION (si activée)
+        if (analyzeImages) {
+          sendStatus({ state: 'processing', message: 'Analyse visuelle des images par IA...' });
+          const visionModel = aiConfig?.visionModel || (aiConfig?.provider === 'ollama' ? 'llava' : 'gemini-1.5-flash');
+          sendLog({ level: 'info', message: `🖼️ Lancement de l'Analyse Visuelle IA (${ads.length} annonces, 3 images/annonce, modèle ${visionModel})...` });
+
+          const t0Vision = Date.now();
+          try {
+            const imageAnalyzer = new ImageAnalyzer(
+              { ...aiConfig, model: visionModel, concurrency: userSettings.aiConcurrency || 4 },
+              { onProgress: (prog) => sendProgress({ percent: 75 + Math.round((prog.percent / 100) * 20), status: prog.status }), useCache: true }
+            );
+            activeImageAnalyzer = imageAnalyzer;
+            const visionResults = await imageAnalyzer.analyzeAll(ads);
+            activeImageAnalyzer = null;
+
+            let analyzedCount = 0;
+            for (const ad of ads) {
+              const v = visionResults.get(ad.id);
+              if (v) {
+                ad.imageAnalysis = v;
+                MarketAnalyzer.applyImageAnalysis(ad);
+                analyzedCount++;
+              }
+            }
+            const visionElapsed = Math.round((Date.now() - t0Vision) / 1000);
+            sendLog({ level: 'info', message: `✅ Analyse visuelle terminée en ${visionElapsed}s (${analyzedCount}/${ads.length} analyses).` });
+            fs.writeFileSync(jsonPath, JSON.stringify(ads, null, 2));
+          } catch (err) {
+            activeImageAnalyzer = null;
+            sendLog({ level: 'warn', message: `[Vision] Analyse visuelle échouée : ${describeError(err)} — le scraping continue sans analyse d'images.` });
+          }
+        } else {
+          sendLog({ level: 'debug', message: "[job:start] Analyse d'images ignorée (analyzeImages=false)." });
+        }
+
         await ExcelExporter.exportToXlsx(ads, xlsxPath);
         sendLog({ level: 'info', message: '📊 Export Excel (.xlsx) généré avec succès !' });
 
@@ -194,6 +232,7 @@ function setupIpcHandlers(mainWindow) {
     sendLog({ level: 'warn', message: 'Demande d\'arrêt utilisateur envoyée...' });
     if (activeRunner) activeRunner.stop();
     if (activeCapturer) activeCapturer.stop(); // 🟢 FIX : Arrêt immédiat de la capture HAR en cours
+    if (activeImageAnalyzer) activeImageAnalyzer.stop();
   });
 
   ipcMain.handle('market:analyze', async (event, { jobId, aiConfig }) => {

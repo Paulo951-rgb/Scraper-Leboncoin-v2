@@ -184,6 +184,7 @@ proxyUrl.value = localStorage.getItem('proxy-url') || '';
 proxyUrl.addEventListener('change', (e) => localStorage.setItem('proxy-url', e.target.value));
 
 const autoAiMarket = document.getElementById('autoAiMarket');
+const analyzeImages = document.getElementById('analyzeImages');
 const aiProvider = document.getElementById('aiProvider');
 const aiModelName = document.getElementById('aiModelName');
 const aiApiKey = document.getElementById('aiApiKey');
@@ -390,6 +391,8 @@ const modalCity = document.getElementById('modalCity');
 const modalSeller = document.getElementById('modalSeller');
 const modalDate = document.getElementById('modalDate');
 const modalSummary = document.getElementById('modalSummary');
+const modalVisionCard = document.getElementById('modalVisionCard');
+const modalVisionContent = document.getElementById('modalVisionContent');
 const modalDescription = document.getElementById('modalDescription');
 const modalOpenLeboncoinBtn = document.getElementById('modalOpenLeboncoinBtn');
 
@@ -441,6 +444,7 @@ startBtn.addEventListener('click', () => {
     noDesc: document.getElementById('noDesc').checked,
     csv: document.getElementById('csv').checked,
     autoAiMarket: autoAiMarket.checked,
+    analyzeImages: analyzeImages.checked,
     proxyUrl: proxyUrl.value.trim() || undefined,
     aiConfig: {
       provider: aiProvider.value,
@@ -798,6 +802,46 @@ window.openAdDetail = (adId) => {
   modalSummary.textContent = ma.summary || 'Aucune analyse effectuée.';
   modalDescription.textContent = targetAd.description || 'Aucune description disponible.';
 
+  // Analyse visuelle IA (si disponible)
+  const vision = targetAd.imageAnalysis || ma;
+  if (vision && (vision.photoType || vision.visibleCondition || vision.summary)) {
+    const photoTypeLabels = {
+      REAL_PRODUCT: '📸 Photo authentique (produit réel)',
+      STOCK_PHOTO: '🏢 Photo constructeur/marketing',
+      SCREENSHOT: '🖥️ Capture d\'écran',
+      UNCLEAR: '❓ Type indéterminé',
+    };
+    const conditionLabels = {
+      NEW: '🆕 Neuf',
+      LIKE_NEW: '✨ Comme neuf',
+      GOOD: '👍 Bon état',
+      WORN: '⚠️ Usé',
+      DAMAGED: '🔴 Endommagé',
+    };
+    const photoType = photoTypeLabels[vision.photoType] || vision.photoType || '-';
+    const condition = conditionLabels[vision.visibleCondition] || vision.visibleCondition || '-';
+    const defects = Array.isArray(vision.visibleDefects) && vision.visibleDefects.length > 0
+      ? vision.visibleDefects.join(', ')
+      : 'Aucun défaut visible';
+    const authScore = vision.authenticityScore != null ? `${vision.authenticityScore}/100` : '-';
+    const authColor = vision.authenticityScore >= 70 ? '#4caf50' : (vision.authenticityScore >= 40 ? '#ff9800' : '#f44336');
+
+    modalVisionContent.innerHTML = `
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px;">
+        <div><strong>Type photo :</strong><br>${photoType}</div>
+        <div><strong>État visible :</strong><br>${condition}</div>
+        <div><strong>Défauts :</strong><br>${defects}</div>
+        <div><strong>Authenticité :</strong><br><span style="color:${authColor}; font-weight:bold;">${authScore}</span></div>
+      </div>
+      <div style="padding:8px; background:var(--bg-secondary); border-radius:6px; margin-top:6px;">
+        💬 ${vision.summary || vision.visionSummary || 'Aucun résumé visuel disponible.'}
+      </div>
+    `;
+    modalVisionCard.classList.remove('hidden');
+  } else {
+    modalVisionCard.classList.add('hidden');
+  }
+
   // Badges Modal
   if (ma.classification === 'Très bonne affaire') {
     modalDealBadge.className = 'tag-deal-super';
@@ -1127,6 +1171,7 @@ addSchedBtn.addEventListener('click', async () => {
     noDesc: document.getElementById('noDesc').checked,
     csv: document.getElementById('csv').checked,
     autoAiMarket: autoAiMarket.checked,
+    analyzeImages: analyzeImages.checked,
     limit: document.getElementById('limit').value ? parseInt(document.getElementById('limit').value, 10) : undefined,
     aiConfig: {
       provider: aiProvider.value,

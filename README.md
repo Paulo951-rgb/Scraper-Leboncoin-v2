@@ -68,6 +68,7 @@ L'application est pensée pour un usage **semi-automatisé** : l'utilisateur peu
 - 💾 **Persistance des tâches planifiées** — les tâches du planificateur survivent au redémarrage de l'application.
 - 🔍 **Filtres mémorisés** — les filtres de l'Explorateur Annonces (mot-clé, prix, tri) sont sauvegardés entre les sessions.
 - 📦 **Extraction livraison** — l'info "remise en main propre / livraison" est extraite depuis les pages individuelles d'annonces (Leboncoin ne la fournit pas dans les résultats de recherche).
+- 🖼️ **Analyse d'images par IA Vision** — les 3 premières photos de chaque annonce sont analysées (type de photo, état visible, défauts, authenticité). Affine le scoring et détecte les photos constructeur vs réelles. Optionnel (case à cocher).
 - 🧹 **Nettoyage automatique** des anciens fichiers `.har` (configurable, par défaut 7 jours) pour limiter l'usage disque.
 
 ---

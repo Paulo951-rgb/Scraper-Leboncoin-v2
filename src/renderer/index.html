@@ -101,6 +101,13 @@
               </div>
 
               <div class="form-group">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="analyzeImages">
+                  <strong>🖼️ Analyser les images par IA Vision (3 premières photos)</strong>
+                </label>
+              </div>
+
+              <div class="form-group">
                 <label for="aiProvider">Moteur IA :</label>
                 <select id="aiProvider">
                   <option value="ollama">Ollama Local (100% Gratuit sur votre PC)</option>
@@ -585,6 +592,10 @@
           <div class="card subcard" style="margin-top:10px;">
             <h4>Résumé & Explication IA</h4>
             <p id="modalSummary" class="text-muted" style="font-size:0.85rem; line-height:1.4;"></p>
+          </div>
+          <div id="modalVisionCard" class="card subcard hidden" style="margin-top:10px; border-left:3px solid var(--accent);">
+            <h4>🖼️ Analyse Visuelle IA</h4>
+            <div id="modalVisionContent" style="font-size:0.85rem; line-height:1.5;"></div>
           </div>
           <div class="card subcard">
             <h4>Description Complète</h4>
