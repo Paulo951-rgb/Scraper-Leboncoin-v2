@@ -18,7 +18,10 @@ class JobSchedulerManager {
 
     this.removeSchedule(id);
 
-    if (!enabled) return;
+    if (!enabled) {
+      console.log(`[Scheduler] Tâche ${id} désactivée (enabled=false) — non planifiée.`);
+      return;
+    }
 
     const intervalMs = parseInt(intervalMinutes, 10) * 60 * 1000;
     if (!(intervalMs > 0)) {
@@ -38,12 +41,13 @@ class JobSchedulerManager {
     this.scheduledTasks.set(id, stored);
 
     const timer = setInterval(() => {
-      console.log(`⏰ [Scheduler] Lancement automatique de la tâche : ${id}`);
+      console.log(`⏰ [Scheduler] Lancement automatique de la tâche : ${id} (URL : ${searchUrl})`);
       stored.lastRun = Date.now();
       this.onTriggerJob(this._triggerPayload(stored));
     }, intervalMs);
 
     this.schedules.set(id, timer);
+    console.log(`[Scheduler] Tâche ${id} planifiée — intervalle ${intervalMinutes} min (${intervalMs}ms) | URL : ${searchUrl} | pages : ${pages} | limit : ${task.limit ?? '(aucun)'} | proxy : ${task.proxyUrl || 'aucun'}.`);
   }
 
   /**

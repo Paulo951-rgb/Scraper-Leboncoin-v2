@@ -4,28 +4,44 @@
 
 'use strict';
 
+const { summarizeAds, formatMs, redact } = require('../utils/diagnostics');
+
 class MarketAnalyzer {
   static async analyzeAds(ads, config = {}, onProgress) {
-    if (!Array.isArray(ads) || ads.length === 0) return [];
+    if (!Array.isArray(ads) || ads.length === 0) {
+      console.warn('[MarketAnalyzer] Aucune annonce à analyser (tableau vide ou non-tableau).');
+      return [];
+    }
+    console.log(`[MarketAnalyzer] Début analyse de ${ads.length} annonce(s). ${summarizeAds(ads)}`);
 
     const validPrices = ads
       .map((a) => (typeof a.price === 'number' ? a.price : parseFloat(a.price)))
       .filter((p) => !isNaN(p) && p > 0)
       .sort((a, b) => a - b);
 
-    if (validPrices.length === 0) return ads;
+    if (validPrices.length === 0) {
+      console.warn('[MarketAnalyzer] Aucun prix valide dans le dataset — analyse IA ignorée (retour des annonces brutes).');
+      return ads;
+    }
 
     const mid = Math.floor(validPrices.length / 2);
     const datasetMedian =
       validPrices.length % 2 !== 0
         ? validPrices[mid]
         : (validPrices[mid - 1] + validPrices[mid]) / 2;
+    console.log(`[MarketAnalyzer] Dataset prix : ${validPrices.length} valides | min=${validPrices[0]}€ | median=${datasetMedian}€ | max=${validPrices[validPrices.length - 1]}€.`);
 
     const { provider = 'ollama', apiKey, model = 'llama3', ollamaUrl = 'http://127.0.0.1:11434' } = config;
+    console.log(`[MarketAnalyzer] Config IA : provider=${provider} | model=${model} | ollamaUrl=${ollamaUrl} | apiKey=${redact(apiKey)}`);
+
     const enriched = [];
+    let aiSuccessCount = 0;
+    let aiFallbackCount = 0;
+    const t0All = Date.now();
 
     for (let i = 0; i < ads.length; i++) {
       const ad = ads[i];
+      const t0Ad = Date.now();
 
       if (onProgress) {
         onProgress({
@@ -40,16 +56,25 @@ class MarketAnalyzer {
         const specs = await this.extractSpecsWithAi(ad, { provider, apiKey, model, ollamaUrl }, onProgress);
         const evaluation = this.computeMarketValue(ad, specs, datasetMedian);
 
+        if (specs.summaryReason && specs.summaryReason.includes('Échec de l')) {
+          aiFallbackCount++;
+        } else {
+          aiSuccessCount++;
+        }
+
         enriched.push({
           ...ad,
           marketAnalysis: evaluation,
         });
+        console.log(`[MarketAnalyzer] [${i + 1}/${ads.length}] "${(ad.title || '').slice(0, 40)}" — ${evaluation.classification} (score ${evaluation.score}) en ${formatMs(Date.now() - t0Ad)}.`);
       } catch (err) {
-        console.error(`Erreur analyse IA sur l'annonce ${ad.id} :`, err.message);
+        aiFallbackCount++;
+        console.error(`[MarketAnalyzer] [${i + 1}/${ads.length}] Erreur analyse IA sur l'annonce ${ad.id} : ${err.message}`);
         enriched.push(ad);
       }
     }
 
+    console.log(`[MarketAnalyzer] Fin analyse : ${aiSuccessCount} réussies | ${aiFallbackCount} en fallback — durée totale ${formatMs(Date.now() - t0All)}.`);
     return enriched;
   }
 
@@ -76,6 +101,7 @@ Réponds STRICTEMENT sous forme d'objet JSON :
 }`;
 
     let aiData = null;
+    const t0Ai = Date.now();
 
     try {
       if (provider === 'openai' && apiKey) {
@@ -92,6 +118,7 @@ Réponds STRICTEMENT sous forme d'objet JSON :
         if (res.ok) {
           const data = await res.json();
           aiData = JSON.parse(data.choices[0].message.content);
+          console.log(`[MarketAnalyzer] IA OpenAI OK en ${formatMs(Date.now() - t0Ai)} — produit identifié : "${(aiData.identifiedProduct || '').slice(0, 40)}".`);
         } else {
           const warnMsg = `⚠️ IA OpenAI injoignable (HTTP ${res.status}) — données par défaut appliquées.`;
           console.warn(warnMsg);
@@ -111,11 +138,16 @@ Réponds STRICTEMENT sous forme d'objet JSON :
         if (res.ok) {
           const data = await res.json();
           aiData = JSON.parse(data.response);
+          console.log(`[MarketAnalyzer] IA Ollama OK en ${formatMs(Date.now() - t0Ai)} — produit identifié : "${(aiData.identifiedProduct || '').slice(0, 40)}".`);
         } else {
           const warnMsg = `⚠️ IA Ollama injoignable (HTTP ${res.status} sur ${ollamaUrl}) — données par défaut appliquées.`;
           console.warn(warnMsg);
           if (onProgress) onProgress({ status: warnMsg });
         }
+      } else {
+        const warnMsg = `⚠️ Provider IA inconnu "${provider}" — données par défaut appliquées.`;
+        console.warn(warnMsg);
+        if (onProgress) onProgress({ status: warnMsg });
       }
     } catch (err) {
       const warnMsg = `⚠️ IA injoignable (${provider}) : ${err.message} — données par défaut appliquées.`;

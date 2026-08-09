@@ -6,6 +6,7 @@ const { EventEmitter } = require('events');
 const { chromium } = require('playwright');
 const { sleep } = require('../utils/helpers');
 const { GLOBAL_SESSION_PATH } = require('../config/constants');
+const { formatBytes, formatMs, describeError } = require('../utils/diagnostics');
 
 const BLOCK_MARKERS = ['captcha', 'vitesse surhumaine', 'robot', 'restreint', 'captcha-delivery'];
 
@@ -62,13 +63,19 @@ class HarCapturer extends EventEmitter {
   }
 
   // Détecte un CAPTCHA / blocage sur la page (réutilise BLOCK_MARKERS).
+  // Retourne { blocked, matchedMarker } pour permettre un diagnostic précis.
   async _checkCaptcha(page) {
     try {
       const visibleText = await page.evaluate(() => {
         return (document.title + ' ' + document.body.innerText).toLowerCase();
       });
-      return BLOCK_MARKERS.some((marker) => visibleText.includes(marker));
+      const matchedMarker = BLOCK_MARKERS.find((marker) => visibleText.includes(marker));
+      if (matchedMarker) {
+        this.emit('log', { level: 'debug', message: `[captcha] Marqueur détecté : "${matchedMarker}" dans le texte de la page.` });
+      }
+      return !!matchedMarker;
     } catch (e) {
+      this.emit('log', { level: 'debug', message: `[captcha] Évaluation du contenu impossible : ${e.message} — considéré comme non bloqué.` });
       return false;
     }
   }
@@ -78,6 +85,7 @@ class HarCapturer extends EventEmitter {
   // invisible. La session validée est persistée dans GLOBAL_SESSION_PATH.
   async _warmupSession(browser, checkUrl) {
     this.emit('log', { level: 'info', message: '🔍 Pré-check session : navigation invisible vers Leboncoin...' });
+    this.emit('log', { level: 'debug', message: `[warmup] URL de vérification : ${checkUrl} | session existante : ${fs.existsSync(GLOBAL_SESSION_PATH) ? 'OUI (' + formatBytes(fs.statSync(GLOBAL_SESSION_PATH).size) + ')' : 'NON'}` });
 
     const ctxOpts = this._baseContextOptions();
     if (fs.existsSync(GLOBAL_SESSION_PATH)) {
@@ -86,9 +94,12 @@ class HarCapturer extends EventEmitter {
     }
 
     const { ctx, p } = await this._newStealthContext(browser, ctxOpts);
+    const t0Goto = Date.now();
     await p.goto(checkUrl, { waitUntil: 'domcontentloaded', timeout: 35000 }).catch((e) => {
       this.emit('log', { level: 'warn', message: `Pré-check : navigation initiale impossible (${e.message}).` });
+      this.emit('log', { level: 'debug', message: `[warmup] Détail erreur goto : ${describeError(e)}` });
     });
+    this.emit('log', { level: 'debug', message: `[warmup] Navigation pré-check terminée en ${formatMs(Date.now() - t0Goto)}.` });
     await sleep(1500);
 
     const blocked = await this._checkCaptcha(p);
@@ -98,7 +109,10 @@ class HarCapturer extends EventEmitter {
     if (!blocked) {
       // Pas de captcha : on persiste quand même la session fraîche si elle n'existait pas.
       if (!fs.existsSync(GLOBAL_SESSION_PATH)) {
-        await ctx.storageState({ path: GLOBAL_SESSION_PATH }).catch(() => {});
+        await ctx.storageState({ path: GLOBAL_SESSION_PATH }).catch((e) => {
+          this.emit('log', { level: 'warn', message: `[warmup] Sauvegarde session fraîche impossible : ${e.message}` });
+        });
+        this.emit('log', { level: 'debug', message: `[warmup] Session fraîche persistée : ${GLOBAL_SESSION_PATH}` });
       }
       this.emit('log', { level: 'info', message: '✅ Pré-check OK : aucun CAPTCHA, reprise invisible.' });
       return;
@@ -115,16 +129,29 @@ class HarCapturer extends EventEmitter {
       const vOpts = this._baseContextOptions();
       if (fs.existsSync(GLOBAL_SESSION_PATH)) vOpts.storageState = GLOBAL_SESSION_PATH;
       const { ctx: vCtx, p: vPage } = await this._newStealthContext(visibleBrowser, vOpts);
-      await vPage.goto(checkUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+      await vPage.goto(checkUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch((e) => {
+        this.emit('log', { level: 'warn', message: `[warmup] Navigation fenêtre visible échouée : ${e.message}` });
+      });
 
       let isBlocked = await this._checkCaptcha(vPage);
+      let waitAttempts = 0;
       while (isBlocked && !this.isCancelled) {
+        waitAttempts++;
+        if (waitAttempts % 5 === 0) {
+          this.emit('log', { level: 'debug', message: `[warmup] En attente de résolution CAPTCHA... (${waitAttempts * 2}s écoulées)` });
+        }
         await sleep(2000);
         isBlocked = await this._checkCaptcha(vPage);
+      }
+      if (this.isCancelled) {
+        this.emit('log', { level: 'warn', message: '[warmup] Résolution CAPTCHA annulée par lutilisateur.' });
+      } else {
+        this.emit('log', { level: 'debug', message: `[warmup] CAPTCHA résolu après ${waitAttempts * 2}s d'attente.` });
       }
 
       // Persiste la session validée pour les jobs suivants (plus de fenêtre visible).
       await vCtx.storageState({ path: GLOBAL_SESSION_PATH });
+      this.emit('log', { level: 'debug', message: `[warmup] Session validée persistée : ${GLOBAL_SESSION_PATH} (${formatBytes(fs.statSync(GLOBAL_SESSION_PATH).size)})` });
       await vPage.close().catch(() => {});
       await vCtx.close().catch(() => {});
       this.emit('log', { level: 'info', message: '✅ CAPTCHA résolu — reprise invisible.' });
@@ -140,6 +167,7 @@ class HarCapturer extends EventEmitter {
     const statePath = path.join(targetDir, 'session-state.json');
 
     this.emit('log', { level: 'info', message: `🚀 Initialisation de la capture HAR (${maxPages} page(s))...` });
+    this.emit('log', { level: 'debug', message: `[capture] searchUrl=${searchUrl} | maxPages=${maxPages} | outputHarPath=${outputHarPath} | proxy=${this.proxyUrl || 'aucun'} | headless=${this.headless}` });
 
     let browser;
     let context;
@@ -147,10 +175,12 @@ class HarCapturer extends EventEmitter {
 
     try {
       browser = await chromium.launch(this._launchOptions(true));
+      this.emit('log', { level: 'debug', message: '[capture] Chromium lancé (headless=true pour la capture).' });
 
       // Pré-check captcha + bascule visible si nécessaire (avant la boucle HAR).
       await this._warmupSession(browser, buildPageUrl(searchUrl, 1));
       if (this.isCancelled) {
+        this.emit('log', { level: 'debug', message: '[capture] Capture annulée après pré-check (isCancelled=true).' });
         await browser.close().catch(() => {});
         return outputHarPath;
       }
@@ -166,12 +196,18 @@ class HarCapturer extends EventEmitter {
       if (fs.existsSync(GLOBAL_SESSION_PATH)) {
         contextOptions.storageState = GLOBAL_SESSION_PATH;
         this.emit('log', { level: 'info', message: '🔑 Session validée chargée pour la capture.' });
+      } else {
+        this.emit('log', { level: 'warn', message: '[capture] Aucune session globale trouvée pour la capture — risque de blocage captcha plus élevé.' });
       }
 
       ({ ctx: context, p: page } = await this._newStealthContext(browser, contextOptions));
+      this.emit('log', { level: 'debug', message: '[capture] Contexte HAR créé (filtrage URL: recherche|api|items).' });
 
       for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
-        if (this.isCancelled) break;
+        if (this.isCancelled) {
+          this.emit('log', { level: 'debug', message: `[capture] Boucle de capture interrompue à la page ${pageNum} (annulation).` });
+          break;
+        }
 
         // Recyclage toutes les 3 pages pour la RAM
         if (pageNum > 1 && pageNum % 3 === 0) {
@@ -186,16 +222,20 @@ class HarCapturer extends EventEmitter {
         this.emit('log', { level: 'info', message: `[Page ${pageNum}/${maxPages}] Navigation vers ${targetUrl}` });
 
         try {
-          await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 35000 });
+          const resp = await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 35000 });
+          const httpStatus = resp ? resp.status() : '?';
+          this.emit('log', { level: 'debug', message: `[Page ${pageNum}] Page chargée — HTTP ${httpStatus}.` });
 
           // 🤖 DÉTECTION DE CAPTCHA / BLOCAGE (filet de sécurité après pré-check)
           let isBlocked = await this._checkCaptcha(page);
           if (isBlocked) {
             this.emit('log', { level: 'warn', message: `⚠️ [Page ${pageNum}] BLOCAGE RÉSIDUEL DÉTECTÉ en invisible. Arrêt de la capture (relancez après validation).` });
+            this.emit('log', { level: 'debug', message: `[capture] Arrêt à la page ${pageNum}/${maxPages} — captcha non résolu malgré le pré-check.` });
             break;
           }
         } catch (gotoErr) {
           this.emit('log', { level: 'warn', message: `[Page ${pageNum}] Avertissement : ${gotoErr.message}` });
+          this.emit('log', { level: 'debug', message: `[capture] Détail erreur page ${pageNum} : ${describeError(gotoErr)}` });
         }
 
         if (pageNum < maxPages) {
@@ -215,9 +255,18 @@ class HarCapturer extends EventEmitter {
       browser = null;
       this.emit('log', { level: 'info', message: `✅ Session synchronisée.` });
 
+      // Diagnostic final : taille du HAR généré
+      if (fs.existsSync(outputHarPath)) {
+        const harSize = fs.statSync(outputHarPath).size;
+        this.emit('log', { level: 'debug', message: `[capture] HAR généré : ${outputHarPath} (${formatBytes(harSize)}).` });
+      } else {
+        this.emit('log', { level: 'warn', message: `[capture] ⚠️ Le fichier HAR n'a pas été créé : ${outputHarPath}` });
+      }
+
       return outputHarPath;
     } catch (err) {
       this.emit('log', { level: 'error', message: `❌ Erreur : ${err.message}` });
+      this.emit('log', { level: 'debug', message: `[capture] Détail erreur fatale : ${describeError(err)}` });
       throw err;
     } finally {
       if (browser) await browser.close().catch(() => {});
