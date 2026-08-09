@@ -15,7 +15,7 @@ const { app, BrowserWindow } = require('electron');
 
 let setupIpcHandlers;
 try {
-  ({ setupIpcHandlers } = require('./ipcHandlers'));
+  ({ setupIpcHandlers } = require('./core/ipcHandlers'));
   console.log('✅ ipcHandlers chargé avec succès.');
 } catch (err) {
   console.error('❌ Erreur de chargement de ipcHandlers :', err);

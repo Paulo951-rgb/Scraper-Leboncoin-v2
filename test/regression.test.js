@@ -69,12 +69,15 @@ assert(diag.describeError({ code: 'ENOENT', message: 'x' }).includes('code=ENOEN
 
 // --- 2. Modules principaux ---
 console.log('\n[2/4] Modules principaux');
-const { MarketAnalyzer } = require('../src/main/modules/marketAnalyzer');
-const { GlobalAnalyzer } = require('../src/main/modules/globalAnalyzer');
-const { JobSchedulerManager } = require('../src/main/modules/jobScheduler');
-const { DealFinder } = require('../src/main/modules/dealFinder');
-const { StorageCleaner } = require('../src/main/modules/storageCleaner');
-const { FileManager } = require('../src/main/modules/fileManager');
+const { MarketAnalyzer } = require('../src/main/services/ai/marketAnalyzer');
+const { GlobalAnalyzer } = require('../src/main/services/ai/globalAnalyzer');
+const { JobSchedulerManager } = require('../src/main/services/jobs/jobScheduler');
+const { DealFinder } = require('../src/main/services/analysis/dealFinder');
+const { StorageCleaner } = require('../src/main/services/maintenance/storageCleaner');
+const { FileManager } = require('../src/main/infrastructure/fileManager');
+const { Notifier } = require('../src/main/infrastructure/notifications');
+const { loadSettings, saveSettings } = require('../src/main/core/settings');
+const { RISK_KEYWORDS } = require('../src/main/config/risk-keywords');
 
 assert(typeof MarketAnalyzer.analyzeAds === 'function', 'MarketAnalyzer.analyzeAds');
 assert(typeof GlobalAnalyzer.analyze === 'function', 'GlobalAnalyzer.analyze');
@@ -133,7 +136,7 @@ const har = {
 fs.writeFileSync(harPath, JSON.stringify(har));
 
 await new Promise((resolve) => {
-  const child = fork(path.join(__dirname, '..', 'src/main/vendor/leboncoin-pipeline.js'), [harPath, '--out', tmpOut, '--headless', '--no-desc', '--csv'], { stdio: ['pipe', 'pipe', 'pipe', 'ipc'] });
+  const child = fork(path.join(__dirname, '..', 'src/main/services/scraping/leboncoin-pipeline.js'), [harPath, '--out', tmpOut, '--headless', '--no-desc', '--csv'], { stdio: ['pipe', 'pipe', 'pipe', 'ipc'] });
   let stdout = '';
   child.stdout.on('data', (d) => { stdout += d.toString(); });
   child.on('close', (code) => {
@@ -153,8 +156,8 @@ await new Promise((resolve) => {
 console.log('\n[4/4] Corrections PR #3');
 const appCode = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/app.js'), 'utf8');
 const preloadCode = fs.readFileSync(path.join(__dirname, '..', 'src/main/preload.js'), 'utf8');
-const ipcCode = fs.readFileSync(path.join(__dirname, '..', 'src/main/ipcHandlers.js'), 'utf8');
-const maCode = fs.readFileSync(path.join(__dirname, '..', 'src/main/modules/marketAnalyzer.js'), 'utf8');
+const ipcCode = fs.readFileSync(path.join(__dirname, '..', 'src/main/core/ipcHandlers.js'), 'utf8');
+const maCode = fs.readFileSync(path.join(__dirname, '..', 'src/main/services/ai/marketAnalyzer.js'), 'utf8');
 
 assert(/(let|const)\s+mapInstance\b/.test(appCode), 'app.js: mapInstance declared');
 assert(/(let|const)\s+dealsChartInstance\b/.test(appCode), 'app.js: dealsChartInstance declared');
@@ -176,6 +179,61 @@ assert(/provider === 'openai' && !apiKey/.test(maCode), 'marketAnalyzer.js: hand
 // MarketAnalyzer fallback avec OpenAI sans clé
 const result = await MarketAnalyzer.analyzeAds([{ id: '1', title: 'Test', price: 100 }], { provider: 'openai' });
 assert(result.length === 1 && result[0].marketAnalysis.confidence === 'Faible', 'marketAnalyzer openai-no-key → fallback Faible');
+
+// --- 5. Nouvelle architecture (refactor structure) ---
+console.log('\n[5/5] Architecture restructurée');
+const { existsSync } = fs;
+const base = path.join(__dirname, '..', 'src/main');
+
+// Structure par couches
+assert(existsSync(path.join(base, 'core/ipcHandlers.js')), 'core/ipcHandlers.js present');
+assert(existsSync(path.join(base, 'core/settings.js')), 'core/settings.js (extrait) present');
+assert(existsSync(path.join(base, 'config/constants.js')), 'config/constants.js present');
+assert(existsSync(path.join(base, 'config/risk-keywords.js')), 'config/risk-keywords.js (extrait) present');
+assert(existsSync(path.join(base, 'services/scraping/harCapturer.js')), 'services/scraping/harCapturer.js present');
+assert(existsSync(path.join(base, 'services/scraping/pipelineRunner.js')), 'services/scraping/pipelineRunner.js present');
+assert(existsSync(path.join(base, 'services/scraping/leboncoin-pipeline.js')), 'services/scraping/leboncoin-pipeline.js (déplacé du vendor/) present');
+assert(existsSync(path.join(base, 'services/ai/marketAnalyzer.js')), 'services/ai/marketAnalyzer.js present');
+assert(existsSync(path.join(base, 'services/ai/globalAnalyzer.js')), 'services/ai/globalAnalyzer.js present');
+assert(existsSync(path.join(base, 'services/analysis/dealFinder.js')), 'services/analysis/dealFinder.js present');
+assert(existsSync(path.join(base, 'services/jobs/jobHistory.js')), 'services/jobs/jobHistory.js present');
+assert(existsSync(path.join(base, 'services/jobs/jobScheduler.js')), 'services/jobs/jobScheduler.js present');
+assert(existsSync(path.join(base, 'services/maintenance/storageCleaner.js')), 'services/maintenance/storageCleaner.js present');
+assert(existsSync(path.join(base, 'infrastructure/excelExporter.js')), 'infrastructure/excelExporter.js present');
+assert(existsSync(path.join(base, 'infrastructure/fileManager.js')), 'infrastructure/fileManager.js present');
+assert(existsSync(path.join(base, 'infrastructure/notifications.js')), 'infrastructure/notifications.js (extrait) present');
+
+// Anciens dossiers supprimés
+assert(!existsSync(path.join(base, 'modules')), 'old modules/ folder removed');
+assert(!existsSync(path.join(base, 'vendor')), 'old vendor/ folder removed');
+assert(!existsSync(path.join(base, 'ipcHandlers.js')), 'ipcHandlers.js moved out of main/ root');
+
+// Notifier extrait du scheduler
+assert(typeof Notifier.notifyGoodDeal === 'function', 'Notifier.notifyGoodDeal extracted to infrastructure');
+assert(typeof Notifier.isSupported === 'function', 'Notifier.isSupported present');
+assert(typeof JobSchedulerManager.prototype.notifyGoodDeal === 'undefined', 'scheduler no longer holds notifyGoodDeal (SRP)');
+
+// Settings extrait d'ipcHandlers
+assert(typeof loadSettings === 'function', 'loadSettings extracted to core/settings');
+assert(typeof saveSettings === 'function', 'saveSettings extracted to core/settings');
+
+// risk-keywords extrait de constants
+assert(Array.isArray(RISK_KEYWORDS) && RISK_KEYWORDS.length > 0, 'RISK_KEYWORDS in config/risk-keywords.js');
+assert(!/RISK_KEYWORDS/.test(fs.readFileSync(path.join(base, 'config/constants.js'), 'utf8')), 'RISK_KEYWORDS removed from constants.js');
+
+// ipcHandlers ne contient plus loadSettings/saveSettings inline
+assert(!/function loadSettings\b/.test(ipcCode), 'ipcHandlers no longer defines loadSettings inline');
+assert(!/function saveSettings\b/.test(ipcCode), 'ipcHandlers no longer defines saveSettings inline');
+assert(/require\(.\.\/settings.\)/.test(ipcCode), 'ipcHandlers imports settings from ./settings');
+assert(/Notifier\.notifyGoodDeal/.test(ipcCode), 'ipcHandlers uses Notifier.notifyGoodDeal');
+
+// main.js pointe vers core/ipcHandlers
+const mainCode = fs.readFileSync(path.join(base, 'main.js'), 'utf8');
+assert(/require\(.\.\/core\/ipcHandlers.\)/.test(mainCode), 'main.js requires ./core/ipcHandlers');
+
+// pipelineRunner pointe vers le pipeline dans le même dossier
+const prCode = fs.readFileSync(path.join(base, 'services/scraping/pipelineRunner.js'), 'utf8');
+assert(/path\.join\(__dirname, .leboncoin-pipeline\.js.\)/.test(prCode), 'pipelineRunner finds pipeline in same folder (no ../vendor/)');
 
 console.log(`\n=== RÉSULTAT : ${pass} réussis, ${fail} échoués ===`);
 process.exit(fail > 0 ? 1 : 0);

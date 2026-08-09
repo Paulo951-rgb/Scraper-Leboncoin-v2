@@ -4,8 +4,8 @@
 
 'use strict';
 
-// 🟢 FIX : Centralisation et importation des mots-clés depuis constants.js
-const { RISK_KEYWORDS } = require('../config/constants');
+// Mots-clés de risque centralisés dans config/risk-keywords.js (logique métier isolée)
+const { RISK_KEYWORDS } = require('../../config/risk-keywords');
 
 class DealFinder {
   static analyze(ads) {

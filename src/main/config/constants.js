@@ -29,10 +29,5 @@ module.exports = {
     autoAiMarket: true,
   },
   THEMES: ['theme-dark', 'theme-light', 'theme-oled', 'theme-blue', 'theme-green', 'theme-violet'],
-  RISK_KEYWORDS: [
-    'hs', 'pour pièces', 'pour pieces', 'panne', 'non testé', 'non teste',
-    'à réparer', 'a reparer', 'cassé', 'casse', 'sans chargeur', 'fissuré',
-    'incomplet', 'défectueux', 'defectueux'
-  ],
   GLOBAL_SESSION_PATH,
 };

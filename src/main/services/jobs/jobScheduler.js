@@ -1,7 +1,10 @@
 'use strict';
 
-const { Notification } = require('electron');
-
+/**
+ * JobSchedulerManager — ordonnanceur de tâches planifiées (cron-like).
+ * La notification des bonnes affaires est désormais gérée par infrastructure/notifications.js
+ * afin de séparer l'ordonnancement (planning) de la présentation (notification OS).
+ */
 class JobSchedulerManager {
   constructor(onTriggerJob) {
     this.onTriggerJob = onTriggerJob; // Callback de lancement
@@ -106,29 +109,6 @@ class JobSchedulerManager {
     }
 
     return result;
-  }
-
-  /**
-   * Envoie une notification Windows si une Bonne Affaire est trouvée.
-   * Utilise le champ `marketAnalysis.diffPct` réellement produit par MarketAnalyzer.
-   */
-  static notifyGoodDeal(ad) {
-    if (!Notification.isSupported()) return;
-
-    const ma = ad.marketAnalysis || {};
-    const diffPct = ma.diffPct;
-    const discountText =
-      diffPct != null
-        ? `${diffPct > 0 ? '+' : ''}${diffPct}% vs marché`
-        : '';
-
-    const body = `${ad.title || 'Annonce'} - ${ad.price ? ad.price + '€' : ''} (${ad.city || 'Inconnue'})${discountText ? '\n' + discountText : ''}`;
-
-    new Notification({
-      title: '🟢 NOUVELLE BONNE AFFAIRE LEBONCOIN !',
-      body,
-      silent: false,
-    }).show();
   }
 }
 

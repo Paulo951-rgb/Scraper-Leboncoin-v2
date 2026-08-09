@@ -74,18 +74,20 @@ L'application suit l'architecture standard **Electron** en deux processus sépar
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                        PROCESSUS MAIN (Node.js)                  │
-│  src/main/main.js  →  crée la BrowserWindow + charge ipcHandlers │
+│  src/main/main.js  →  crée la BrowserWindow + charge core/ipcHandlers │
 │                                                                     │
 │  ┌───────────────┐   ┌──────────────────┐   ┌──────────────────┐ │
 │  │ HarCapturer   │   │ PipelineRunner    │   │ MarketAnalyzer    │ │
 │  │ (Playwright)  │──▶│ (fork process)    │──▶│ (IA scoring)      │ │
 │  └───────────────┘   └──────────────────┘   └──────────────────┘ │
+│  services/scraping/      services/scraping/      services/ai/      │
 │         │                     │                       │           │
 │         ▼                     ▼                       ▼           │
 │   capture.har        annonces.json/.csv/.txt    marketAnalysis    │
 │                                                         │           │
 │                                              ┌──────────────────┐  │
 │                                              │  ExcelExporter    │  │
+│                                              │  infrastructure/  │  │
 │                                              └──────────────────┘  │
 └─────────────────────────────────────────────────────────────────┘
                               ▲  IPC (ipcMain / ipcRenderer)  │
@@ -97,9 +99,11 @@ L'application suit l'architecture standard **Electron** en deux processus sépar
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+Le processus main suit une **architecture en couches** (`core/` orchestration, `services/` logique métier, `infrastructure/` intégrations externes, `config/` configuration, `utils/` utilitaires) — voir la section *Structure du projet* ci-dessous.
+
 ### Pourquoi un sous-processus (`fork`) séparé pour le pipeline ?
 
-Le fichier `src/main/vendor/leboncoin-pipeline.js` est un **script CLI Node.js autonome** (utilisable aussi en ligne de commande) lancé via `child_process.fork()` depuis `pipelineRunner.js`. Cela permet :
+Le fichier `src/main/services/scraping/leboncoin-pipeline.js` est un **script CLI Node.js autonome** (utilisable aussi en ligne de commande) lancé via `child_process.fork()` depuis `pipelineRunner.js`. Cela permet :
 - d'isoler un traitement potentiellement lourd (parsing de très gros fichiers `.har`, jusqu'à plusieurs centaines de Mo) du processus principal Electron pour ne pas geler l'UI ;
 - de pouvoir tuer/interrompre proprement le traitement (`SIGINT`) sans affecter Electron ;
 - de communiquer la progression via `stdout` (parsing de logs formatés `[done/total]`).
@@ -111,28 +115,40 @@ Le fichier `src/main/vendor/leboncoin-pipeline.js` est un **script CLI Node.js a
 ```
 leboncoin-scraper-app/
 ├── package.json                          # Métadonnées, dépendances, script "start"
+├── test/
+│   └── regression.test.js                # Suite de non-régression (96 assertions)
 └── src/
     ├── main/                             # Processus principal Electron (Node.js)
-    │   ├── main.js                       # Point d'entrée : crée la fenêtre Electron
+    │   ├── main.js                       # Point d'entrée : cycle de vie app + fenêtre Electron
     │   ├── preload.js                    # Pont sécurisé (contextBridge) Main ↔ Renderer
-    │   ├── ipcHandlers.js                # Tous les gestionnaires d'événements IPC
-    │   ├── config/
-    │   │   └── constants.js              # Constantes globales (chemins, thèmes, mots-clés à risque)
-    │   ├── utils/
-    │   │   └── helpers.js                # sleep, randomDelay, écriture atomique, formatDuration...
-    │   ├── vendor/
-    │   │   └── leboncoin-pipeline.js     # Script CLI autonome : HAR → JSON/CSV/TXT + enrichissement
-    │   └── modules/
-    │       ├── harCapturer.js            # Capture du trafic réseau via Playwright/Chromium
-    │       ├── pipelineRunner.js         # Lance leboncoin-pipeline.js en sous-processus (fork)
-    │       ├── dealFinder.js             # Détection statistique de bonnes affaires / annonces à risque
-    │       ├── marketAnalyzer.js         # Analyse IA par annonce : score, classification, ROI, scam score
-    │       ├── aiAnalyzer.js             # Résumé IA générique par annonce (OpenAI / Ollama)
-    │       ├── excelExporter.js          # Génération du fichier .xlsx stylisé (exceljs)
-    │       ├── fileManager.js            # Ouverture de fichiers/dossiers dans l'explorateur système
-    │       ├── jobHistory.js             # Listing, lecture et suppression des jobs passés
-    │       ├── jobScheduler.js           # Planification de scrapings récurrents + notifications
-    │       └── storageCleaner.js         # Nettoyage des anciens fichiers .har
+    │   ├── core/                         # Cœur applicatif (orchestration)
+    │   │   ├── ipcHandlers.js            # Routage IPC uniquement (délègue aux services)
+    │   │   └── settings.js               # Persistance des paramètres utilisateur
+    │   ├── config/                       # Configuration
+    │   │   ├── constants.js              # Chemins, defaults, thèmes
+    │   │   └── risk-keywords.js          # Mots-clés à risque (logique métier isolée)
+    │   ├── services/                     # Services métier (par domaine)
+    │   │   ├── scraping/                 # Couche de scraping
+    │   │   │   ├── harCapturer.js        # Capture du trafic réseau via Playwright/Chromium
+    │   │   │   ├── pipelineRunner.js     # Lance leboncoin-pipeline.js en sous-processus (fork)
+    │   │   │   └── leboncoin-pipeline.js # Script CLI : HAR → JSON/CSV/TXT + enrichissement
+    │   │   ├── ai/                       # Couche d'analyse IA
+    │   │   │   ├── marketAnalyzer.js     # Analyse IA par annonce (Ollama / OpenAI)
+    │   │   │   └── globalAnalyzer.js     # Analyse globale du dataset (Google Gemini)
+    │   │   ├── analysis/                 # Couche d'analyse statistique
+    │   │   │   └── dealFinder.js         # Détection bonnes affaires / annonces à risque
+    │   │   ├── jobs/                     # Gestion des jobs
+    │   │   │   ├── jobHistory.js         # Listing, lecture, suppression des jobs passés
+    │   │   │   └── jobScheduler.js       # Planification de scrapings récurrents
+    │   │   └── maintenance/              # Maintenance
+    │   │       └── storageCleaner.js     # Nettoyage des anciens fichiers .har
+    │   ├── infrastructure/               # Intégrations externes / OS
+    │   │   ├── excelExporter.js          # Génération du fichier .xlsx stylisé (exceljs)
+    │   │   ├── fileManager.js            # Ouverture de fichiers/dossiers (explorateur système)
+    │   │   └── notifications.js          # Notifications système (Electron Notification)
+    │   └── utils/                        # Utilitaires transverses
+    │       ├── helpers.js                # sleep, randomDelay, écriture atomique, formatDuration...
+    │       └── diagnostics.js            # Helpers de log/diagnostic (redact, formatBytes…)
     └── renderer/                         # Interface utilisateur (front-end, sandboxé)
         ├── index.html                    # Structure de l'UI (onglets, modales, formulaires)
         ├── app.js                        # Logique front-end (événements, rendu dynamique, appels API)

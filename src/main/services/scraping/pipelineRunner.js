@@ -3,7 +3,7 @@
 const path = require('path');
 const { fork } = require('child_process');
 const { EventEmitter } = require('events');
-const { formatMs, describeError, truncate } = require('../utils/diagnostics');
+const { formatMs, describeError, truncate } = require('../../utils/diagnostics');
 
 function stripAnsi(str) {
   return str.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '');
@@ -23,7 +23,7 @@ class PipelineRunner extends EventEmitter {
       if (!harPath) return reject(new Error('harPath est requis pour exécuter le pipeline.'));
       if (!outDir) return reject(new Error('outDir est requis pour exécuter le pipeline.'));
 
-      const scriptPath = path.join(__dirname, '../vendor/leboncoin-pipeline.js');
+      const scriptPath = path.join(__dirname, 'leboncoin-pipeline.js');
 
       // fork() gère de manière native et parfaite les espaces dans les chemins Windows !
       // Le premier argument de fork est le script, le deuxième est le tableau des arguments restants (harPath, --out, etc.)

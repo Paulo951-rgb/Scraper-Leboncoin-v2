@@ -4,7 +4,7 @@
 
 'use strict';
 
-const { summarizeAds, formatMs, redact } = require('../utils/diagnostics');
+const { summarizeAds, formatMs, redact } = require('../../utils/diagnostics');
 
 class MarketAnalyzer {
   static async analyzeAds(ads, config = {}, onProgress) {
