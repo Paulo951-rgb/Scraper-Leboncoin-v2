@@ -9,9 +9,18 @@ const BASE_OUT_DIR = isPackaged
   ? path.join(app.getPath('documents'), 'Leboncoin Scraper Pro')
   : path.join(process.cwd(), 'output');
 
+// 🔑 Chemin unique pour la session globale (Master Session)
+const GLOBAL_SESSION_PATH = path.join(BASE_OUT_DIR, 'global-session.json');
+
+// 📁 Répertoires centralisés (cohérents en dev ET en version packagée .exe)
+const JOBS_DIR = path.join(BASE_OUT_DIR, 'jobs');
+const RESULTS_DIR = path.join(JOBS_DIR, 'results');
+
 module.exports = {
   APP_NAME: 'Leboncoin Scraper Pro',
   BASE_OUT_DIR,
+  JOBS_DIR,
+  RESULTS_DIR,
   DEFAULTS: {
     minDelayMs: 1200,
     maxDelayMs: 2500,
@@ -25,6 +34,5 @@ module.exports = {
     'à réparer', 'a reparer', 'cassé', 'casse', 'sans chargeur', 'fissuré',
     'incomplet', 'défectueux', 'defectueux'
   ],
-  // 🔑 Chemin unique pour la session globale (Master Session)
-  GLOBAL_SESSION_PATH: path.join(BASE_OUT_DIR, 'global-session.json'),
+  GLOBAL_SESSION_PATH,
 };

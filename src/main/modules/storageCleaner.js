@@ -2,13 +2,14 @@
 
 const fs = require('fs');
 const path = require('path');
+const { JOBS_DIR } = require('../config/constants');
 
 class StorageCleaner {
   /**
    * Nettoie les fichiers .har de plus de `maxDays` jours dans output/
    */
   static cleanOldHars(maxDays = 7) {
-    const jobsDir = path.join(process.cwd(), 'output', 'jobs');
+    const jobsDir = JOBS_DIR;
     if (!fs.existsSync(jobsDir)) return 0;
 
     const now = Date.now();
