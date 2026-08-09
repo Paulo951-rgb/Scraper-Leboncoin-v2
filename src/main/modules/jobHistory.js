@@ -12,14 +12,17 @@ class JobHistoryManager {
 
   static listAllJobs() {
     const jobsDir = this.getJobsDir();
-    if (!fs.existsSync(jobsDir)) return [];
+    if (!fs.existsSync(jobsDir)) {
+      console.log(`[JobHistory] Dossier jobs introuvable : ${jobsDir} — retour liste vide.`);
+      return [];
+    }
 
     const entries = fs.readdirSync(jobsDir, { withFileTypes: true });
+    const jobDirs = entries.filter((e) => e.isDirectory() && e.name.startsWith('job-'));
+    console.log(`[JobHistory] Scan de ${jobsDir} : ${entries.length} entrée(s), ${jobDirs.length} dossier(s) job- trouvés.`);
     const jobs = [];
 
-    for (const entry of entries) {
-      if (!entry.isDirectory() || !entry.name.startsWith('job-')) continue;
-
+    for (const entry of jobDirs) {
       const jobPath = path.join(jobsDir, entry.name);
       const resultsDir = path.join(jobPath, 'results');
       const jsonPath = path.join(resultsDir, 'annonces.json');
@@ -34,9 +37,12 @@ class JobHistoryManager {
       if (fs.existsSync(jsonPath)) {
         try {
           rawAds = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
-        } catch {
+        } catch (err) {
+          console.warn(`[JobHistory] JSON invalide pour ${entry.name} : ${err.message} — annonces ignorées.`);
           rawAds = [];
         }
+      } else {
+        console.debug(`[JobHistory] ${entry.name} : pas d'annonces.json (résultats absents).`);
       }
 
       const { stats, enrichedAds } = DealFinder.analyze(rawAds);
@@ -59,12 +65,15 @@ class JobHistoryManager {
       });
     }
 
+    console.log(`[JobHistory] ${jobs.length} job(s) chargé(s) — ${jobs.reduce((s, j) => s + j.adsCount, 0)} annonce(s) au total.`);
     return jobs.sort((a, b) => b.id.localeCompare(a.id));
   }
 
   static getLatestJob() {
     const jobs = this.listAllJobs();
-    return jobs.length > 0 ? jobs[0] : null;
+    const latest = jobs.length > 0 ? jobs[0] : null;
+    console.log(`[JobHistory] Dernier job : ${latest ? latest.id + ' (' + latest.adsCount + ' annonces)' : '(aucun)'}.`);
+    return latest;
   }
 
   static deleteJob(jobId) {
@@ -73,8 +82,10 @@ class JobHistoryManager {
 
     if (fs.existsSync(jobPath)) {
       fs.rmSync(jobPath, { recursive: true, force: true });
+      console.log(`[JobHistory] Job supprimé : ${jobId} (${jobPath}).`);
       return true;
     }
+    console.warn(`[JobHistory] Suppression impossible — job introuvable : ${jobId} (${jobPath}).`);
     return false;
   }
 }

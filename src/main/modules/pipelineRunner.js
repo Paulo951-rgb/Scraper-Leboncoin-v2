@@ -3,6 +3,7 @@
 const path = require('path');
 const { fork } = require('child_process');
 const { EventEmitter } = require('events');
+const { formatMs, describeError, truncate } = require('../utils/diagnostics');
 
 function stripAnsi(str) {
   return str.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '');
@@ -38,15 +39,21 @@ class PipelineRunner extends EventEmitter {
         level: 'info',
         message: `⚙️ Lancement du pipeline sous-processus (Moteur de fork sécurisé)...`,
       });
+      this.emit('log', { level: 'debug', message: `[pipelineRunner] Script : ${scriptPath}` });
+      this.emit('log', { level: 'debug', message: `[pipelineRunner] Args : ${remainingArgs.join(' ')}` });
+      this.emit('log', { level: 'debug', message: `[pipelineRunner] Options : noDesc=${noDesc} | csv=${csv} | limit=${limit ?? '(aucun)'} | fresh=${fresh} | cwd=${process.cwd()}` });
 
       this.isCancelled = false;
+      const t0Fork = Date.now();
       this.childProcess = fork(scriptPath, remainingArgs, {
         cwd: process.cwd(),
         env: { ...process.env, FORCE_COLOR: '0' },
         stdio: ['pipe', 'pipe', 'pipe', 'ipc'] // Redirige les flux pour capturer la progression
       });
+      this.emit('log', { level: 'debug', message: `[pipelineRunner] Sous-processus forké (PID ${this.childProcess.pid}) en ${formatMs(Date.now() - t0Fork)}.` });
 
       let stdoutBuffer = '';
+      let stderrTotal = '';
 
       this.childProcess.stdout.on('data', (data) => {
         stdoutBuffer += data.toString('utf8');
@@ -61,6 +68,7 @@ class PipelineRunner extends EventEmitter {
       let stderrBuffer = '';
       this.childProcess.stderr.on('data', (data) => {
         stderrBuffer += data.toString('utf8');
+        stderrTotal += data.toString('utf8');
         const lines = stderrBuffer.split('\n');
         stderrBuffer = lines.pop();
 
@@ -74,26 +82,31 @@ class PipelineRunner extends EventEmitter {
 
       this.childProcess.on('error', (err) => {
         this.emit('log', { level: 'error', message: `Erreur processus : ${err.message}` });
+        this.emit('log', { level: 'debug', message: `[pipelineRunner] Détail erreur processus : ${describeError(err)}` });
         reject(err);
       });
 
       this.childProcess.on('close', (code) => {
         if (stdoutBuffer.trim()) this._handleLine(stdoutBuffer);
+        const elapsed = formatMs(Date.now() - t0Fork);
 
         this.childProcess = null;
 
         if (this.isCancelled) {
           this.emit('log', { level: 'warn', message: 'Pipeline annulé par l\'utilisateur.' });
+          this.emit('log', { level: 'debug', message: `[pipelineRunner] Annulation — code de sortie ${code} | durée ${elapsed}.` });
           resolve(130);
           return;
         }
 
         if (code === 0) {
           this.emit('log', { level: 'info', message: '✅ Execution du pipeline terminée avec succès.' });
+          this.emit('log', { level: 'debug', message: `[pipelineRunner] Terminé en ${elapsed} (code 0).${stderrTotal ? ' STDERR total : ' + truncate(stripAnsi(stderrTotal), 200) : ''}` });
           resolve(0);
         } else {
           const errMessage = `Le pipeline s'est terminé avec un code : ${code}`;
           this.emit('log', { level: 'error', message: errMessage });
+          this.emit('log', { level: 'debug', message: `[pipelineRunner] Échec en ${elapsed} (code ${code}). STDERR : ${truncate(stripAnsi(stderrTotal), 500) || '(vide)'}` });
           reject(new Error(errMessage));
         }
       });

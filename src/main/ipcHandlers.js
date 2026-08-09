@@ -13,6 +13,7 @@ const { MarketAnalyzer } = require('./modules/marketAnalyzer');
 const { JobSchedulerManager } = require('./modules/jobScheduler');
 const { GlobalAnalyzer } = require('./modules/globalAnalyzer');
 const { JOBS_DIR } = require('./config/constants');
+const { redact, summarizeAds, formatBytes, describeError } = require('./utils/diagnostics');
 
 // Persistance légère des paramètres (durée de rétention HAR, etc.)
 const SETTINGS_PATH = path.join(__dirname, 'config', 'user-settings.json');
@@ -59,7 +60,10 @@ function setupIpcHandlers(mainWindow) {
   const sendStatus = (status) => mainWindow.webContents.send('status', status);
 
   ipcMain.on('job:start', async (event, config) => {
-    if (isRunning) return;
+    if (isRunning) {
+      sendLog({ level: 'warn', message: '[job:start] Un job est déjà en cours — requête ignorée.' });
+      return;
+    }
     isRunning = true;
 
     const { searchUrl, pages = 1, noDesc = false, csv = true, autoAiMarket = true, limit, aiConfig, proxyUrl } = config;
@@ -69,11 +73,15 @@ function setupIpcHandlers(mainWindow) {
     const harPath = path.join(jobDir, 'capture.har');
     const resultsDir = path.join(jobDir, 'results');
 
+    sendLog({ level: 'debug', message: `[job:start] Config reçue — searchUrl=${searchUrl} | pages=${pages} | noDesc=${noDesc} | csv=${csv} | autoAiMarket=${autoAiMarket} | limit=${limit ?? '(aucun)'} | proxy=${proxyUrl || 'aucun'} | aiConfig.provider=${aiConfig?.provider || '?'} | aiConfig.apiKey=${redact(aiConfig?.apiKey)}` });
+    sendLog({ level: 'debug', message: `[job:start] Dossiers — jobDir=${jobDir} | harPath=${harPath} | resultsDir=${resultsDir}` });
+
     let stoppedEarly = false;
 
     try {
       sendStatus({ state: 'capturing', message: 'Capture HAR automatique en cours...' });
       sendLog({ level: 'info', message: '--- DÉMARRAGE DU SCRAPING ---' });
+      const t0Total = Date.now();
 
       // Le HarCapturer gère lui-même la bascule headless/visible (pré-check captcha).
       activeCapturer = new HarCapturer({ proxyUrl });
@@ -88,6 +96,8 @@ function setupIpcHandlers(mainWindow) {
         maxPages: parseInt(pages, 10),
         outputHarPath: harPath,
       });
+      const harElapsed = Date.now() - t0Total;
+      sendLog({ level: 'debug', message: `[job:start] Phase capture HAR terminée en ${Math.round(harElapsed / 1000)}s. Taille HAR : ${fs.existsSync(harPath) ? formatBytes(fs.statSync(harPath).size) : '(introuvable)'}.` });
 
       activeCapturer = null;
 
@@ -108,6 +118,7 @@ function setupIpcHandlers(mainWindow) {
         sendProgress({ percent: globalPercent, status, eta });
       });
 
+      const t0Pipeline = Date.now();
       await activeRunner.run({
         harPath,
         outDir: resultsDir,
@@ -115,6 +126,7 @@ function setupIpcHandlers(mainWindow) {
         csv,
         limit: limit ? parseInt(limit, 10) : undefined,
       });
+      sendLog({ level: 'debug', message: `[job:start] Phase pipeline terminée en ${Math.round((Date.now() - t0Pipeline) / 1000)}s.` });
 
       activeRunner = null;
 
@@ -123,20 +135,25 @@ function setupIpcHandlers(mainWindow) {
 
       if (fs.existsSync(jsonPath)) {
         let ads = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+        sendLog({ level: 'debug', message: `[job:start] annonces.json lu : ${summarizeAds(ads)}.` });
 
         // 🧠 ANALYSE IA CONDITIONNELLE (Seulement si coche activée)
         if (autoAiMarket) {
           sendStatus({ state: 'processing', message: 'Analyse du marché IA multi-sources...' });
           sendLog({ level: 'info', message: '🧠 Lancement de l\'Analyse de Marché IA Multi-Sources...' });
 
+          const t0Ai = Date.now();
           ads = await MarketAnalyzer.analyzeAds(ads, aiConfig, (prog) => {
             sendProgress({
               percent: 75 + Math.round((prog.percent / 100) * 25),
               status: prog.status,
             });
           });
+          sendLog({ level: 'debug', message: `[job:start] Phase analyse IA terminée en ${Math.round((Date.now() - t0Ai) / 1000)}s.` });
 
           fs.writeFileSync(jsonPath, JSON.stringify(ads, null, 2));
+        } else {
+          sendLog({ level: 'debug', message: '[job:start] Analyse IA ignorée (autoAiMarket=false).' });
         }
 
         await ExcelExporter.exportToXlsx(ads, xlsxPath);
@@ -144,11 +161,17 @@ function setupIpcHandlers(mainWindow) {
 
         const goodDeals = ads.filter((a) => a.marketAnalysis?.classification === 'Très bonne affaire');
         if (goodDeals.length > 0) {
+          sendLog({ level: 'debug', message: `[job:start] ${goodDeals.length} "Très bonne affaire" détectée(s) — notification déclenchée pour la 1ère : "${(goodDeals[0].title || '').slice(0, 40)}".` });
           JobSchedulerManager.notifyGoodDeal(goodDeals[0]);
+        } else {
+          sendLog({ level: 'debug', message: '[job:start] Aucune "Très bonne affaire" détectée dans ce dataset.' });
         }
+      } else {
+        sendLog({ level: 'warn', message: `[job:start] annonces.json introuvable après pipeline : ${jsonPath} — le scraping a peut-être échoué silencieusement.` });
       }
 
       const latestJob = JobHistoryManager.getLatestJob();
+      sendLog({ level: 'debug', message: `[job:start] Durée totale du job : ${Math.round((Date.now() - t0Total) / 1000)}s | stoppedEarly=${stoppedEarly}.` });
 
       if (stoppedEarly) {
         sendProgress({ percent: 100, status: 'Sauvegardé (Interruption préventive IP)' });
@@ -168,6 +191,7 @@ function setupIpcHandlers(mainWindow) {
 
     } catch (err) {
       sendLog({ level: 'error', message: `❌ Erreur : ${err.message}` });
+      sendLog({ level: 'debug', message: `[job:start] Détail erreur fatale : ${describeError(err)}` });
       sendStatus({ state: 'error', message: `Erreur : ${err.message}` });
     } finally {
       isRunning = false;

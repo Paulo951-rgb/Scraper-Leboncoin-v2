@@ -9,6 +9,7 @@
 const fs = require('fs');
 const path = require('path');
 const { sleep, randomDelay, atomicWriteFileSync, cleanText } = require('../utils/helpers');
+const { summarizeAds, summarizeHarEntries, truncate, safeStringify, formatBytes, formatMs, countBy } = require('../utils/diagnostics');
 
 const DEFAULTS = Object.freeze({
   // ⚡ TURBO-MODE : 10 requêtes In-Page simultanées, délais très courts.
@@ -61,57 +62,106 @@ function parseArgs(argv) {
   return opts;
 }
 
-function loadHar(harPath) {
-  let raw = fs.readFileSync(harPath, 'utf8');
-  const har = JSON.parse(raw);
-  
-  // 🟢 OPTIMISATION MÉMOIRE : Libérer immédiatement le tampon texte de 220 Mo de la RAM
-  raw = null; 
+function loadHar(harPath, logger) {
+  if (!fs.existsSync(harPath)) {
+    if (logger) logger.error(`[loadHar] Fichier HAR introuvable : ${harPath}`);
+    throw new Error(`Fichier HAR introuvable : ${harPath}`);
+  }
+  const stat = fs.statSync(harPath);
+  if (logger) logger.debug(`[loadHar] Lecture du fichier : ${harPath} (${formatBytes(stat.size)})`);
 
-  return har?.log?.entries || [];
+  let raw = fs.readFileSync(harPath, 'utf8');
+  if (logger) logger.debug(`[loadHar] Fichier lu en mémoire : ${formatBytes(raw.length)} de texte`);
+
+  let har;
+  try {
+    har = JSON.parse(raw);
+  } catch (err) {
+    if (logger) logger.error(`[loadHar] JSON invalide dans le fichier HAR : ${err.message}`);
+    throw err;
+  }
+  // 🟢 OPTIMISATION MÉMOIRE : Libérer immédiatement le tampon texte de 220 Mo de la RAM
+  raw = null;
+
+  if (!har || !har.log) {
+    if (logger) logger.error(`[loadHar] Structure HAR invalide : pas de propriété "log". Clés présentes : ${Object.keys(har || {}).join(', ') || '(aucune)'}`);
+    return [];
+  }
+  const entries = har.log.entries || [];
+  if (logger) logger.debug(`[loadHar] ${entries.length} entrée(s) HAR trouvées. ${summarizeHarEntries(entries)}`);
+  return entries;
 }
 
-function getJsonResponses(entries) {
+function getJsonResponses(entries, logger) {
   const jsonResponses = [];
   const IGNORED = /image|font\/|css|javascript|octet-stream|svg|video|audio/i;
 
+  const stats = { total: entries.length, parsed: 0, noBody: 0, ignoredMime: 0, notJson: 0, nextDataFound: 0, parseError: 0, errorStatus: 0 };
+
   for (const entry of entries) {
     const res = entry.response;
-    if (!res || !res.content) continue;
-    if (typeof res.status === 'number' && res.status >= 400) continue;
-    if (IGNORED.test(res.content.mimeType || '') && !res.content.mimeType.includes('json')) continue;
+    if (!res || !res.content) {
+      stats.noBody++;
+      continue;
+    }
+    if (typeof res.status === 'number' && res.status >= 400) {
+      stats.errorStatus++;
+      if (logger) logger.debug(`[getJsonResponses] Entrée en erreur HTTP ${res.status} ignorée : ${truncate(entry.request?.url, 80)}`);
+      continue;
+    }
+    if (IGNORED.test(res.content.mimeType || '') && !res.content.mimeType.includes('json')) {
+      stats.ignoredMime++;
+      continue;
+    }
 
     let text = res.content.text;
-    if (!text) continue;
+    if (!text) {
+      stats.noBody++;
+      continue;
+    }
 
     if (res.content.encoding === 'base64') {
       try {
         text = Buffer.from(text, 'base64').toString('utf8');
       } catch {
+        stats.parseError++;
         continue;
       }
     }
 
     const trimmed = text.trim();
     if (!(trimmed.startsWith('{') || trimmed.startsWith('['))) {
+      // Tentative d'extraction __NEXT_DATA__ depuis du HTML
       const match = trimmed.match(/<script\s+id="__NEXT_DATA__"\s+type="application\/json">\s*([\s\S]*?)\s*<\/script>/i);
       if (match && match[1]) {
         try {
           jsonResponses.push({ url: entry.request?.url || '', data: JSON.parse(match[1]) });
+          stats.nextDataFound++;
+          stats.parsed++;
         } catch {
-          /* Ignorer */
+          stats.parseError++;
+          if (logger) logger.debug(`[getJsonResponses] __NEXT_DATA__ JSON invalide dans : ${truncate(entry.request?.url, 80)}`);
         }
+      } else {
+        stats.notJson++;
       }
       continue;
     }
 
     try {
       jsonResponses.push({ url: entry.request?.url || '', data: JSON.parse(trimmed) });
+      stats.parsed++;
     } catch {
-      /* Ignorer */
+      stats.parseError++;
     }
   }
 
+  if (logger) {
+    logger.debug(`[getJsonResponses] Stats extraction : ${stats.parsed} JSON parsés | ${stats.nextDataFound} via __NEXT_DATA__ | ${stats.ignoredMime} ignorés (mime) | ${stats.notJson} non-JSON | ${stats.noBody} sans corps | ${stats.errorStatus} en erreur HTTP | ${stats.parseError} erreurs de parsing`);
+    if (jsonResponses.length > 0) {
+      logger.debug(`[getJsonResponses] URLs JSON captées : ${jsonResponses.slice(0, 5).map((r) => truncate(r.url, 60)).join(' | ')}${jsonResponses.length > 5 ? ` (+${jsonResponses.length - 5} autres)` : ''}`);
+    }
+  }
   return jsonResponses;
 }
 
@@ -123,7 +173,7 @@ function looksLikeAd(obj) {
   return hasId && hasTitle && hasPriceOrUrl;
 }
 
-function findAdsIterative(root) {
+function findAdsIterative(root, logger) {
   const found = [];
   const seen = new Set();
   const stack = [root];
@@ -136,7 +186,10 @@ function findAdsIterative(root) {
     seen.add(node);
 
     visited++;
-    if (visited > 500000) break;
+    if (visited > 500000) {
+      if (logger) logger.warn(`[findAdsIterative] Limite de parcours atteinte (500000 nœuds) — arret pour éviter une boucle infinie.`);
+      break;
+    }
 
     if (Array.isArray(node)) {
       for (let i = node.length - 1; i >= 0; i--) stack.push(node[i]);
@@ -148,6 +201,7 @@ function findAdsIterative(root) {
     for (const key of Object.keys(node)) stack.push(node[key]);
   }
 
+  if (logger) logger.debug(`[findAdsIterative] ${visited} nœud(s) parcouru(s), ${found.length} objet(s) ressemblant à une annonce détecté(s).`);
   return found;
 }
 
@@ -186,19 +240,26 @@ function normalizeAd(raw) {
   };
 }
 
-function mergeDuplicates(ads) {
+function mergeDuplicates(ads, logger) {
   const byId = new Map();
+  let noIdCount = 0;
+  let dupCount = 0;
   for (const ad of ads) {
-    if (!ad.id) continue;
+    if (!ad.id) {
+      noIdCount++;
+      continue;
+    }
     if (byId.has(ad.id)) {
       const existing = byId.get(ad.id);
       const merged = { ...existing, ...ad };
       if (!existing.description && ad.description) merged.description = ad.description;
       byId.set(ad.id, merged);
+      dupCount++;
     } else {
       byId.set(ad.id, ad);
     }
   }
+  if (logger) logger.debug(`[mergeDuplicates] ${ads.length} annonce(s) en entrée | ${noIdCount} sans ID (ignorées) | ${dupCount} doublon(s) fusionné(s) | ${byId.size} unique(s) en sortie.`);
   return [...byId.values()];
 }
 
@@ -257,15 +318,22 @@ class DescriptionEnricher {
 
   async enrichAll(ads, writeOutputs) {
     const targets = ads.filter((a) => a.url && !a.description);
+    const noUrlCount = ads.filter((a) => !a.url).length;
+    const alreadyHasDesc = ads.filter((a) => a.description).length;
     if (targets.length === 0) {
       this.logger.info('Toutes les annonces ont déjà une description !');
+      this.logger.debug(`[DescriptionEnricher] Rien à faire : ${alreadyHasDesc} avec description, ${noUrlCount} sans URL.`);
       return;
     }
 
     this.logger.info(`\nExtraction des descriptions pour ${targets.length} annonce(s) (Turbo-Mode x10)...`);
+    this.logger.debug(`[DescriptionEnricher] Cibles : ${targets.length} | déjà avec description : ${alreadyHasDesc} | sans URL : ${noUrlCount} | batchSize : ${this.opts.batchSize || 10} | headless : ${this.opts.headless}`);
 
     const { chromium } = require('playwright');
+    this.logger.debug(`[DescriptionEnricher] Lancement Chromium (headless=${this.opts.headless})...`);
+    const t0Launch = Date.now();
     const browser = await chromium.launch({ headless: this.opts.headless });
+    this.logger.debug(`[DescriptionEnricher] Chromium lancé en ${formatMs(Date.now() - t0Launch)}.`);
 
     const parentDir = path.dirname(this.opts.outDir);
     const statePath = path.join(parentDir, 'session-state.json');
@@ -281,6 +349,9 @@ class DescriptionEnricher {
       const sessionToUse = fs.existsSync(globalStatePath) ? globalStatePath : (fs.existsSync(statePath) ? statePath : null);
       if (sessionToUse) {
         contextOptions.storageState = sessionToUse;
+        this.logger.debug(`[DescriptionEnricher] Session utilisée : ${sessionToUse}`);
+      } else {
+        this.logger.debug(`[DescriptionEnricher] Aucune session trouvée (ni ${path.basename(globalStatePath)}, ni ${path.basename(statePath)}) — contexte vierge.`);
       }
 
       const ctx = await browser.newContext(contextOptions);
@@ -293,7 +364,11 @@ class DescriptionEnricher {
         return route.continue();
       });
 
-      await p.goto('https://www.leboncoin.fr', { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
+      const t0Goto = Date.now();
+      await p.goto('https://www.leboncoin.fr', { waitUntil: 'domcontentloaded', timeout: 20000 }).catch((e) => {
+        this.logger.warn(`[DescriptionEnricher] Navigation initiale vers leboncoin.fr échouée : ${e.message} — le contexte reste toutefois utilisable pour les fetch in-page.`);
+      });
+      this.logger.debug(`[DescriptionEnricher] Page d'accueil chargée en ${formatMs(Date.now() - t0Goto)}.`);
       await sleep(1500);
       return { ctx, p };
     };
@@ -304,15 +379,26 @@ class DescriptionEnricher {
 
     let done = 0;
     let successCount = 0;
+    let notFoundCount = 0;
+    let httpErrorCount = 0;
+    let blockedCount = 0;
     const batchSize = this.opts.batchSize || 10;
+    let batchIndex = 0;
 
     for (let i = 0; i < targets.length; i += batchSize) {
-      if (this.shouldStopAll) break;
+      if (this.shouldStopAll) {
+        this.logger.debug(`[DescriptionEnricher] Arrêt demandé (shouldStopAll=true) — sortie de la boucle à ${done}/${targets.length}.`);
+        break;
+      }
 
       const batch = targets.slice(i, i + batchSize);
       const batchItems = batch.map((a) => ({ id: a.id, url: a.url }));
+      batchIndex++;
+      this.logger.debug(`[DescriptionEnricher] Batch ${batchIndex} : ${batch.length} annonce(s) — IDs [${batchItems.map((b) => b.id).join(', ')}]`);
 
+      const t0Batch = Date.now();
       const results = await this.fetchBatchInPage(page, batchItems);
+      this.logger.debug(`[DescriptionEnricher] Batch ${batchIndex} terminé en ${formatMs(Date.now() - t0Batch)} — ${Object.keys(results).length}/${batch.length} réponses.`);
 
       for (const ad of batch) {
         done++;
@@ -326,22 +412,36 @@ class DescriptionEnricher {
             this.consecutiveBlocks = 0;
             this.logger.info(`✅ [${done}/${targets.length}] ${(ad.title || '').slice(0, 50)}`);
           } else {
+            notFoundCount++;
             this.logger.warn(`⚠️ [${done}/${targets.length}] Description non trouvée sur ${ad.id}`);
+            this.logger.debug(`[DescriptionEnricher] HTML reçu (${formatBytes(res.html.length)}) mais pas de __NEXT_DATA__ ou pas de body pour l'ID ${ad.id}.`);
           }
         } else if (res && res.error === 'BLOCKED_403') {
+          blockedCount++;
           this.consecutiveBlocks++;
+          this.logger.warn(`🛑 [${done}/${targets.length}] Bloqué (HTTP 403/429) sur ${ad.id} — ${truncate(ad.url, 60)}`);
           if (this.consecutiveBlocks >= 3) {
             this.shouldStopAll = true;
             this.logger.warn('\n🛑 Blocage détecté. Arrêt préventif.');
+            this.logger.debug(`[DescriptionEnricher] Raison arrêt : ${this.consecutiveBlocks} blocages consécutifs (seuil=3). ${blockedCount} blocages au total sur ce batch.`);
             break;
           }
+        } else if (res && res.error && res.error.startsWith('HTTP_')) {
+          httpErrorCount++;
+          this.logger.warn(`⚠️ [${done}/${targets.length}] HTTP ${res.error.replace('HTTP_', '')} sur ${ad.id}`);
+        } else if (res && res.error) {
+          httpErrorCount++;
+          this.logger.warn(`⚠️ [${done}/${targets.length}] Erreur fetch sur ${ad.id} : ${res.error}`);
+        } else {
+          httpErrorCount++;
+          this.logger.warn(`⚠️ [${done}/${targets.length}] Aucune réponse reçue pour ${ad.id}`);
         }
       }
 
       if (done % 10 === 0) writeOutputs(ads);
       await randomDelay(this.opts.minDelayMs, this.opts.maxDelayMs);
 
-      if (done > 0 && done % this.opts.recycleContextEvery === 0) {
+      if (done > 0 && done % this.opts.recycleContextEvery === 0 && i + batchSize < targets.length) {
         this.logger.info(`🔄 Purge mémoire RAM (${done} items)...`);
         await page.close().catch(() => {});
         await context.close().catch(() => {});
@@ -357,6 +457,7 @@ class DescriptionEnricher {
     await context.close().catch(() => {});
     await browser.close().catch(() => {});
     this.logger.info(`Session terminée : ${successCount}/${targets.length} récupérées.`);
+    this.logger.debug(`[DescriptionEnricher] Bilan final : ${successCount} réussies | ${notFoundCount} sans description trouvée | ${blockedCount} bloquées (403/429) | ${httpErrorCount} autres erreurs HTTP/fetch | arrêt préventif : ${this.shouldStopAll ? 'OUI' : 'non'}.`);
   }
 }
 
@@ -418,13 +519,16 @@ async function main() {
     process.exit(0);
   }
 
+  const ts = () => new Date().toLocaleTimeString();
   const logger = {
-    info: (msg) => console.log(`[${new Date().toLocaleTimeString()}] [INFO] ${msg}`),
-    warn: (msg) => console.log(`\x1b[33m[${new Date().toLocaleTimeString()}] [WARN] ${msg}\x1b[0m`),
-    error: (msg) => console.log(`\x1b[31m[${new Date().toLocaleTimeString()}] [ERROR] ${msg}\x1b[0m`),
+    debug: (msg) => console.log(`[${ts()}] [DEBUG] ${msg}`),
+    info: (msg) => console.log(`[${ts()}] [INFO] ${msg}`),
+    warn: (msg) => console.log(`\x1b[33m[${ts()}] [WARN] ${msg}\x1b[0m`),
+    error: (msg) => console.log(`\x1b[31m[${ts()}] [ERROR] ${msg}\x1b[0m`),
   };
 
   logger.info('=== Pipeline Leboncoin (In-Page Batching Ultime) ===');
+  logger.debug(`[main] Options : harPath=${opts.harPath} | outDir=${opts.outDir} | headless=${opts.headless} | csv=${opts.csv} | noDesc=${opts.noDesc} | limit=${opts.limit ?? '(aucun)'} | fresh=${opts.fresh} | batchSize=${opts.batchSize || 10}`);
 
   const writeOutputs = writeOutputsFactory(opts.outDir, opts);
   const jsonPath = path.join(opts.outDir, 'annonces.json');
@@ -432,37 +536,75 @@ async function main() {
   let ads;
   if (fs.existsSync(jsonPath) && !opts.fresh) {
     logger.info('annonces.json existant trouvé -> Reprise automatique.');
+    logger.debug(`[main] Reprise depuis : ${jsonPath}`);
     ads = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+    logger.debug(`[main] ${summarizeAds(ads)}`);
   } else {
-    const entries = loadHar(opts.harPath);
-    const jsonResponses = getJsonResponses(entries);
-    const rawAds = [];
-    for (const r of jsonResponses) {
-      const found = findAdsIterative(r.data);
-      for (const f of found) rawAds.push(f);
+    logger.debug(`[main] Étape 1/3 : Chargement du HAR depuis ${opts.harPath}`);
+    const entries = loadHar(opts.harPath, logger);
+
+    logger.debug(`[main] Étape 2/3 : Extraction des réponses JSON depuis ${entries.length} entrée(s) HAR`);
+    const jsonResponses = getJsonResponses(entries, logger);
+
+    if (jsonResponses.length === 0) {
+      logger.error('Aucune réponse JSON exploitable trouvée dans le HAR.');
+      logger.warn(`[main] Causes possibles : (1) Leboncoin a bloqué la recherche (captcha/403) durant la capture HAR ; (2) structure du HAR différente de celle attendue ; (3) le fichier HAR est vide ou corrompu.`);
+      logger.debug(`[main] Diagnostic : ${summarizeHarEntries(entries)}`);
+      process.exit(0);
     }
 
+    logger.debug(`[main] Étape 3/3 : Recherche d'annonces dans ${jsonResponses.length} réponse(s) JSON`);
+    const rawAds = [];
+    let responseWithAds = 0;
+    for (const r of jsonResponses) {
+      const found = findAdsIterative(r.data, logger);
+      if (found.length > 0) responseWithAds++;
+      for (const f of found) rawAds.push(f);
+    }
+    logger.debug(`[main] ${rawAds.length} objet(s) annonce brut(s) trouvé(s) dans ${responseWithAds}/${jsonResponses.length} réponse(s) JSON.`);
+
+    if (rawAds.length === 0) {
+      logger.warn('Aucun objet annonce trouvé dans les réponses JSON (les données HAR ne contiennent pas le format attendu).');
+      logger.debug(`[main] Cela peut arriver si Leboncoin a changé sa structure JSON ou si la capture HAR a intercepté une page d'erreur au lieu des résultats de recherche.`);
+    }
+
+    const beforeFilter = rawAds.length;
     const normalized = rawAds.map(normalizeAd).filter((a) => a.id || a.title);
-    ads = mergeDuplicates(normalized);
+    const filteredOut = beforeFilter - normalized.length;
+    if (filteredOut > 0) {
+      logger.debug(`[main] Filtrage : ${filteredOut} objet(s) sans ID ni titre supprimé(s) après normalisation (${beforeFilter} → ${normalized.length}).`);
+    }
+
+    ads = mergeDuplicates(normalized, logger);
 
     if (ads.length === 0) {
       logger.error('0 annonce extraite de ce HAR.');
+      logger.warn(`[main] Récapitulatif diagnostic : ${entries.length} entrées HAR | ${jsonResponses.length} JSON parsés | ${rawAds.length} annonces brutes | ${normalized.length} après normalisation | 0 après déduplication.`);
+      logger.warn(`[main] Causes probables : page de recherche non chargée, réponse réseau absente, données reçues mais ne contenant pas d'annonces, ou filtre ayant tout supprimé.`);
       process.exit(0);
     }
 
     writeOutputs(ads);
     logger.info(`Étape HAR -> Annonces terminée : ${ads.length} annonces extraites.`);
+    logger.debug(`[main] ${summarizeAds(ads)}`);
   }
 
-  if (opts.limit) ads = ads.slice(0, opts.limit);
+  if (opts.limit) {
+    logger.debug(`[main] Application de la limite : ${ads.length} → ${Math.min(opts.limit, ads.length)} annonces.`);
+    ads = ads.slice(0, opts.limit);
+  }
 
   if (!opts.noDesc) {
+    logger.debug(`[main] Lancement de l'enrichissement des descriptions...`);
     const enricher = new DescriptionEnricher(opts, logger);
     await enricher.enrichAll(ads, writeOutputs);
+  } else {
+    logger.debug(`[main] Enrichissement des descriptions ignoré (option --no-desc).`);
   }
 
   writeOutputs(ads);
   logger.info('\n✅ Opération terminée avec succès.');
+  logger.debug(`[main] Bilan final : ${summarizeAds(ads)}`);
 
   // 🛑 FIX CLEF : Fermeture explicite pour débloquer l'IPC Electron immédiatement !
   process.exit(0);

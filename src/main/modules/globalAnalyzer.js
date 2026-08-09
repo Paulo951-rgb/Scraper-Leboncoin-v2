@@ -5,6 +5,8 @@
 
 'use strict';
 
+const { formatBytes, formatMs, redact, summarizeAds, truncate } = require('../utils/diagnostics');
+
 const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 const PRESETS = {
@@ -29,8 +31,11 @@ class GlobalAnalyzer {
       geminiModel = 'gemini-2.0-flash',
     } = options;
 
+    console.log(`[GlobalAnalyzer] Début — preset=${presetKey} | model=${geminiModel} | apiKey=${redact(geminiApiKey)} | ${summarizeAds(ads)}`);
+
     if (!geminiApiKey) throw new Error('Clé API Gemini manquante.');
     if (!Array.isArray(ads) || ads.length === 0) {
+      console.warn('[GlobalAnalyzer] Dataset vide — retour de la structure vide par défaut.');
       return { summaryKpi: { totalAnalyzed: 0, bestDealTitle: '-', totalPotentialProfitEur: 0, overview: 'Aucune annonce à analyser.' }, topRanking: [] };
     }
 
@@ -40,6 +45,7 @@ class GlobalAnalyzer {
     const focusInstruction = presetKey === 'CUSTOM' && customInstruction
       ? customInstruction
       : presetInstruction;
+    console.log(`[GlobalAnalyzer] Instruction focus : ${truncate(focusInstruction, 100)}`);
 
     // On transmet un résumé compact de chaque annonce (titre, prix, estimation marché, marge, etc.).
     const compactAds = ads.map((a, i) => {
@@ -93,12 +99,18 @@ Réponds STRICTEMENT et UNIQUEMENT avec un objet JSON valide (sans texte autour,
 
 Le topRanking doit contenir au maximum 20 entrées, triées de la meilleure à la moins bonne. Les prix et marges sont en euros entiers.`;
 
+    const promptSize = Buffer.byteLength(prompt, 'utf8');
+    console.log(`[GlobalAnalyzer] Prompt construit : ${formatBytes(promptSize)} (${compactAds.length} annonces compactées).`);
+
     if (onProgress) onProgress({ percent: 30, status: 'Appel à Google Gemini en cours...' });
 
     let aiData;
+    const t0Gemini = Date.now();
     try {
       aiData = await this._callGemini(prompt, geminiApiKey, geminiModel);
+      console.log(`[GlobalAnalyzer] Réponse Gemini reçue en ${formatMs(Date.now() - t0Gemini)}.`);
     } catch (err) {
+      console.error(`[GlobalAnalyzer] Échec appel Gemini après ${formatMs(Date.now() - t0Gemini)} : ${err.message}`);
       throw new Error(`Échec de l'appel Gemini : ${err.message}`);
     }
 
@@ -111,6 +123,8 @@ Le topRanking doit contenir au maximum 20 entrées, triées de la meilleure à l
     // Garantit que totalAnalyzed reflète bien le dataset réel si l'IA l'omet.
     if (summaryKpi.totalAnalyzed == null) summaryKpi.totalAnalyzed = ads.length;
 
+    console.log(`[GlobalAnalyzer] Rapport final : ${topRanking.length} entrée(s) dans le classement | bestDeal="${truncate(summaryKpi.bestDealTitle, 40)}" | totalAnalyzed=${summaryKpi.totalAnalyzed}.`);
+
     if (onProgress) onProgress({ percent: 100, status: 'Analyse globale terminée.' });
 
     return { summaryKpi, topRanking };
@@ -118,7 +132,9 @@ Le topRanking doit contenir au maximum 20 entrées, triées de la meilleure à l
 
   static async _callGemini(prompt, apiKey, model) {
     const url = `${GEMINI_ENDPOINT}/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+    console.log(`[GlobalAnalyzer] Appel Gemini : ${GEMINI_ENDPOINT}/${model}:generateContent?key=${redact(apiKey)}`);
 
+    const t0Fetch = Date.now();
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -139,17 +155,25 @@ Le topRanking doit contenir au maximum 20 entrées, triées de la meilleure à l
       } catch {
         detail = await res.text().catch(() => '');
       }
+      console.error(`[GlobalAnalyzer] Gemini HTTP ${res.status} : ${truncate(detail, 200)}`);
       throw new Error(`Gemini HTTP ${res.status} : ${detail || 'réponse non lisible'}`);
     }
 
     const data = await res.json();
     const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    console.log(`[GlobalAnalyzer] Réponse HTTP ${res.status} reçue en ${formatMs(Date.now() - t0Fetch)} — contenu ${text ? formatBytes(Buffer.byteLength(text, 'utf8')) : '(vide)'}.`);
 
-    if (!text) throw new Error('Réponse Gemini vide (aucun contenu généré).');
+    if (!text) {
+      console.error('[GlobalAnalyzer] Réponse Gemini vide — candidats/parts manquants.', JSON.stringify(data?.candidates?.[0] || {}).slice(0, 200));
+      throw new Error('Réponse Gemini vide (aucun contenu généré).');
+    }
 
     try {
-      return JSON.parse(text);
+      const parsed = JSON.parse(text);
+      console.log(`[GlobalAnalyzer] JSON parsé avec succès — clés : ${Object.keys(parsed).join(', ')}.`);
+      return parsed;
     } catch (err) {
+      console.error(`[GlobalAnalyzer] Échec parsing JSON Gemini : ${err.message} — début du texte : ${truncate(text, 200)}`);
       throw new Error(`Réponse Gemini non-JSON : ${err.message}`);
     }
   }
