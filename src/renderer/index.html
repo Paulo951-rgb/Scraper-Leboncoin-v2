@@ -32,23 +32,8 @@
         <h1>Leboncoin <span>Scraper Pro</span></h1>
       </div>
       <div class="header-right">
-        <!-- BOUTON PARAMÈTRES & SELECTEUR DE THÈME -->
         <button id="toggleWidgetBtn" class="btn btn-secondary btn-small">🖥️ Widget Flottant</button>
         <button id="openSettingsModalBtn" class="btn btn-secondary btn-small">⚙️ Paramètres</button>
-
-        <div class="theme-selector">
-          <label for="themeSelect">🎨 Thème :</label>
-          <select id="themeSelect">
-            <option value="theme-dark">Sombre (Par défaut)</option>
-            <option value="theme-light">Clair (Light)</option>
-            <option value="theme-oled">OLED (Noir Pur)</option>
-            <option value="theme-blue">Bleu Ocean</option>
-            <option value="theme-green">Vert Émeraude</option>
-            <option value="theme-violet">Violet Cyberpunk</option>
-            <option value="theme-sunset">🌅 Sunset</option>
-            <option value="theme-carbon">⚫ Carbon</option>
-          </select>
-        </div>
 
         <div class="nav-tabs">
           <button class="tab-btn active" data-tab="tab-scraper">🚀 Scraper</button>
@@ -468,17 +453,68 @@
     </main>
   </div>
 
-  <!-- ⚙️ MODAL PARAMÈTRES (Réintégré ici pour éviter les erreurs de chargement) -->
+  <!-- ⚙️ MODAL PARAMÈTRES -->
   <div id="settingsModal" class="modal-overlay hidden">
-    <div class="modal-card">
-      <h3>⚙️ Paramètres Globaux du Logiciel</h3>
-      <div class="form-group text-left" style="margin-top:15px;">
-        <label for="cfgCleanHarDays" style="font-size:0.8rem; color:var(--text-muted); display:block; margin-bottom:5px;">Nettoyage automatique des fichiers .har (jours) :</label>
-        <input type="number" id="cfgCleanHarDays" value="7" min="1" max="60" style="width:100%;">
+    <div class="modal-card modal-large" style="max-width:640px;">
+      <h3>⚙️ Paramètres Globaux</h3>
+
+      <!-- SECTION : APPARENCE -->
+      <h4 style="margin-top:20px; margin-bottom:10px; font-size:0.95rem; color:var(--primary-color);">🎨 Apparence</h4>
+      <div class="form-group text-left">
+        <label for="cfgTheme" style="font-size:0.8rem; color:var(--text-muted); display:block; margin-bottom:5px;">Thème de l'interface :</label>
+        <select id="cfgTheme" style="width:100%;">
+          <option value="theme-dark">🌙 Sombre (Par défaut)</option>
+          <option value="theme-light">☀️ Clair</option>
+          <option value="theme-oled">⚫ OLED (Noir Pur)</option>
+          <option value="theme-blue">🌊 Bleu Ocean</option>
+          <option value="theme-green">💚 Vert Émeraude</option>
+          <option value="theme-violet">🟣 Violet Cyberpunk</option>
+          <option value="theme-sunset">🌅 Sunset</option>
+          <option value="theme-carbon">🏎️ Carbon</option>
+        </select>
       </div>
-      <div class="modal-actions" style="margin-top:20px;">
-        <button id="closeSettingsModalBtn" class="btn btn-secondary">Fermer</button>
-        <button id="saveSettingsBtn" class="btn btn-primary">Enregistrer Paramètres</button>
+
+      <!-- SECTION : SCRAPING -->
+      <h4 style="margin-top:20px; margin-bottom:10px; font-size:0.95rem; color:var(--primary-color);">🚀 Scraping</h4>
+
+      <div class="form-group text-left">
+        <label for="cfgScrapeSpeed" style="font-size:0.8rem; color:var(--text-muted); display:block; margin-bottom:5px;">Vitesse de scraping (enrichissement des descriptions) :</label>
+        <select id="cfgScrapeSpeed" style="width:100%;">
+          <option value="fast">⚡ Rapide — 10 parallèle, délais courts (risque 403 + élevé)</option>
+          <option value="balanced">⚖️ Équilibré — 5 parallèle, délais modérés</option>
+          <option value="safe">🛡️ Prudent — séquentiel, délais humains (anti-blocage max)</option>
+        </select>
+      </div>
+
+      <div class="form-group text-left" style="margin-top:12px;">
+        <label for="cfgPageDelay" style="font-size:0.8rem; color:var(--text-muted); display:block; margin-bottom:5px;">Délai entre les pages de recherche (ms) :</label>
+        <input type="number" id="cfgPageDelay" value="1000" min="0" max="10000" step="100" style="width:100%;">
+        <small style="color:var(--text-muted);">Plus bas = plus rapide, plus haut = plus discret. Recommandé : 800-1500ms.</small>
+      </div>
+
+      <div class="form-group text-left" style="margin-top:12px;">
+        <label style="font-size:0.8rem; color:var(--text-muted); display:block; margin-bottom:5px;">Mode de capture :</label>
+        <label style="font-size:0.85rem; display:flex; align-items:center; gap:8px; cursor:pointer;">
+          <input type="checkbox" id="cfgHeadless" checked>
+          <span>Invisible (headless) — le navigateur n'est pas visible sauf en cas de CAPTCHA</span>
+        </label>
+      </div>
+
+      <!-- SECTION : MAINTENANCE -->
+      <h4 style="margin-top:20px; margin-bottom:10px; font-size:0.95rem; color:var(--primary-color);">🧹 Maintenance</h4>
+      <div class="form-group text-left">
+        <label for="cfgCleanHarDays" style="font-size:0.8rem; color:var(--text-muted); display:block; margin-bottom:5px;">Nettoyage auto des fichiers .har (jours) :</label>
+        <input type="number" id="cfgCleanHarDays" value="7" min="1" max="365" style="width:100%;">
+        <small style="color:var(--text-muted);">Les fichiers .har plus anciens que ce nombre de jours sont supprimés au démarrage.</small>
+      </div>
+
+      <!-- SECTION : ACTIONS -->
+      <div class="modal-actions" style="margin-top:20px; display:flex; justify-content:space-between; align-items:center;">
+        <button id="resetSettingsBtn" class="btn btn-secondary btn-small">↺ Réinitialiser</button>
+        <div style="display:flex; gap:10px;">
+          <button id="closeSettingsModalBtn" class="btn btn-secondary">Fermer</button>
+          <button id="saveSettingsBtn" class="btn btn-primary">💾 Enregistrer</button>
+        </div>
       </div>
     </div>
   </div>

@@ -43,6 +43,7 @@ function setupIpcHandlers(mainWindow) {
     isRunning = true;
 
     const { searchUrl, pages = 1, noDesc = false, csv = true, autoAiMarket = true, limit, aiConfig, proxyUrl } = config;
+    const userSettings = loadSettings();
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const jobDir = path.join(JOBS_DIR, `job-${timestamp}`);
@@ -60,7 +61,14 @@ function setupIpcHandlers(mainWindow) {
       const t0Total = Date.now();
 
       // Le HarCapturer gère lui-même la bascule headless/visible (pré-check captcha).
-      activeCapturer = new HarCapturer({ proxyUrl });
+      const pageDelay = parseInt(userSettings.pageDelayMs, 10) || 1000;
+      activeCapturer = new HarCapturer({
+        proxyUrl,
+        headless: userSettings.headless !== false,
+        minPageDelayMs: pageDelay,
+        maxPageDelayMs: pageDelay + 700,
+      });
+      sendLog({ level: 'debug', message: `[job:start] Vitesse=${userSettings.scrapeSpeed} | headless=${userSettings.headless !== false} | délai pages=${pageDelay}ms` });
 
       activeCapturer.on('log', sendLog);
       activeCapturer.on('progress', ({ currentPage, totalPages, percent, status }) => {
@@ -101,6 +109,8 @@ function setupIpcHandlers(mainWindow) {
         noDesc,
         csv,
         limit: limit ? parseInt(limit, 10) : undefined,
+        speed: userSettings.scrapeSpeed || 'fast',
+        headless: userSettings.headless !== false,
       });
       sendLog({ level: 'debug', message: `[job:start] Phase pipeline terminée en ${Math.round((Date.now() - t0Pipeline) / 1000)}s.` });
 

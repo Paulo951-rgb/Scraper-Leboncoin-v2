@@ -60,8 +60,9 @@ L'application est pensée pour un usage **semi-automatisé** : l'utilisateur peu
 - 📊 **Statistiques & carte interactive** (Leaflet.js) affichant la répartition géographique des annonces en France, graphiques (Chart.js) de répartition des deals et des vendeurs.
 - 📌 **Presets de recherche** réutilisables en un clic.
 - 🖥️ **Widget flottant** always-on-top pour suivre la progression du scraping en temps réel, même fenêtre principale minimisée (pourcentage, barre de progression, statut, point coloré animé).
-- 🎨 **6 thèmes visuels** (Sombre, Clair, OLED, Bleu Ocean, Vert Émeraude, Violet Cyberpunk).
+- 🎨 **8 thèmes visuels** (Sombre, Clair, OLED, Bleu Ocean, Vert Émeraude, Violet Cyberpunk, Sunset, Carbon) — réglables depuis la modale Paramètres.
 - 🌐 **Support proxy rotatif** optionnel (HTTP proxy avec authentification).
+- 🚀 **3 presets de vitesse** (Rapide / Équilibré / Prudent) réglables dans les Paramètres, du parallèle agressif au séquentiel anti-blocage.
 - 🧹 **Nettoyage automatique** des anciens fichiers `.har` (configurable, par défaut 7 jours) pour limiter l'usage disque.
 
 ---
@@ -311,7 +312,27 @@ Classification résultante :
 | 🔍 **Explorateur Annonces** | Recherche/filtrage (mot-clé, prix, tag de deal), tri, vue tableau ou grille, fiche détaillée par annonce (galerie photo, résumé IA, badge de deal), comparateur côte-à-côte, lancement manuel de l'analyse marché. |
 | 📊 **Statistiques & Carte** | KPIs (bonnes affaires, risques, total d'annonces), carte interactive Leaflet des annonces en France (avec filtre "remise en main propre uniquement"), graphiques Chart.js de répartition des deals et des vendeurs. |
 
-D'autres éléments transverses : sélecteur de **thème** (6 thèmes), bouton **widget flottant**, modale de **paramètres globaux** (durée de rétention des fichiers `.har`).
+D'autres éléments transverses : bouton **widget flottant**, modale de **paramètres globaux** (voir ci-dessous).
+
+### ⚙️ Modale Paramètres
+
+Accessible via le bouton **⚙️ Paramètres** dans le header. Centralise tous les réglages utilisateur :
+
+**🎨 Apparence**
+- **Thème** : 8 thèmes (Sombre, Clair, OLED, Bleu Ocean, Vert Émeraude, Violet Cyberpunk, Sunset, Carbon). Aperçu en temps réel à la sélection.
+
+**🚀 Scraping**
+- **Vitesse de scraping** : 3 presets pour l'enrichissement des descriptions :
+  - ⚡ **Rapide** — 10 fetchs parallèles (`Promise.all`), délais courts (0,5-1s). Le plus rapide, mais risque de 403 plus élevé.
+  - ⚖️ **Équilibré** — 5 fetchs parallèles, délais modérés (1-2s). Bon compromis vitesse/risque.
+  - 🛡️ **Prudent** — séquentiel (1 fetch à la fois), délais humains (1,5-3s + 0,8-1,8s entre chaque). Anti-blocage maximal.
+- **Délai entre les pages de recherche** (ms) : contrôle la vitesse de navigation entre les pages de résultats Leboncoin (défaut 1000ms).
+- **Mode de capture** : invisible (headless) ou visible. En headless, le navigateur s'affiche automatiquement en cas de CAPTCHA.
+
+**🧹 Maintenance**
+- **Nettoyage auto des fichiers .har** (jours) : les fichiers .har plus anciens que ce nombre sont supprimés au démarrage (défaut 7).
+
+Tous les paramètres sont sauvegardés dans `src/main/config/user-settings.json` et persistés entre les sessions. Le bouton **↺ Réinitialiser** remet tout aux valeurs par défaut.
 
 ---
 

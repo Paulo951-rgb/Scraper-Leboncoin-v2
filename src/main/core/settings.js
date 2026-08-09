@@ -9,7 +9,12 @@ const path = require('path');
 const fs = require('fs');
 
 const SETTINGS_PATH = path.join(__dirname, '..', 'config', 'user-settings.json');
-const SETTINGS_DEFAULTS = Object.freeze({ autoCleanHarDays: 7 });
+const SETTINGS_DEFAULTS = Object.freeze({
+  autoCleanHarDays: 7,
+  scrapeSpeed: 'fast',      // 'fast' | 'balanced' | 'safe'
+  pageDelayMs: 1000,        // délai entre les pages de recherche
+  headless: true,           // navigateur invisible (sauf CAPTCHA)
+});
 
 function loadSettings() {
   try {
