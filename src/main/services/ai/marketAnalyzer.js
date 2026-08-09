@@ -1,10 +1,12 @@
 'use strict';
 
 const { summarizeAds, formatMs, redact } = require('../../utils/diagnostics');
+const aiCache = require('./aiCache');
 
 class MarketAnalyzer {
   static async analyzeAds(ads, config = {}, onProgress) {
     const log = config._log || ((msg, level = 'debug') => console.log(`[MarketAnalyzer] ${msg}`));
+    const useCache = config.useCache !== false; // cache activé par défaut
 
     if (!Array.isArray(ads) || ads.length === 0) {
       log('Aucune annonce à analyser (tableau vide ou non-tableau).', 'warn');
@@ -37,36 +39,62 @@ class MarketAnalyzer {
     let aiFallbackCount = 0;
     const t0All = Date.now();
 
+    const cacheStatsBefore = useCache ? aiCache.stats() : { entries: 0 };
+    if (useCache) log(`Cache IA : ${cacheStatsBefore.entries} entrée(s) en cache.`, 'debug');
+
     for (let i = 0; i < ads.length; i += concurrency) {
       const batch = ads.slice(i, i + concurrency);
-      const batchIds = batch.map((a) => a.id);
-      log(`Batch IA ${Math.floor(i / concurrency) + 1} : ${batch.length} annonce(s) envoyées en parallèle — IDs [${batchIds.join(', ')}]`, 'debug');
 
+      // Séparation cache miss / cache hit
+      const toAnalyze = [];
+      const cachedResults = [];
+      for (const ad of batch) {
+        const idx = i + batch.indexOf(ad);
+        if (useCache && ad.id) {
+          const cached = aiCache.get(ad.id);
+          if (cached) {
+            cachedResults.push({ idx, ad, specs: cached.specs });
+            continue;
+          }
+        }
+        toAnalyze.push({ idx, ad });
+      }
+
+      if (cachedResults.length > 0) {
+        log(`Batch IA ${Math.floor(i / concurrency) + 1} : ${cachedResults.length} cache hit(s), ${toAnalyze.length} à analyser`, 'debug');
+      }
+
+      // Analyse IA uniquement pour les cache miss
       const results = await Promise.all(
-        batch.map((ad, j) => {
-          const idx = i + j;
+        toAnalyze.map(({ idx, ad }) => {
           const t0Ad = Date.now();
           return this.extractSpecsWithAi(ad, { provider, apiKey, model, ollamaUrl })
             .then((specs) => {
-              const evaluation = this.computeMarketValue(ad, specs, datasetMedian);
-              if (specs.summaryReason && specs.summaryReason.includes('Échec de l')) {
-                aiFallbackCount++;
-              } else {
-                aiSuccessCount++;
-              }
-              log(`[${idx + 1}/${ads.length}] "${(ad.title || '').slice(0, 50)}" (${ad.price}€) → ${evaluation.classification} (score ${evaluation.score}/100) — ${formatMs(Date.now() - t0Ad)}`, 'info');
-              return { idx, ad, evaluation };
+              if (useCache && ad.id) aiCache.set(ad.id, specs);
+              log(`[${idx + 1}/${ads.length}] "${(ad.title || '').slice(0, 50)}" (${ad.price}€) → ${this.computeMarketValue(ad, specs, datasetMedian).classification} — ${formatMs(Date.now() - t0Ad)}`, 'info');
+              return { idx, ad, specs };
             })
             .catch((err) => {
-              aiFallbackCount++;
               log(`[${idx + 1}/${ads.length}] Erreur analyse IA sur "${(ad.title || ad.id).slice(0, 50)}" : ${err.message}`, 'error');
-              return { idx, ad, evaluation: null };
+              return { idx, ad, specs: null };
             });
         })
       );
 
-      for (const { idx, ad, evaluation } of results) {
-        enriched[idx] = evaluation ? { ...ad, marketAnalysis: evaluation } : ad;
+      // Fusion cache hits + cache misses
+      for (const { idx, ad, specs } of [...cachedResults, ...results]) {
+        if (specs) {
+          const evaluation = this.computeMarketValue(ad, specs, datasetMedian);
+          if (specs.summaryReason && specs.summaryReason.includes('Échec de l')) {
+            aiFallbackCount++;
+          } else {
+            aiSuccessCount++;
+          }
+          enriched[idx] = { ...ad, marketAnalysis: evaluation };
+        } else {
+          aiFallbackCount++;
+          enriched[idx] = ad;
+        }
       }
 
       const done = Math.min(i + concurrency, ads.length);

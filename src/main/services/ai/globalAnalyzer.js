@@ -1,6 +1,7 @@
 'use strict';
 
 const { formatBytes, formatMs, redact, summarizeAds, truncate } = require('../../utils/diagnostics');
+const { sleep } = require('../../utils/helpers');
 
 const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models';
 
@@ -102,11 +103,11 @@ Le topRanking doit contenir au maximum 20 entrées, triées de la meilleure à l
     let aiData;
     const t0Gemini = Date.now();
     try {
-      aiData = await this._callGemini(prompt, geminiApiKey, geminiModel);
+      aiData = await this._callGeminiWithRetry(prompt, geminiApiKey, geminiModel, onProgress);
       console.log(`[GlobalAnalyzer] Réponse Gemini reçue en ${formatMs(Date.now() - t0Gemini)}.`);
     } catch (err) {
       console.error(`[GlobalAnalyzer] Échec appel Gemini après ${formatMs(Date.now() - t0Gemini)} : ${err.message}`);
-      throw new Error(`Échec de l'appel Gemini : ${err.message}`);
+      throw err;
     }
 
     if (onProgress) onProgress({ percent: 80, status: 'Mise en forme du rapport...' });
@@ -123,6 +124,32 @@ Le topRanking doit contenir au maximum 20 entrées, triées de la meilleure à l
     if (onProgress) onProgress({ percent: 100, status: 'Analyse globale terminée.' });
 
     return { summaryKpi, topRanking };
+  }
+
+  static async _callGeminiWithRetry(prompt, apiKey, model, onProgress, maxRetries = 3) {
+    let lastErr;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        return await this._callGemini(prompt, apiKey, model);
+      } catch (err) {
+        lastErr = err;
+        // Retry uniquement sur 429 (quota) ou 503 (service unavailable)
+        const isRetryable = err.message.includes('429') || err.message.includes('503');
+        if (!isRetryable || attempt >= maxRetries) throw err;
+
+        // Extraction du délai suggéré depuis le message Gemini
+        const retryMatch = err.message.match(/retry in ([\d.]+)s/i);
+        const waitSec = retryMatch ? Math.ceil(parseFloat(retryMatch[1])) : 15 * attempt;
+        const waitMs = waitSec * 1000;
+
+        const msg = `⏳ Quota Gemini atteint (429). Nouvelle tentative ${attempt + 1}/${maxRetries} dans ${waitSec}s...`;
+        console.warn(`[GlobalAnalyzer] ${msg}`);
+        if (onProgress) onProgress({ percent: 30, status: msg });
+
+        await sleep(waitMs);
+      }
+    }
+    throw lastErr;
   }
 
   static async _callGemini(prompt, apiKey, model) {
@@ -151,7 +178,21 @@ Le topRanking doit contenir au maximum 20 entrées, triées de la meilleure à l
         detail = await res.text().catch(() => '');
       }
       console.error(`[GlobalAnalyzer] Gemini HTTP ${res.status} : ${truncate(detail, 200)}`);
-      throw new Error(`Gemini HTTP ${res.status} : ${detail || 'réponse non lisible'}`);
+
+      // Messages d'erreur plus clairs selon le code HTTP
+      if (res.status === 429) {
+        // Extraction du délai de retry depuis le message
+        const retryMatch = detail.match(/retry in ([\d.]+)s/i);
+        const waitSec = retryMatch ? Math.ceil(parseFloat(retryMatch[1])) : '?';
+        throw new Error(`Quota Gemini dépassé (429). ${detail.slice(0, 300)}${retryMatch ? ` — Réessayez dans ~${waitSec}s.` : ''} Astuce : le plan gratuit Gemini a une limite de requêtes/minute. Attendez ou passez au plan payant.`);
+      }
+      if (res.status === 400) {
+        throw new Error(`Requête Gemini invalide (400) : ${truncate(detail, 200)}. Vérifiez le modèle sélectionné (${model}).`);
+      }
+      if (res.status === 401 || res.status === 403) {
+        throw new Error(`Clé API Gemini invalide ou non autorisée (${res.status}). Vérifiez votre clé API dans les Paramètres.`);
+      }
+      throw new Error(`Gemini HTTP ${res.status} : ${truncate(detail, 200) || 'réponse non lisible'}`);
     }
 
     const data = await res.json();

@@ -3,6 +3,13 @@ dist/
 output/
 *.log
 
+.agents_tmp/
+
+# Config files generated at runtime
+src/main/config/ai-cache.json
+src/main/config/scheduled-tasks.json
+src/main/config/user-settings.json
+
 .env
 .env.*
 !.env.example

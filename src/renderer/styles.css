@@ -125,46 +125,131 @@
 }
 
 body.theme-light {
-  --bg-color: #f8fafc;
+  --bg-color: #eef2f7;
   --card-bg: #ffffff;
-  --text-color: #0f172a;
-  --text-muted: #64748b;
-  --primary-color: #0284c7;
-  --primary-hover: #0369a1;
-  --danger-color: #e11d48;
-  --border-color: #cbd5e1;
-  --badge-bg: #e0f2fe;
-  --header-bg: #ffffff;
+  --text-color: #1a2744;
+  --text-muted: #5b6b88;
+  --primary-color: #2563eb;
+  --primary-hover: #1d4ed8;
+  --danger-color: #dc2626;
+  --danger-hover: #b91c1c;
+  --border-color: #d4dde8;
+  --badge-bg: #dbeafe;
+  --header-bg: #f1f5fa;
   --green-deal: #16a34a;
-  --red-risk: #e11d48;
+  --red-risk: #dc2626;
 }
 
 body.theme-oled {
   --bg-color: #000000;
-  --card-bg: #111111;
-  --text-color: #ffffff;
-  --text-muted: #888888;
-  --primary-color: #38bdf8;
-  --danger-color: #ff3333;
-  --border-color: #222222;
-  --badge-bg: #222222;
+  --card-bg: #0a0a0a;
+  --text-color: #e4e4e7;
+  --text-muted: #71717a;
+  --primary-color: #60a5fa;
+  --primary-hover: #3b82f6;
+  --danger-color: #ef4444;
+  --danger-hover: #dc2626;
+  --border-color: #1a1a1a;
+  --badge-bg: #1a1a1a;
   --header-bg: #000000;
-  --green-deal: #00ff66;
-  --red-risk: #ff3333;
+  --green-deal: #22c55e;
+  --red-risk: #ef4444;
 }
 
-body.theme-blue {
-  --bg-color: #031123;
-  --card-bg: #08213b;
-  --text-color: #e2e8f0;
-  --text-muted: #64748b;
-  --primary-color: #38bdf8;
-  --danger-color: #f43f5e;
-  --border-color: #1e3a5f;
-  --badge-bg: #0c4a6e;
-  --header-bg: #010814;
-  --green-deal: #10b981;
-  --red-risk: #f43f5e;
+body.theme-rose {
+  --bg-color: #1c1217;
+  --card-bg: #2e1d25;
+  --text-color: #fce4ec;
+  --text-muted: #c99aaa;
+  --primary-color: #f472b6;
+  --primary-hover: #ec4899;
+  --danger-color: #fb7185;
+  --danger-hover: #e11d48;
+  --border-color: #4a2e38;
+  --badge-bg: #3d2230;
+  --header-bg: #100a0e;
+  --green-deal: #34d399;
+  --red-risk: #fb7185;
+}
+
+body.theme-amber {
+  --bg-color: #1a1410;
+  --card-bg: #2a2018;
+  --text-color: #fef3c7;
+  --text-muted: #c4a87e;
+  --primary-color: #fbbf24;
+  --primary-hover: #f59e0b;
+  --danger-color: #f87171;
+  --danger-hover: #ef4444;
+  --border-color: #3d3025;
+  --badge-bg: #332820;
+  --header-bg: #0f0c09;
+  --green-deal: #84cc16;
+  --red-risk: #f87171;
+}
+
+body.theme-mint {
+  --bg-color: #0a1f1c;
+  --card-bg: #0f2e2a;
+  --text-color: #d1fae5;
+  --text-muted: #6b9b92;
+  --primary-color: #2dd4bf;
+  --primary-hover: #14b8a6;
+  --danger-color: #fb7185;
+  --danger-hover: #e11d48;
+  --border-color: #1a3d38;
+  --badge-bg: #123530;
+  --header-bg: #061513;
+  --green-deal: #4ade80;
+  --red-risk: #fb7185;
+}
+
+body.theme-slate {
+  --bg-color: #1e293b;
+  --card-bg: #334155;
+  --text-color: #f1f5f9;
+  --text-muted: #94a3b8;
+  --primary-color: #818cf8;
+  --primary-hover: #6366f1;
+  --danger-color: #f87171;
+  --danger-hover: #ef4444;
+  --border-color: #475569;
+  --badge-bg: #3e4d63;
+  --header-bg: #161e2e;
+  --green-deal: #4ade80;
+  --red-risk: #f87171;
+}
+
+body.theme-crimson {
+  --bg-color: #1a0a0a;
+  --card-bg: #2a1010;
+  --text-color: #fee2e2;
+  --text-muted: #c49494;
+  --primary-color: #ef4444;
+  --primary-hover: #dc2626;
+  --danger-color: #f87171;
+  --danger-hover: #ef4444;
+  --border-color: #3d1a1a;
+  --badge-bg: #331515;
+  --header-bg: #0f0606;
+  --green-deal: #34d399;
+  --red-risk: #f87171;
+}
+
+body.theme-nordic {
+  --bg-color: #2e3440;
+  --card-bg: #3b4252;
+  --text-color: #eceff4;
+  --text-muted: #81a1c1;
+  --primary-color: #88c0d0;
+  --primary-hover: #5e81ac;
+  --danger-color: #bf616a;
+  --danger-hover: #a3535b;
+  --border-color: #4c566a;
+  --badge-bg: #434c5e;
+  --header-bg: #242933;
+  --green-deal: #a3be8c;
+  --red-risk: #bf616a;
 }
 
 body.theme-green {
@@ -182,17 +267,19 @@ body.theme-green {
 }
 
 body.theme-violet {
-  --bg-color: #0d0221;
-  --card-bg: #19053a;
-  --text-color: #00f6ff;
-  --text-muted: #b565d8;
-  --primary-color: #ff007f;
-  --danger-color: #ff3300;
-  --border-color: #ff007f;
-  --badge-bg: #7b2cbf;
-  --header-bg: #050014;
-  --green-deal: #00ffcc;
-  --red-risk: #ff007f;
+  --bg-color: #1a1530;
+  --card-bg: #251e3f;
+  --text-color: #e0d8f0;
+  --text-muted: #9b8ec0;
+  --primary-color: #a78bfa;
+  --primary-hover: #8b5cf6;
+  --danger-color: #fb7185;
+  --danger-hover: #e11d48;
+  --border-color: #3d3461;
+  --badge-bg: #2e2650;
+  --header-bg: #110d1f;
+  --green-deal: #34d399;
+  --red-risk: #fb7185;
 }
 
 /* 🆕 Thème Sunset (moderne, chaud) */

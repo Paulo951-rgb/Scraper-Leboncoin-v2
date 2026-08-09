@@ -2,27 +2,85 @@
 
 /**
  * JobSchedulerManager — ordonnanceur de tâches planifiées (cron-like).
- * La notification des bonnes affaires est désormais gérée par infrastructure/notifications.js
- * afin de séparer l'ordonnancement (planning) de la présentation (notification OS).
+ * Les tâches sont persistées sur disque (config/scheduled-tasks.json) et
+ * restaurées au redémarrage de l'application.
  */
+const path = require('path');
+const fs = require('fs');
+
+const SCHEDULES_PATH = path.join(__dirname, '..', '..', 'config', 'scheduled-tasks.json');
+
 class JobSchedulerManager {
   constructor(onTriggerJob) {
     this.onTriggerJob = onTriggerJob; // Callback de lancement
     this.schedules = new Map(); // id -> timer
     this.scheduledTasks = new Map(); // id -> task (avec intervalMs, addedAt, lastRun)
+    this._restoreFromDisk();
+  }
+
+  /**
+   * Restaure les tâches sauvegardées sur disque au démarrage.
+   */
+  _restoreFromDisk() {
+    try {
+      if (!fs.existsSync(SCHEDULES_PATH)) return;
+      const tasks = JSON.parse(fs.readFileSync(SCHEDULES_PATH, 'utf8'));
+      if (!Array.isArray(tasks)) return;
+      console.log(`[Scheduler] Restauration de ${tasks.length} tâche(s) depuis le disque.`);
+      for (const task of tasks) {
+        // On préserve lastRun pour que nextRun soit calculé correctement
+        this.addSchedule(task, { skipSave: true });
+      }
+    } catch (err) {
+      console.warn(`[Scheduler] Restauration impossible : ${err.message}`);
+    }
+  }
+
+  /**
+   * Sauvegarde toutes les tâches sur disque.
+   */
+  _saveToDisk() {
+    try {
+      fs.mkdirSync(path.dirname(SCHEDULES_PATH), { recursive: true });
+      const tasks = [];
+      for (const [id, task] of this.scheduledTasks.entries()) {
+        tasks.push({
+          id,
+          searchUrl: task.searchUrl,
+          pages: task.pages,
+          intervalMinutes: task.intervalMinutes,
+          enabled: task.enabled !== false,
+          addedAt: task.addedAt,
+          lastRun: task.lastRun,
+          limit: task.limit,
+          proxyUrl: task.proxyUrl,
+          noDesc: task.noDesc,
+          csv: task.csv,
+          autoAiMarket: task.autoAiMarket,
+          aiConfig: task.aiConfig,
+        });
+      }
+      fs.writeFileSync(SCHEDULES_PATH, JSON.stringify(tasks, null, 2), 'utf8');
+    } catch (err) {
+      console.warn(`[Scheduler] Sauvegarde impossible : ${err.message}`);
+    }
   }
 
   /**
    * Ajoute ou met à jour une tâche planifiée.
    * Propage la config complète (aiConfig, proxyUrl, limit, etc.) au callback de déclenchement.
    */
-  addSchedule(task) {
+  addSchedule(task, opts = {}) {
     const { id, searchUrl, pages, intervalMinutes, enabled = true } = task;
 
-    this.removeSchedule(id);
+    this.removeSchedule(id, { skipSave: true });
 
     if (!enabled) {
       console.log(`[Scheduler] Tâche ${id} désactivée (enabled=false) — non planifiée.`);
+      // Sauvegarde quand même pour que la tâche désactivée soit restaurée
+      const stored = { ...task, intervalMs: parseInt(intervalMinutes, 10) * 60 * 1000, addedAt: Date.now(), lastRun: null };
+      this.scheduledTasks.set(id, stored);
+      if (!opts.skipSave) this._saveToDisk();
       return;
     }
 
@@ -38,19 +96,21 @@ class JobSchedulerManager {
       searchUrl,
       pages,
       intervalMs,
-      addedAt: now,
-      lastRun: null,
+      addedAt: task.addedAt || now,
+      lastRun: task.lastRun || null,
     };
     this.scheduledTasks.set(id, stored);
 
     const timer = setInterval(() => {
       console.log(`⏰ [Scheduler] Lancement automatique de la tâche : ${id} (URL : ${searchUrl})`);
       stored.lastRun = Date.now();
+      if (!opts.skipSave) this._saveToDisk();
       this.onTriggerJob(this._triggerPayload(stored));
     }, intervalMs);
 
     this.schedules.set(id, timer);
     console.log(`[Scheduler] Tâche ${id} planifiée — intervalle ${intervalMinutes} min (${intervalMs}ms) | URL : ${searchUrl} | pages : ${pages} | limit : ${task.limit ?? '(aucun)'} | proxy : ${task.proxyUrl || 'aucun'}.`);
+    if (!opts.skipSave) this._saveToDisk();
   }
 
   /**
@@ -74,12 +134,13 @@ class JobSchedulerManager {
   /**
    * Supprime une tâche planifiée
    */
-  removeSchedule(id) {
+  removeSchedule(id, opts = {}) {
     if (this.schedules.has(id)) {
       clearInterval(this.schedules.get(id));
       this.schedules.delete(id);
     }
     this.scheduledTasks.delete(id);
+    if (!opts.skipSave) this._saveToDisk();
   }
 
   /**

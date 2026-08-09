@@ -10,6 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { sleep, randomDelay, atomicWriteFileSync, cleanText } = require('../../utils/helpers');
 const { summarizeAds, summarizeHarEntries, truncate, formatBytes, formatMs } = require('../../utils/diagnostics');
+const { getRandomUserAgent } = require('./userAgents');
 
 const DEFAULTS = Object.freeze({
   // Mode rapide : fetchs parallèles (Promise.all) comme le code original.
@@ -339,7 +340,7 @@ class DescriptionEnricher {
   }
 
   parseHtmlDescription(html, adId) {
-    if (!html) return null;
+    if (!html) return { description: null, shipping: null };
     const match = html.match(/<script\s+id="__NEXT_DATA__"\s+type="application\/json">\s*([\s\S]*?)\s*<\/script>/i);
     if (match && match[1]) {
       try {
@@ -348,10 +349,19 @@ class DescriptionEnricher {
         const exact = found.find((c) => String(c.list_id || c.id) === String(adId));
         const target = exact || found[0];
         const body = target?.body || target?.description;
-        if (body) return cleanText(body);
+        // Extraction shipping depuis la page individuelle
+        const shipping = target ? firstDefined(
+          target.has_option?.shipping,
+          target.options?.shipping,
+          target.has_shipping,
+          target.shipping,
+          target.delivery?.shipping,
+          null
+        ) ?? null : null;
+        return { description: body ? cleanText(body) : null, shipping };
       } catch { /* Ignorer */ }
     }
-    return null;
+    return { description: null, shipping: null };
   }
 
   async enrichAll(ads, writeOutputs) {
@@ -383,7 +393,7 @@ class DescriptionEnricher {
 
     const createStealthContext = async () => {
       const contextOptions = {
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        userAgent: getRandomUserAgent(),
         locale: 'fr-FR',
         viewport: { width: 1366, height: 850 },
       };
@@ -447,11 +457,15 @@ class DescriptionEnricher {
         const res = results[ad.id];
 
         if (res && res.html) {
-          const desc = this.parseHtmlDescription(res.html, ad.id);
+          const { description: desc, shipping: extractedShipping } = this.parseHtmlDescription(res.html, ad.id);
           if (desc) {
             ad.description = desc;
             successCount++;
             this.consecutiveBlocks = 0;
+            // Met à jour le shipping si on l'a extrait et qu'il était null
+            if (extractedShipping != null && ad.shipping == null) {
+              ad.shipping = extractedShipping;
+            }
             this.logger.info(`✅ [${done}/${targets.length}] ${(ad.title || '').slice(0, 50)}`);
           } else {
             notFoundCount++;

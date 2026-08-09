@@ -571,6 +571,7 @@ function renderHistoryTable(jobs) {
 async function loadExplorerPage() {
   allJobsCache = await window.api.getHistory();
   populateSessionDropdown(sessionSelect);
+  restoreExplorerFilters();
   renderExplorerAds();
 }
 
@@ -589,12 +590,35 @@ function populateSessionDropdown(selectEl) {
 }
 
 // Écouteurs de filtrage sécurisés (Évitent tout plantage en cas d'élément absent)
-if (sessionSelect) sessionSelect.addEventListener('change', renderExplorerAds);
-if (filterKeyword) filterKeyword.addEventListener('input', renderExplorerAds);
-if (filterPriceMin) filterPriceMin.addEventListener('input', renderExplorerAds);
-if (filterPriceMax) filterPriceMax.addEventListener('input', renderExplorerAds);
-if (filterTagSelect) filterTagSelect.addEventListener('change', renderExplorerAds);
-if (sortSelect) sortSelect.addEventListener('change', renderExplorerAds);
+if (filterKeyword) filterKeyword.addEventListener('input', () => { saveExplorerFilters(); renderExplorerAds(); });
+if (filterPriceMin) filterPriceMin.addEventListener('input', () => { saveExplorerFilters(); renderExplorerAds(); });
+if (filterPriceMax) filterPriceMax.addEventListener('input', () => { saveExplorerFilters(); renderExplorerAds(); });
+if (filterTagSelect) filterTagSelect.addEventListener('change', () => { saveExplorerFilters(); renderExplorerAds(); });
+if (sortSelect) sortSelect.addEventListener('change', () => { saveExplorerFilters(); renderExplorerAds(); });
+
+// Sauvegarde / restauration des filtres entre les sessions
+function saveExplorerFilters() {
+  try {
+    localStorage.setItem('explorer-filters', JSON.stringify({
+      keyword: filterKeyword?.value || '',
+      priceMin: filterPriceMin?.value || '',
+      priceMax: filterPriceMax?.value || '',
+      tag: filterTagSelect?.value || 'ALL',
+      sort: sortSelect?.value || 'date-desc',
+    }));
+  } catch { /* quota dépassé */ }
+}
+
+function restoreExplorerFilters() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('explorer-filters') || '{}');
+    if (saved.keyword && filterKeyword) filterKeyword.value = saved.keyword;
+    if (saved.priceMin != null && filterPriceMin) filterPriceMin.value = saved.priceMin;
+    if (saved.priceMax != null && filterPriceMax) filterPriceMax.value = saved.priceMax;
+    if (saved.tag && filterTagSelect) filterTagSelect.value = saved.tag;
+    if (saved.sort && sortSelect) sortSelect.value = saved.sort;
+  } catch { /* JSON corrompu */ }
+}
 
 function renderExplorerAds() {
   const selectedJobId = sessionSelect.value;
