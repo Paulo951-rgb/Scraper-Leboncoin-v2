@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Leboncoin Scraper Pro</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- Leaflet.js pour la Carte Interactive (Sécurisé pour l'environnement hybride Electron) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script>
+    // Évite le conflit CommonJS d'Electron en masquant temporairement module
+    if (typeof module === 'object') {
+      window.tempModule = module;
+      module = undefined;
+    }
+  </script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    // Restaure l'environnement Node d'Electron juste après le chargement de Leaflet
+    if (window.tempModule) {
+      module = window.tempModule;
+      delete window.tempModule;
+    }
+  </script>
+</head>
+<body>
+  <div class="app-container">
+    
+    <header class="header">
+      <div class="logo">
+        <h1>Leboncoin <span>Scraper Pro</span></h1>
+      </div>
+      <div class="header-right">
+        <!-- BOUTON PARAMÈTRES & SELECTEUR DE THÈME -->
+        <button id="toggleWidgetBtn" class="btn btn-secondary btn-small">🖥️ Widget Flottant</button>
+        <button id="openSettingsModalBtn" class="btn btn-secondary btn-small">⚙️ Paramètres</button>
+
+        <div class="theme-selector">
+          <label for="themeSelect">🎨 Thème :</label>
+          <select id="themeSelect">
+            <option value="theme-dark">Sombre (Par défaut)</option>
+            <option value="theme-light">Clair (Light)</option>
+            <option value="theme-oled">OLED (Noir Pur)</option>
+            <option value="theme-blue">Bleu Ocean</option>
+            <option value="theme-green">Vert Émeraude</option>
+            <option value="theme-violet">Violet Cyberpunk</option>
+          </select>
+        </div>
+
+        <div class="nav-tabs">
+          <button class="tab-btn active" data-tab="tab-scraper">🚀 Scraper</button>
+          <button class="tab-btn" data-tab="tab-global-ai">🧠 Analyse Globale IA</button>
+          <button class="tab-btn" data-tab="tab-scheduler">⏰ Planificateur</button>
+          <button class="tab-btn" data-tab="tab-logs">📜 Logs</button>
+          <button class="tab-btn" data-tab="tab-history">📁 Historique Jobs</button>
+          <button class="tab-btn" data-tab="tab-explorer">🔍 Explorateur Annonces</button>
+          <button class="tab-btn" data-tab="tab-stats">📊 Statistiques & Carte</button>
+        </div>
+      </div>
+    </header>
+
+    <main class="content">
+      
+      <!-- PAGE 1 : SCRAPER -->
+      <section id="tab-scraper" class="tab-content active">
+        
+        <!-- PRESETS DE RECHERCHE FAVORIES -->
+        <div class="card subcard">
+          <h3>📌 Modèles de Recherche Favoris (Presets 1-Clic)</h3>
+          <div id="presetsRow" class="presets-row">
+            <span class="text-muted font-small">Aucun modèle enregistré.</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Nouvelle recherche Leboncoin</h2>
+          
+          <div class="form-group">
+            <label for="searchUrl">URL de recherche :</label>
+            <input type="url" id="searchUrl" placeholder="https://www.leboncoin.fr/recherche?text=processeur&price=50-150" required>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="pages">Nombre de pages à parcourir :</label>
+              <input type="number" id="pages" value="2" min="1" max="500">
+            </div>
+
+            <div class="form-group">
+              <label for="limit">Limite d'annonces (optionnel) :</label>
+              <input type="number" id="limit" placeholder="Toutes les annonces" min="1">
+            </div>
+          </div>
+
+          <!-- PROXIES -->
+          <div class="card subcard">
+            <h3>🌐 Configuration Proxy Rotatif (Optionnel)</h3>
+            <div class="form-group">
+              <label for="proxyUrl">Serveur Proxy (HTTP / SOCKS5) :</label>
+              <input type="text" id="proxyUrl" placeholder="http://user:pass@proxy.example.com:8080">
+            </div>
+          </div>
+
+          <!-- CONFIGURATION IA -->
+          <div class="card subcard">
+            <h3>🤖 Configuration IA & Modèle Custom</h3>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="autoAiMarket" checked>
+                  <strong>☑️ Analyser automatiquement le marché avec l'IA après le scraping</strong>
+                </label>
+              </div>
+
+              <div class="form-group">
+                <label for="aiProvider">Moteur IA :</label>
+                <select id="aiProvider">
+                  <option value="ollama">Ollama Local (100% Gratuit sur votre PC)</option>
+                  <option value="openai">OpenAI ChatGPT API (sk-...)</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label for="aiModelName">Nom du Modèle (ex: llama3, mistral) :</label>
+                <input type="text" id="aiModelName" value="llama3">
+              </div>
+
+              <div class="form-group hidden" id="openAiKeyGroup">
+                <label for="aiApiKey">Clé API OpenAI :</label>
+                <input type="password" id="aiApiKey" placeholder="sk-proj-...">
+              </div>
+            </div>
+          </div>
+
+          <div class="form-row checkboxes">
+            <label class="checkbox-label">
+              <input type="checkbox" id="noDesc">
+              Ignorer les descriptions (Mode Ultra-Rapide)
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" id="csv" checked>
+              Exporter également un fichier CSV
+            </label>
+          </div>
+
+          <div class="actions">
+            <button id="startBtn" class="btn btn-primary">🚀 Lancer le scraping</button>
+            <button id="savePresetBtn" class="btn btn-secondary">📌 Sauvegarder comme Preset</button>
+            <button id="stopBtn" class="btn btn-danger" disabled>🛑 Arrêter</button>
+          </div>
+        </div>
+
+        <div class="card progress-card">
+          <div class="progress-header">
+            <span id="statusText">Statut : Prêt</span>
+            <span id="etaText"></span>
+          </div>
+          <div class="progress-bar-container">
+            <div id="progressBar" class="progress-bar" style="width: 0%;"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- PAGE ANALYSE GLOBALE IA -->
+      <section id="tab-global-ai" class="tab-content">
+        <div class="card">
+          <h2>🧠 Moteur d'Analyse Globale Gemini IA (1M+ Tokens)</h2>
+          <p class="text-muted mb-15">Analysez l'ensemble des annonces d'un dataset en une seule fois pour établir un classement intelligent Top 20.</p>
+
+          <div class="form-row">
+            <div class="form-group flex-2">
+              <label for="globalJobSelect">Session à analyser :</label>
+              <select id="globalJobSelect" class="filter-select">
+                <option value="ALL">🌐 Tous les scrapings combinés (Dataset Global)</option>
+              </select>
+            </div>
+
+            <div class="form-group flex-2">
+              <label for="globalPresetSelect">Mode d'Analyse Globale :</label>
+              <select id="globalPresetSelect" class="filter-select">
+                <option value="TOP_DEALS">🏆 Top 20 Meilleures Affaires & Pépites</option>
+                <option value="RESELL_FLIP">💸 Spécial Achat-Revente / Flip (Marge Nette)</option>
+                <option value="PERF_PRICE">⚡ Rapport Performance / Prix Maximal</option>
+                <option value="CUSTOM">✏️ Consigne Personnalisée (Custom)</option>
+              </select>
+            </div>
+
+            <div class="form-group flex-2">
+              <label for="geminiApiKey">Clé API Google AI Studio (100% Gratuite) :</label>
+              <input type="password" id="geminiApiKey" placeholder="AIzaSy...">
+            </div>
+          </div>
+
+          <div class="form-group hidden" id="customInstructionGroup">
+            <label for="customInstructionText">Consigne Personnalisée :</label>
+            <textarea id="customInstructionText" rows="3" class="filter-input" placeholder="Ex: Trouve les 5 meilleures cartes graphiques à moins de 80€..."></textarea>
+          </div>
+
+          <div class="actions" style="margin-top:15px;">
+            <button id="startGlobalAiBtn" class="btn btn-primary">🚀 Lancer l'Analyse Globale Gemini</button>
+            <small class="text-muted" style="align-self:center;">Obtenez une clé API gratuite en 30s sur <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:var(--primary-color);">aistudio.google.com</a></small>
+          </div>
+        </div>
+
+        <div id="globalReportContainer" class="hidden">
+          <div class="stats-grid">
+            <div class="stat-card">
+              <span class="stat-title">Annonces Comparées</span>
+              <span id="kpiTotalAnalyzed" class="stat-value">-</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-title">Meilleure Pépite</span>
+              <span id="kpiBestDeal" class="stat-value text-green font-small">-</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-title">Profit Revente Potentiel</span>
+              <span id="kpiTotalProfit" class="stat-value text-green">-</span>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>📋 Vue d'Ensemble & Stratégie</h3>
+            <p id="kpiOverviewText" class="text-muted" style="font-size:0.9rem; line-height:1.5;"></p>
+          </div>
+
+          <div class="card">
+            <h3>🏆 Classement des Meilleures Opportunités</h3>
+            <div id="rankingCardsBox" class="ranking-cards-box"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- PAGE PLANIFICATEUR -->
+      <section id="tab-scheduler" class="tab-content">
+        <div class="card">
+          <h2>⏰ Planificateur de Scraping Automatique</h2>
+          <p class="text-muted mb-15">Programmez des scrapings réguliers en arrière-plan. Une notification Windows surgira dès qu'une Bonne Affaire est trouvée !</p>
+
+          <div class="form-row">
+            <div class="form-group flex-3">
+              <label for="schedUrl">URL à surveiller :</label>
+              <input type="url" id="schedUrl" placeholder="https://www.leboncoin.fr/recherche?text=processeur">
+            </div>
+
+            <div class="form-group flex-1">
+              <label for="schedInterval">Intervalle d'exécution :</label>
+              <select id="schedInterval">
+                <option value="15">Toutes les 15 minutes</option>
+                <option value="30" selected>Toutes les 30 minutes</option>
+                <option value="60">Toutes les 1 heure</option>
+                <option value="120">Toutes les 2 heures</option>
+                <option value="360">Toutes les 6 heures</option>
+              </select>
+            </div>
+
+            <div class="form-group flex-1">
+              <label>&nbsp;</label>
+              <button id="addSchedBtn" class="btn btn-primary">➕ Programmer Tâche</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Tâches Planifiées Actives</h2>
+          <div class="history-table-container">
+            <table class="history-table">
+              <thead>
+                <tr>
+                  <th>URL de Recherche</th>
+                  <th>Intervalle</th>
+                  <th>Statut</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="schedTableBody">
+                <tr>
+                  <td colspan="4" class="text-center">Aucune tâche planifiée activée</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- PAGE LOGS -->
+      <section id="tab-logs" class="tab-content">
+        <div class="card logs-card">
+          <div class="logs-header">
+            <h2>Journaux d'exécution en direct</h2>
+            <button id="clearLogsBtn" class="btn btn-small">Vider l'affichage</button>
+          </div>
+          <div id="logsConsole" class="console"></div>
+        </div>
+      </section>
+
+      <!-- PAGE HISTORIQUE -->
+      <section id="tab-history" class="tab-content">
+        <div class="card">
+          <div class="history-header">
+            <h2>Historique complet de tous les Scrapings</h2>
+            <button id="openMainFolderBtn" class="btn btn-secondary btn-small">📂 Dossier output/</button>
+          </div>
+
+          <div class="history-table-container">
+            <table class="history-table">
+              <thead>
+                <tr>
+                  <th>Date de Session</th>
+                  <th>Annonces</th>
+                  <th>Fichiers Générés</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="historyTableBody">
+                <tr>
+                  <td colspan="4" class="text-center">Chargement de l'historique...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- PAGE EXPLORATEUR -->
+      <section id="tab-explorer" class="tab-content">
+        <div class="card">
+          <div class="history-header">
+            <h2>Explorateur d'Annonces & Estimation IA</h2>
+            <div style="display:flex; gap:10px;">
+              <button id="openCompareModalBtn" class="btn btn-secondary btn-small">🆚 Comparer (<span id="compareCount">0</span>)</button>
+              <div class="view-toggle">
+                <button id="viewTableBtn" class="btn btn-secondary btn-small active">📊 Tableau</button>
+                <button id="viewGridBtn" class="btn btn-secondary btn-small">🖼️ Galerie</button>
+              </div>
+              <button id="triggerMarketBtn" class="btn btn-primary btn-small">🧠 Relancer Analyse IA</button>
+            </div>
+          </div>
+          
+          <div class="filter-row">
+            <div class="form-group flex-2">
+              <label>Session à analyser :</label>
+              <select id="sessionSelect" class="filter-select">
+                <option value="ALL">🌐 Tous les scrapings combinés (Recherche globale)</option>
+              </select>
+            </div>
+
+            <div class="form-group flex-3">
+              <label>Recherche par mot-clé :</label>
+              <input type="text" id="filterKeyword" placeholder="🔍 Titre, description, ville (ex: Ryzen 5, Paris)..." class="filter-input">
+            </div>
+
+            <!-- Réintégration des filtres Prix Min et Prix Max -->
+            <div class="form-group flex-1">
+              <label>Prix Min (€) :</label>
+              <input type="number" id="filterPriceMin" placeholder="0" class="filter-input">
+            </div>
+
+            <div class="form-group flex-1">
+              <label>Prix Max (€) :</label>
+              <input type="number" id="filterPriceMax" placeholder="Max" class="filter-input">
+            </div>
+
+            <div class="form-group flex-1">
+              <label>Filtre de Deal :</label>
+              <select id="filterTagSelect" class="filter-select">
+                <option value="ALL">Toutes les annonces</option>
+                <option value="FAV">⭐ Mes Favoris uniquement</option>
+                <option value="SUPER">🟢🟢 Très bonnes affaires uniquement</option>
+                <option value="GOOD">🟢 Bonnes affaires uniquement</option>
+                <option value="HIGH">🔴 Trop cher uniquement</option>
+              </select>
+            </div>
+
+            <div class="form-group flex-1">
+              <label>Tri des annonces :</label>
+              <select id="sortSelect" class="filter-select">
+                <option value="DEAL_DESC">🟢 Meilleures Affaires d'abord</option>
+                <option value="PRICE_ASC">Prix croissant</option>
+                <option value="PRICE_DESC">Prix décroissant</option>
+                <option value="DEFAULT">Ordre d'origine</option>
+              </select>
+            </div>
+          </div>
+
+          <div id="adsCounterBanner" class="text-muted mb-15 font-small">
+            Affichage de <span id="filteredAdsCount">0</span> annonces
+          </div>
+
+          <div id="adsTableContainer" class="history-table-container">
+            <table class="history-table compact-table">
+              <thead>
+                <tr>
+                  <th style="width:3%;">☑️</th>
+                  <th style="width:3%;">⭐</th>
+                  <th style="width:25%;">Produit Identifié</th>
+                  <th style="width:10%;">Prix</th>
+                  <th style="width:12%;">Estimation Marché</th>
+                  <th style="width:12%;">Marge Revente</th>
+                  <th style="width:12%;">Évaluation</th>
+                  <th style="width:18%;">Détails & Explication</th>
+                  <th style="width:5%;">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="adsTableBody">
+                <tr>
+                  <td colspan="9" class="text-center">Sélectionnez un job ou lancez une recherche</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div id="adsGridContainer" class="ads-grid-container hidden"></div>
+
+        </div>
+      </section>
+
+      <!-- PAGE STATISTIQUES & MAP -->
+      <section id="tab-stats" class="tab-content">
+        <div class="card">
+          <div class="history-header">
+            <h2>Indicateurs & Graphiques Décisionnels</h2>
+            <select id="statsSessionSelect" class="filter-select" style="max-width: 300px;">
+              <option value="ALL">🌐 Tous les scrapings combinés</option>
+            </select>
+          </div>
+
+          <div class="stats-grid">
+            <div class="stat-card">
+              <span class="stat-title">Bonnes Affaires Détectées</span>
+              <span id="statGoodDeals" class="stat-value text-green">-</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-title">Annonces Trop Chères</span>
+              <span id="statRisks" class="stat-value text-red">-</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-title">Total Annonces Analysées</span>
+              <span id="statTotalAds" class="stat-value">-</span>
+            </div>
+          </div>
+
+          <!-- 🗺️ CARTE GEOGRAPHIQUE INTERACTIVE LEAFLET (DANS L'ONGLET STATISTIQUES) -->
+          <div class="card subcard">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+              <h3>🗺️ Carte Géographique des Annonces (France)</h3>
+              <label class="checkbox-label" style="font-size:0.8rem; margin:0;">
+                <input type="checkbox" id="mapHandDeliveryOnly" checked>
+                🤝 Remise en main propre uniquement
+              </label>
+            </div>
+            <div id="leafletMap" style="height: 350px; border-radius: 8px; border: 1px solid var(--border-color);"></div>
+          </div>
+
+          <div class="charts-grid" style="margin-top:15px;">
+            <div class="chart-box">
+              <canvas id="dealsChart"></canvas>
+            </div>
+            <div class="chart-box">
+              <canvas id="sellerChart"></canvas>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- ⚙️ MODAL PARAMÈTRES (Réintégré ici pour éviter les erreurs de chargement) -->
+  <div id="settingsModal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <h3>⚙️ Paramètres Globaux du Logiciel</h3>
+      <div class="form-group text-left" style="margin-top:15px;">
+        <label for="cfgCleanHarDays" style="font-size:0.8rem; color:var(--text-muted); display:block; margin-bottom:5px;">Nettoyage automatique des fichiers .har (jours) :</label>
+        <input type="number" id="cfgCleanHarDays" value="7" min="1" max="60" style="width:100%;">
+      </div>
+      <div class="modal-actions" style="margin-top:20px;">
+        <button id="closeSettingsModalBtn" class="btn btn-secondary">Fermer</button>
+        <button id="saveSettingsBtn" class="btn btn-primary">Enregistrer Paramètres</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL SUPPRESSION -->
+  <div id="confirmModal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <h3>⚠️ Confirmer la suppression</h3>
+      <p id="modalMessage">Voulez-vous vraiment supprimer ce scraping ? Cette action est irréversible.</p>
+      <div class="modal-actions">
+        <button id="modalCancelBtn" class="btn btn-secondary">Annuler</button>
+        <button id="modalConfirmBtn" class="btn btn-danger">Oui, Supprimer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL COMPARATEUR CÔTÉ À CÔTÉ -->
+  <div id="compareModal" class="modal-overlay hidden">
+    <div class="modal-card modal-large" style="width:900px;">
+      <div class="modal-header">
+        <h3>🆚 Comparateur d'Annonces Côte à Côte</h3>
+        <button id="closeCompareModalBtn" class="btn-close">&times;</button>
+      </div>
+      <div id="compareGrid" class="compare-grid"></div>
+    </div>
+  </div>
+
+  <!-- MODAL FICHE DÉTAILLÉE ANNONCE -->
+  <div id="adDetailModal" class="modal-overlay hidden">
+    <div class="modal-card modal-large">
+      <div class="modal-header">
+        <h3 id="modalAdTitle">Fiche Détaillée de l'Annonce</h3>
+        <button id="closeDetailModalBtn" class="btn-close">&times;</button>
+      </div>
+      <div class="modal-body-grid">
+        <div class="gallery-container">
+          <img id="mainGalleryImg" src="" alt="Photo principale" class="main-photo">
+          <div id="galleryThumbnails" class="thumbs-row"></div>
+        </div>
+        <div class="ad-info-col">
+          <div class="info-badge-row">
+            <span id="modalDealBadge"></span>
+            <button id="modalStarBtn" class="btn btn-secondary btn-small">⭐ Ajouter aux Favoris</button>
+          </div>
+          <div class="price-box">
+            <div class="price-big"><span id="modalPrice"></span> €</div>
+            <div class="market-range-info">Estimation marché : <strong id="modalMarketRange"></strong> (Moyenne : <span id="modalMarketAvg"></span> €)</div>
+            <div style="font-size:0.85rem; color:var(--green-deal); font-weight:bold; margin-top:5px;">
+              💸 Marge Revente Estimée : <span id="modalResellMargin"></span>
+            </div>
+          </div>
+          <div class="seller-info-banner">
+            📍 <span id="modalCity"></span> | 👤 <span id="modalSeller"></span> | 📅 <span id="modalDate"></span>
+          </div>
+          <div class="card subcard" style="margin-top:10px;">
+            <h4>Résumé & Explication IA</h4>
+            <p id="modalSummary" class="text-muted" style="font-size:0.85rem; line-height:1.4;"></p>
+          </div>
+          <div class="card subcard">
+            <h4>Description Complète</h4>
+            <div id="modalDescription" class="full-desc-text"></div>
+          </div>
+          <div class="actions" style="margin-top:15px;">
+            <button id="modalOpenLeboncoinBtn" class="btn btn-primary" style="width:100%;">🔗 Ouvrir l'Annonce sur Leboncoin</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

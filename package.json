@@ -1,0 +1,16 @@
+{
+  "name": "leboncoin-scraper-app",
+  "version": "1.0.0",
+  "description": "Application de scraping Leboncoin semi-automatisée",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron --max-old-space-size=8192 ."
+  },
+  "dependencies": {
+    "exceljs": "^4.4.0",
+    "playwright": "1.41.2"
+  },
+  "devDependencies": {
+    "electron": "^28.0.0"
+  }
+}
