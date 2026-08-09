@@ -235,6 +235,23 @@ assert(/require\(.\.\/core\/ipcHandlers.\)/.test(mainCode), 'main.js requires ./
 const prCode = fs.readFileSync(path.join(base, 'services/scraping/pipelineRunner.js'), 'utf8');
 assert(/path\.join\(__dirname, .leboncoin-pipeline\.js.\)/.test(prCode), 'pipelineRunner finds pipeline in same folder (no ../vendor/)');
 
+// Widget flottant (fenêtre always-on-top avec progression)
+assert(existsSync(path.join(__dirname, '..', 'src/renderer/widget.html')), 'widget.html present');
+const mainCode2 = fs.readFileSync(path.join(base, 'main.js'), 'utf8');
+assert(/createWidgetWindow/.test(mainCode2), 'main.js: createWidgetWindow function present');
+assert(/alwaysOnTop:\s*true/.test(mainCode2), 'main.js: widget window always-on-top');
+assert(/ipcMain\.on\('widget:toggle'/.test(mainCode2), 'main.js: widget:toggle IPC handler');
+assert(/ipcMain\.on\('widget:close'/.test(mainCode2), 'main.js: widget:close IPC handler');
+assert(/ipcMain\.on\('widget:progress'/.test(mainCode2), 'main.js: widget:progress relay handler');
+assert(/ipcMain\.on\('widget:status'/.test(mainCode2), 'main.js: widget:status relay handler');
+assert(/toggleWidget/.test(preloadCode), 'preload.js: toggleWidget exposed');
+assert(/sendWidgetProgress/.test(preloadCode), 'preload.js: sendWidgetProgress exposed');
+assert(/sendWidgetStatus/.test(preloadCode), 'preload.js: sendWidgetStatus exposed');
+const appCode2 = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/app.js'), 'utf8');
+assert(!/Le Widget Flottant n'est pas encore disponible/.test(appCode2), 'app.js: stale "not available" alert removed');
+assert(/sendWidgetProgress\(\{ percent, status \}\)/.test(appCode2), 'app.js: relays progress to widget');
+assert(/sendWidgetStatus\(\{ state, message \}\)/.test(appCode2), 'app.js: relays status to widget');
+
 console.log(`\n=== RÉSULTAT : ${pass} réussis, ${fail} échoués ===`);
 process.exit(fail > 0 ? 1 : 0);
 }
