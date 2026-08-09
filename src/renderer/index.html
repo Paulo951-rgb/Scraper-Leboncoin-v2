@@ -466,11 +466,16 @@
           <option value="theme-dark">🌙 Sombre (Par défaut)</option>
           <option value="theme-light">☀️ Clair</option>
           <option value="theme-oled">⚫ OLED (Noir Pur)</option>
-          <option value="theme-blue">🌊 Bleu Ocean</option>
+          <option value="theme-violet">🟣 Violet Doux</option>
           <option value="theme-green">💚 Vert Émeraude</option>
-          <option value="theme-violet">🟣 Violet Cyberpunk</option>
           <option value="theme-sunset">🌅 Sunset</option>
           <option value="theme-carbon">🏎️ Carbon</option>
+          <option value="theme-rose">🌸 Rose</option>
+          <option value="theme-amber">🍯 Amber</option>
+          <option value="theme-mint">🌿 Mint</option>
+          <option value="theme-slate">🧊 Slate</option>
+          <option value="theme-crimson">🔴 Crimson</option>
+          <option value="theme-nordic">❄️ Nordic</option>
         </select>
       </div>
 
@@ -498,6 +503,14 @@
           <input type="checkbox" id="cfgHeadless" checked>
           <span>Invisible (headless) — le navigateur n'est pas visible sauf en cas de CAPTCHA</span>
         </label>
+      </div>
+
+      <!-- SECTION : ANALYSE IA -->
+      <h4 style="margin-top:20px; margin-bottom:10px; font-size:0.95rem; color:var(--primary-color);">🧠 Analyse IA Locale</h4>
+      <div class="form-group text-left">
+        <label for="cfgAiConcurrency" style="font-size:0.8rem; color:var(--text-muted); display:block; margin-bottom:5px;">Analyses simultanées (parallélisme IA) :</label>
+        <input type="number" id="cfgAiConcurrency" value="5" min="1" max="20" style="width:100%;">
+        <small style="color:var(--text-muted);">Nombre d'annonces analysées en parallèle par l'IA. Plus élevé = plus rapide, mais demande plus de RAM/VRAM. Recommandé : 3-5 pour CPU, 5-10 pour GPU.</small>
       </div>
 
       <!-- SECTION : MAINTENANCE -->

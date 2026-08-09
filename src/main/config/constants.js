@@ -28,6 +28,6 @@ module.exports = {
     outDir: BASE_OUT_DIR,
     autoAiMarket: true,
   },
-  THEMES: ['theme-dark', 'theme-light', 'theme-oled', 'theme-blue', 'theme-green', 'theme-violet'],
+  THEMES: ['theme-dark', 'theme-light', 'theme-oled', 'theme-violet', 'theme-green', 'theme-sunset', 'theme-carbon', 'theme-rose', 'theme-amber', 'theme-mint', 'theme-slate', 'theme-crimson', 'theme-nordic'],
   GLOBAL_SESSION_PATH,
 };

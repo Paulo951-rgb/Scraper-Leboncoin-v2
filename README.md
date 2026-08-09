@@ -60,9 +60,14 @@ L'application est pensée pour un usage **semi-automatisé** : l'utilisateur peu
 - 📊 **Statistiques & carte interactive** (Leaflet.js) affichant la répartition géographique des annonces en France, graphiques (Chart.js) de répartition des deals et des vendeurs.
 - 📌 **Presets de recherche** réutilisables en un clic.
 - 🖥️ **Widget flottant** always-on-top pour suivre la progression du scraping en temps réel, même fenêtre principale minimisée (pourcentage, barre de progression, statut, point coloré animé).
-- 🎨 **8 thèmes visuels** (Sombre, Clair, OLED, Bleu Ocean, Vert Émeraude, Violet Cyberpunk, Sunset, Carbon) — réglables depuis la modale Paramètres.
+- 🎨 **13 thèmes visuels** (Sombre, Clair, OLED, Violet Doux, Vert Émeraude, Sunset, Carbon, Rose, Amber, Mint, Slate, Crimson, Nordic) — réglables depuis la modale Paramètres.
 - 🌐 **Support proxy rotatif** optionnel (HTTP proxy avec authentification).
 - 🚀 **3 presets de vitesse** (Rapide / Équilibré / Prudent) réglables dans les Paramètres, du parallèle agressif au séquentiel anti-blocage.
+- 🧠 **Cache IA** — les annonces déjà analysées (même `list_id`) ne sont pas re-demandées à l'IA. Accélération massive sur les scrapings répétés.
+- 🔄 **Rotation de User-Agent** — 10 User-Agents réalistes en rotation aléatoire pour réduire la détection.
+- 💾 **Persistance des tâches planifiées** — les tâches du planificateur survivent au redémarrage de l'application.
+- 🔍 **Filtres mémorisés** — les filtres de l'Explorateur Annonces (mot-clé, prix, tri) sont sauvegardés entre les sessions.
+- 📦 **Extraction livraison** — l'info "remise en main propre / livraison" est extraite depuis les pages individuelles d'annonces (Leboncoin ne la fournit pas dans les résultats de recherche).
 - 🧹 **Nettoyage automatique** des anciens fichiers `.har` (configurable, par défaut 7 jours) pour limiter l'usage disque.
 
 ---
@@ -319,7 +324,7 @@ D'autres éléments transverses : bouton **widget flottant**, modale de **param�
 Accessible via le bouton **⚙️ Paramètres** dans le header. Centralise tous les réglages utilisateur :
 
 **🎨 Apparence**
-- **Thème** : 8 thèmes (Sombre, Clair, OLED, Bleu Ocean, Vert Émeraude, Violet Cyberpunk, Sunset, Carbon). Aperçu en temps réel à la sélection.
+- **Thème** : 13 thèmes (Sombre, Clair, OLED, Violet Doux, Vert Émeraude, Sunset, Carbon, Rose, Amber, Mint, Slate, Crimson, Nordic). Aperçu en temps réel à la sélection.
 
 **🚀 Scraping**
 - **Vitesse de scraping** : 3 presets pour l'enrichissement des descriptions :
@@ -328,6 +333,9 @@ Accessible via le bouton **⚙️ Paramètres** dans le header. Centralise tous 
   - 🛡️ **Prudent** — séquentiel (1 fetch à la fois), délais humains (1,5-3s + 0,8-1,8s entre chaque). Anti-blocage maximal.
 - **Délai entre les pages de recherche** (ms) : contrôle la vitesse de navigation entre les pages de résultats Leboncoin (défaut 1000ms).
 - **Mode de capture** : invisible (headless) ou visible. En headless, le navigateur s'affiche automatiquement en cas de CAPTCHA.
+
+**🧠 Analyse IA Locale** (nouveau)
+- **Analyses simultanées** (parallélisme IA) : nombre d'annonces analysées en parallèle par l'IA locale (Ollama). Plus élevé = plus rapide, mais demande plus de RAM/VRAM. Recommandé : 3-5 pour CPU, 5-10 pour GPU. Défaut : 5.
 
 **🧹 Maintenance**
 - **Nettoyage auto des fichiers .har** (jours) : les fichiers .har plus anciens que ce nombre sont supprimés au démarrage (défaut 7).

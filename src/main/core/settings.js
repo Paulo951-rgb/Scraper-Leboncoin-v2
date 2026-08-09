@@ -14,6 +14,7 @@ const SETTINGS_DEFAULTS = Object.freeze({
   scrapeSpeed: 'fast',      // 'fast' | 'balanced' | 'safe'
   pageDelayMs: 1000,        // délai entre les pages de recherche
   headless: true,           // navigateur invisible (sauf CAPTCHA)
+  aiConcurrency: 5,         // nb d'annonces analysées en parallèle par l'IA
 });
 
 function loadSettings() {

@@ -20,7 +20,7 @@ function buildPageUrl(baseUrl, pageNumber) {
   }
 }
 
-const STEALTH_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+const { getRandomUserAgent } = require('./userAgents');
 
 class HarCapturer extends EventEmitter {
   constructor(options = {}) {
@@ -46,7 +46,7 @@ class HarCapturer extends EventEmitter {
 
   _baseContextOptions(extras = {}) {
     return {
-      userAgent: STEALTH_UA,
+      userAgent: getRandomUserAgent(),
       locale: 'fr-FR',
       viewport: { width: 1366, height: 850 },
       ...extras,
