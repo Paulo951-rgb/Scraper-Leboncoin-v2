@@ -1,7 +1,5 @@
 # 🛒 Leboncoin Scraper Pro
 
-> ℹ️ **Note importante** : ce README a été généré à partir d'un instantané du code source à un instant donné. Depuis, le projet a pu évoluer : nouveaux modules ajoutés, fonctionnalités modifiées ou supprimées, refactoring de fichiers existants, changements de dépendances, etc. Ce document reste une **base de référence fiable sur l'architecture générale et la logique globale du projet**, mais en cas de doute sur un détail précis (nom de fonction, canal IPC, structure d'un fichier...), il est recommandé de vérifier directement dans le code source actuel plutôt que de se fier aveuglément à ce texte.
-
 Application de bureau **Electron** permettant de scraper, enrichir, analyser (via IA) et exporter des annonces [Leboncoin.fr](https://www.leboncoin.fr) de manière semi-automatisée, avec détection de bonnes affaires, estimation de valeur marché, calcul de marge de revente et détection de risques/arnaques.
 
 > Ce document est écrit pour permettre à une IA (ou à un développeur) sans aucune connaissance préalable du projet de comprendre entièrement son fonctionnement, son architecture et son code, sans avoir besoin d'autre contexte.
@@ -24,8 +22,9 @@ Application de bureau **Electron** permettant de scraper, enrichir, analyser (vi
 12. [Installation & lancement](#-installation--lancement)
 13. [Configuration de l'IA](#-configuration-de-lia)
 14. [Fichiers générés (sorties)](#-fichiers-générés-sorties)
-15. [Limitations connues](#-limitations-connues)
-16. [Avertissement légal](#-avertissement-légal)
+15. [Tests de non-régression](#-tests-de-non-régression)
+16. [Limitations connues](#-limitations-connues)
+17. [Avertissement légal](#-avertissement-légal)
 
 ---
 
@@ -49,7 +48,7 @@ L'application est pensée pour un usage **semi-automatisé** : l'utilisateur peu
 - 🚀 **Scraping automatisé** d'une URL de recherche Leboncoin sur plusieurs pages.
 - 🔑 **Session globale persistante** ("Master Session") pour éviter de repasser un captcha à chaque lancement.
 - 🤖 **Détection automatique de blocage/captcha** avec pause et reprise après résolution manuelle.
-- 📝 **Extraction des descriptions complètes** des annonces en mode "Turbo" (requêtes HTTP par batchs de 10, exécutées directement dans la page pour hériter des cookies/session).
+- 📝 **Extraction des descriptions complètes** des annonces en mode séquentiel anti-blocage (requêtes HTTP une par une avec délais humains aléatoires de 0,8-1,8s, exécutées directement dans la page pour hériter des cookies/session).
 - 🧠 **Analyse IA par annonce** (`marketAnalyzer.js`) : identification du produit, gamme, état, type de photo, puis calcul d'un **score de 0 à 100**, d'une **classification** (Très bonne affaire / Bonne affaire / Prix correct / Légèrement cher / Trop cher), d'une **marge de revente estimée (ROI)** et d'un **score d'arnaque (scam score)**.
 - 🧠 **Analyse Globale IA (Gemini)** : un moteur d'analyse "grand contexte" (Gemini 2.0 Flash, jusqu'à 1M tokens) capable d'analyser l'ensemble d'un job en une fois pour produire un classement des meilleures opportunités avec instructions personnalisées.
 - 📊 **Export Excel (.xlsx)** stylisé (couleurs, filtres automatiques, liens hypertextes, mise en forme conditionnelle des bonnes/mauvaises affaires) via `exceljs`.
@@ -60,7 +59,7 @@ L'application est pensée pour un usage **semi-automatisé** : l'utilisateur peu
 - 🆚 **Comparateur d'annonces** côte à côte.
 - 📊 **Statistiques & carte interactive** (Leaflet.js) affichant la répartition géographique des annonces en France, graphiques (Chart.js) de répartition des deals et des vendeurs.
 - 📌 **Presets de recherche** réutilisables en un clic.
-- 🖥️ **Widget flottant** pour suivre la progression sans garder la fenêtre principale au premier plan.
+- 🖥️ **Widget flottant** always-on-top pour suivre la progression du scraping en temps réel, même fenêtre principale minimisée (pourcentage, barre de progression, statut, point coloré animé).
 - 🎨 **6 thèmes visuels** (Sombre, Clair, OLED, Bleu Ocean, Vert Émeraude, Violet Cyberpunk).
 - 🌐 **Support proxy rotatif** optionnel (HTTP proxy avec authentification).
 - 🧹 **Nettoyage automatique** des anciens fichiers `.har` (configurable, par défaut 7 jours) pour limiter l'usage disque.
@@ -116,10 +115,10 @@ Le fichier `src/main/services/scraping/leboncoin-pipeline.js` est un **script CL
 leboncoin-scraper-app/
 ├── package.json                          # Métadonnées, dépendances, script "start"
 ├── test/
-│   └── regression.test.js                # Suite de non-régression (96 assertions)
+│   └── regression.test.js                # Suite de non-régression (109 assertions)
 └── src/
     ├── main/                             # Processus principal Electron (Node.js)
-    │   ├── main.js                       # Point d'entrée : cycle de vie app + fenêtre Electron
+    │   ├── main.js                       # Point d'entrée : cycle de vie app + fenêtre principale + fenêtre widget
     │   ├── preload.js                    # Pont sécurisé (contextBridge) Main ↔ Renderer
     │   ├── core/                         # Cœur applicatif (orchestration)
     │   │   ├── ipcHandlers.js            # Routage IPC uniquement (délègue aux services)
@@ -151,6 +150,7 @@ leboncoin-scraper-app/
     │       └── diagnostics.js            # Helpers de log/diagnostic (redact, formatBytes…)
     └── renderer/                         # Interface utilisateur (front-end, sandboxé)
         ├── index.html                    # Structure de l'UI (onglets, modales, formulaires)
+        ├── widget.html                   # Widget flottant always-on-top (progression temps réel)
         ├── app.js                        # Logique front-end (événements, rendu dynamique, appels API)
         └── styles.css                    # Habillage visuel + thèmes
 ```
@@ -177,14 +177,14 @@ leboncoin-scraper-app/
 
 Voici le cycle de vie complet d'un scraping, du clic sur "Démarrer" jusqu'au fichier Excel final :
 
-### Étape 1 — Capture HAR (`HarCapturer`, via Playwright)
-- Lance un navigateur **Chromium headless**.
-- Charge la **session globale** (`global-session.json`) si elle existe, pour réutiliser les cookies déjà validés et éviter un nouveau captcha.
-- Navigue sur l'URL de recherche fournie, page par page (paramètre `page=N` ajouté automatiquement à l'URL).
+### Étape 1 — Pré-check & Capture HAR (`HarCapturer`, via Playwright)
+- **Pré-check** : lance un navigateur **Chromium headless**, charge la **session globale** (`global-session.json`) si elle existe, navigue sur l'URL de recherche. Si la page retourne un code HTTP ≥ 400 (403/429) ou si un CAPTCHA est détecté dans le texte → **bascule en navigateur visible** pour résolution manuelle. Le navigateur visible recharge la page toutes les 2 secondes jusqu'à ce que le blocage soit levé. La session validée est ensuite sauvegardée.
+- **Capture** : navigue sur l'URL de recherche, page par page (paramètre `page=N` ajouté automatiquement à l'URL).
 - Enregistre **tout le trafic réseau** correspondant aux appels d'API/recherche dans un fichier `capture.har` (`recordHar` de Playwright, filtré sur `recherche|api|items`).
-- **Détecte les blocages** (captcha, "vitesse surhumaine", mention "robot"/"restreint") en inspectant le titre et le texte visible de la page. Si un blocage est détecté, l'app **attend indéfiniment** que l'utilisateur résolve manuellement le captcha (vérification toutes les 2 secondes) avant de continuer.
+- **Sauvegarde la session globale dès la 1ère page réussie** (HTTP < 400) — ne l'écrase plus ensuite pour éviter de corrompre la session avec des cookies anti-bot des pages suivantes.
+- **Arrêt immédiat** si une page retourne un 403 pendant la capture, au lieu de continuer sur les pages suivantes.
 - Recycle la page toutes les 3 pages pour limiter la consommation mémoire.
-- À la fin, sauvegarde les cookies/session validés dans `global-session.json` (session partagée entre tous les futurs jobs) et dans une session locale au job.
+- À la fin, sauvegarde une session locale au job (`session-state.json`) pour le pipeline d'enrichissement.
 
 ### Étape 2 — Extraction & enrichissement (`PipelineRunner` → `leboncoin-pipeline.js`, en sous-processus)
 1. **Parsing du HAR** : lecture de toutes les réponses HTTP au format JSON (ou JSON embarqué dans un `<script id="__NEXT_DATA__">` d'une page HTML).
@@ -193,8 +193,8 @@ Voici le cycle de vie complet d'un scraping, du clic sur "Démarrer" jusqu'au fi
 4. **Fusion des doublons** par identifiant d'annonce.
 5. **Écriture atomique** des résultats intermédiaires (`annonces.json`, `annonces.txt`, `annonces.csv` si activé) — écriture dans un fichier temporaire puis renommage, pour éviter la corruption en cas de crash.
 6. **Enrichissement des descriptions** (`DescriptionEnricher`) : les résultats de recherche Leboncoin ne contiennent pas toujours la description complète. Le pipeline :
-   - relance un navigateur Chromium (avec session existante, images/CSS bloquées pour la vitesse) ;
-   - envoie des requêtes `fetch()` **directement depuis la page** (pour hériter des cookies du navigateur) vers chaque URL d'annonce, **par batchs de 10 en parallèle** ("Turbo-Mode") ;
+   - relance un navigateur Chromium (avec la session globale, images/CSS bloquées pour la vitesse) ;
+   - envoie des requêtes `fetch()` **directement depuis la page** (pour hériter des cookies du navigateur) vers chaque URL d'annonce, **une par une en mode séquentiel** avec des délais humains aléatoires (0,8-1,8s entre chaque) pour éviter les blocages anti-bot ;
    - parse le HTML retourné pour en extraire la description via le JSON `__NEXT_DATA__` ;
    - **s'arrête préventivement** après 3 blocages HTTP 403/429 consécutifs, pour éviter un bannissement IP, et sauvegarde immédiatement la progression déjà acquise ;
    - sauvegarde périodiquement (tous les 10 items) et recycle le contexte navigateur tous les 200 items traités.
@@ -329,8 +329,10 @@ Le renderer n'a **aucun accès direct à Node.js** (`contextIsolation: true`, `n
 | `addSchedule` / `removeSchedule` / `listSchedules` | `scheduler:add/remove/list` | Gestion du planificateur |
 | `getHistory()` / `deleteJob(id)` | `job:getHistory` / `job:delete` | Gestion de l'historique des jobs |
 | `openFolder(path)` / `openFile(path)` | `file:openFolder` / `file:openFile` | Ouvre un fichier/dossier dans l'explorateur système natif |
+| `toggleWidget()` | `widget:toggle` (send) | Affiche/masque le widget flottant always-on-top |
+| `sendWidgetProgress(data)` / `sendWidgetStatus(data)` | `widget:progress` / `widget:status` (send) | Transmet la progression/statut au widget flottant |
 
-> Note : l'analyse globale Gemini (`analyzeGlobalDataset`) est pilotée depuis le renderer mais son point d'entrée exact côté `ipcHandlers.js`/`preload.js` fait partie du module d'analyse globale du projet — à vérifier/compléter selon la version du code source si ce canal n'apparaît pas explicitement dans `preload.js`.
+> Le contrat IPC complet (17 canaux preload ↔ main) est vérifié automatiquement par la suite de tests de régression.
 
 ---
 
@@ -338,12 +340,16 @@ Le renderer n'a **aucun accès direct à Node.js** (`contextIsolation: true`, `n
 
 L'application intègre plusieurs mécanismes pour limiter les risques de blocage par Leboncoin :
 
-- **Session globale persistante** (`global-session.json`, stockée dans `Documents/Leboncoin Scraper Pro/` en version packagée) : les cookies validés (notamment après résolution d'un captcha) sont réutilisés pour tous les jobs suivants.
-- **Détection de blocage en temps réel** : recherche de marqueurs (`captcha`, `robot`, `restreint`, `vitesse surhumaine`, `captcha-delivery`) dans le titre/texte de la page, avec pause automatique jusqu'à résolution manuelle par l'utilisateur.
+- **Session globale persistante** (`global-session.json`, stockée dans `output/` en dev, `Documents/Leboncoin Scraper Pro/` en version packagée) : les cookies validés (notamment après résolution d'un captcha) sont réutilisés pour tous les jobs suivants.
+- **Sauvegarde de session intelligente** : la session globale est sauvegardée dès la **1ère page réussie** (HTTP < 400) pendant la capture, et **jamais écrasée ensuite** — les pages suivantes pouvant retourner 403 (anti-bot), leurs cookies ne corrompent pas la session propre.
+- **Détection de blocage double** : un blocage est détecté soit par **marqueurs textuels** (`captcha`, `robot`, `restreint`, `vitesse surhumaine`, `captcha-delivery`) dans le titre/texte de la page, soit par **code HTTP d'erreur** (≥ 400, typiquement 403/429). Un 403 "silencieux" (sans page CAPTCHA) est ainsi correctement détecté.
+- **Bascule en navigateur visible** : si un blocage est détecté lors du pré-check, une fenêtre Chromium **visible** s'ouvre pour permettre à l'utilisateur de résoudre manuellement (CAPTCHA) ou d'attendre que le blocage IP se lève. Le navigateur recharge la page toutes les 2 secondes pour vérifier si le blocage est levé.
+- **Arrêt préventif de la capture** : si une page retourne un 403 pendant la capture, la boucle s'arrête **immédiatement** au lieu de gaspiller des requêtes sur les pages suivantes.
 - **Masquage de l'empreinte "webdriver"** (`navigator.webdriver = undefined`) pour réduire la détection d'automatisation.
 - **User-Agent réaliste** (Chrome Windows) et **locale `fr-FR`** fixés sur tous les contextes navigateur.
-- **Délais aléatoires** (jitter) entre les requêtes, avec des plages différentes pour la capture de pages (2,5-4,5s) et l'enrichissement en batch (0,5-1s + jitter).
-- **Arrêt préventif automatique** après 3 réponses HTTP 403/429 consécutives lors de l'enrichissement des descriptions, pour éviter un bannissement IP prolongé — les données déjà collectées sont sauvegardées.
+- **Enrichissement séquentiel avec délais humains** : les descriptions d'annonces sont fetchées **une par une** (plus de batchs parallèles) avec des pauses aléatoires de 0,8-1,8s entre chaque, pour simuler un comportement humain et éviter les 403 sur les pages d'annonces individuelles.
+- **Délais aléatoires** (jitter) entre les pages de recherche (2,5-4,5s) et entre les batches d'enrichissement (1,5-3s).
+- **Arrêt préventif automatique** après 3 réponses HTTP 403/429 consécutives lors de l'enrichissement, pour éviter un bannissement IP prolongé — les données déjà collectées sont sauvegardées.
 - **Support de proxy HTTP rotatif** optionnel (avec authentification).
 - **Recyclage périodique du navigateur/contexte** pour limiter la consommation mémoire sur de gros volumes.
 
@@ -413,12 +419,35 @@ Pour chaque job de scraping (`output/jobs/job-<timestamp>/`) :
 
 ---
 
+## 🧪 Tests de non-régression
+
+Le projet inclut une suite de tests dans `test/regression.test.js` (script Node.js autonome, sans framework externe) couvrant **109 assertions** réparties en 5 sections :
+
+1. **`utils/diagnostics.js`** (~26 tests) : helpers de log (`redact`, `formatBytes`, `summarizeAds`, `countBy`, `describeError`...).
+2. **Modules principaux** (~14 tests) : exports et logique de `MarketAnalyzer`, `GlobalAnalyzer`, `JobSchedulerManager`, `DealFinder`, `StorageCleaner`, `FileManager`, `Notifier`, `settings`, `RISK_KEYWORDS`.
+3. **Pipeline via `fork`** (~6 tests) : crée un faux HAR, lance le vrai pipeline en sous-processus, vérifie l'extraction (exit code 0, annonces extraites, normalisation `shipping`/`city`/`isPro`).
+4. **Corrections PR #3** (~16 tests) : vérifie par lecture du code source que les fixes précédents sont présents (`mapInstance`, `escapeHtml`, `openExternal`, scheduler trigger, etc.).
+5. **Architecture restructurée** (~47 tests) : vérifie la structure en couches (fichiers au bon endroit, anciens dossiers supprimés, `Notifier`/`settings`/`RISK_KEYWORDS` extraits, contrat IPC 17 canaux, widget flottant implémenté).
+
+### Exécuter les tests
+
+```bash
+node test/regression.test.js
+```
+
+Résultat attendu : `=== RÉSULTAT : 109 réussis, 0 échoués ===`
+
+> Le test installe des **stubs** pour `electron`, `playwright` et `exceljs` (lignes 13-29) afin de pouvoir `require()` les modules en Node pur, sans lancer Electron ni Chromium.
+
+---
+
 ## ⚠️ Limitations connues
 
 - Le scraping de Leboncoin repose sur la structure actuelle de leurs pages/API (`__NEXT_DATA__`, endpoints de recherche) : toute évolution significative du site peut nécessiter une adaptation du parsing (`leboncoin-pipeline.js`).
-- La résolution de captcha reste **manuelle** (l'app ne la contourne pas automatiquement, elle attend l'intervention humaine).
+- La résolution de captcha reste **manuelle** (l'app ne la contourne pas automatiquement, elle ouvre une fenêtre visible et attend l'intervention humaine).
 - L'analyse IA (marché, scoring, résumé) dépend de la qualité du modèle utilisé (un modèle local léger comme `llama3` peut être moins précis qu'un modèle cloud).
-- Le mode "Turbo" (10 requêtes en parallèle) accélère fortement l'enrichissement mais augmente le risque de blocage — l'app compense avec un arrêt préventif automatique.
+- L'enrichissement des descriptions est **séquentiel** (~1,5s par annonce avec délai humain) pour éviter les blocages anti-bot : c'est plus lent qu'un mode parallèle, mais ne déclenche pas de 403 systématique.
+- Un blocage IP déjà actif (suite à de trop nombreux lancements rapprochés) peut nécessiter d'attendre quelques heures ou d'utiliser un proxy.
 
 ---
 
