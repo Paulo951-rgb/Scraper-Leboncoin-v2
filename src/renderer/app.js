@@ -473,6 +473,7 @@ let sellerChartInstance = null;
 let topCitiesChartInstance = null;
 let mapInstance = null;
 let pendingDeleteJobId = null;
+let isConfirming = false;
 
 // État de la vue (Tableau vs Galerie) & Favoris
 let viewMode = localStorage.getItem('explorer-view') || 'table';
@@ -1347,11 +1348,22 @@ modalCancelBtn.addEventListener('click', () => {
 });
 
 modalConfirmBtn.addEventListener('click', async () => {
-  if (pendingDeleteJobId) {
-    await window.api.deleteJob(pendingDeleteJobId);
+  if (!pendingDeleteJobId || isConfirming) return;
+  const jobId = pendingDeleteJobId;
+  isConfirming = true;
+  modalConfirmBtn.disabled = true;
+  try {
+    await window.api.deleteJob(jobId);
     confirmModal.classList.add('hidden');
     pendingDeleteJobId = null;
     await loadHistoryPage();
+  } catch (err) {
+    console.error('[confirmDelete] Échec suppression :', err);
+    confirmModal.classList.add('hidden');
+    pendingDeleteJobId = null;
+  } finally {
+    isConfirming = false;
+    modalConfirmBtn.disabled = false;
   }
 });
 
