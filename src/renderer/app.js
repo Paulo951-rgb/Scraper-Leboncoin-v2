@@ -128,9 +128,16 @@ proxyUrl.value = localStorage.getItem('proxy-url') || '';
 proxyUrl.addEventListener('change', (e) => localStorage.setItem('proxy-url', e.target.value));
 
 const autoAiMarket = document.getElementById('autoAiMarket');
-const analyzeImages = document.getElementById('analyzeImages');
+const aiVisionModelEl = document.getElementById('aiVisionModel');
+const analyzeImages = { checked: true }; // rétro-compat : la vision est désormais intégrée à l'IA Analyse
 const aiProvider = document.getElementById('aiProvider');
 const aiModelName = document.getElementById('aiModelName');
+
+// Persistance du modèle vision.
+if (aiVisionModelEl) {
+  aiVisionModelEl.value = localStorage.getItem('ai-vision-model') || 'llava';
+  aiVisionModelEl.addEventListener('change', (e) => localStorage.setItem('ai-vision-model', e.target.value));
+}
 
 // OpenAI a été retiré de l'UI : il n'y a plus de champ clé API dans le scraper.
 // On expose un accesseur sûr (null-tolerant) pour ne pas casser les appels
@@ -138,6 +145,36 @@ const aiModelName = document.getElementById('aiModelName');
 // disparaître — la clé vaut toujours '' (IA 100% locale via Ollama).
 const aiApiKeyEl = document.getElementById('aiApiKey');
 const getAiApiKey = () => (aiApiKeyEl && aiApiKeyEl.value ? aiApiKeyEl.value : '');
+
+// Moteur de recherche pour l'IA Marché (Option C : sans-clé par défaut).
+// Peuple dynamiquement la liste via le registre côté main process.
+const searchProviderSelect = document.getElementById('searchProvider');
+const searchApiKeyEl = document.getElementById('searchApiKey');
+const getSearchApiKey = () => (searchApiKeyEl && searchApiKeyEl.value ? searchApiKeyEl.value : '');
+if (searchProviderSelect) {
+  searchProviderSelect.value = localStorage.getItem('search-provider') || 'duckduckgo';
+  searchProviderSelect.addEventListener('change', (e) => {
+    localStorage.setItem('search-provider', e.target.value);
+    // N'affiche le champ clé que pour les moteurs qui en nécessitent une.
+    if (searchApiKeyEl && searchApiKeyEl.parentElement) {
+      const needsKey = e.target.value !== 'duckduckgo';
+      searchApiKeyEl.parentElement.classList.toggle('hidden', !needsKey);
+    }
+  });
+  // Charge la liste des moteurs disponibles depuis le main process.
+  window.api.listSearchProviders().then(({ providers } = {}) => {
+    if (!Array.isArray(providers) || !searchProviderSelect) return;
+    searchProviderSelect.innerHTML = providers
+      .map((p) => `<option value="${p.id}">${p.label}${p.keyless ? ' (sans clé)' : ''}</option>`)
+      .join('');
+    searchProviderSelect.value = localStorage.getItem('search-provider') || 'duckduckgo';
+    if (searchApiKeyEl && searchApiKeyEl.parentElement) {
+      const needsKey = searchProviderSelect.value !== 'duckduckgo';
+      searchApiKeyEl.parentElement.classList.toggle('hidden', !needsKey);
+    }
+  }).catch(() => { /* liste non disponible — fallback duckduckgo */ });
+}
+if (searchApiKeyEl && searchApiKeyEl.value === undefined) searchApiKeyEl.value = '';
 
 aiModelName.value = localStorage.getItem('ai-model-name') || 'llama3';
 aiModelName.addEventListener('change', (e) => localStorage.setItem('ai-model-name', e.target.value));
@@ -227,14 +264,15 @@ openCompareModalBtn.addEventListener('click', () => {
   compareGrid.innerHTML = selectedAds
     .map((a) => {
       const ma = a.marketAnalysis || {};
+      const sign = ma.deltaEur > 0 ? '+' : '';
       return `
       <div class="compare-col">
         <img src="${a.images?.[0] || 'https://via.placeholder.com/200'}" style="width:100%; height:140px; object-fit:cover; border-radius:6px;">
-        <strong>${escapeHtml(ma.productName || a.title)}</strong>
+        <strong>${escapeHtml(identifiedName(a))}</strong>
         <div style="font-size:1.2rem; font-weight:bold; color:var(--primary-color);">${a.price} €</div>
-        <div style="font-size:0.8rem; color:var(--text-muted);">Marché: ${ma.marketAvg || '-'} €</div>
-        <div style="font-size:0.85rem; font-weight:bold; color:var(--green-deal);">Marge: ${ma.netMarginEur ? ma.netMarginEur + ' €' : '-'}</div>
-        <div style="font-size:0.8rem;">Vendeur: ${escapeHtml(a.seller || 'Particulier')}</div>
+        <div style="font-size:0.8rem; color:var(--text-muted);">Valeur marché : ${ma.realValue != null ? ma.realValue + ' €' : '-'}</div>
+        <div style="font-size:0.85rem; font-weight:bold; color:var(--green-deal);">Diff. : ${ma.deltaEur != null ? sign + ma.deltaEur + ' €' : '-'}</div>
+        <div style="font-size:0.8rem;">Vendeur : ${escapeHtml(a.seller || 'Particulier')}</div>
         <button class="btn btn-primary btn-small" onclick="openUrl('${escapePath(a.url)}')">🔗 Voir Leboncoin</button>
       </div>
     `;
@@ -366,6 +404,70 @@ const modalVisionContent = document.getElementById('modalVisionContent');
 const modalDescription = document.getElementById('modalDescription');
 const modalOpenLeboncoinBtn = document.getElementById('modalOpenLeboncoinBtn');
 
+// ─── Helpers de rendu IA (nouveau système : Analyse + Marché) ───────────────
+// Centralisent l'affichage des résultats des IA 1 (adAnalysis) et 2 (marketAnalysis)
+// pour éviter la duplication entre tableau, grille, comparateur et fiche détaillée.
+
+/**
+ * Renvoie un badge HTML pour le verdict de l'IA Marché (bénéfice/perte en €).
+ * Plus de score/100 ni de scam score : uniquement la différence de prix.
+ */
+function renderMarketBadge(ma) {
+  if (!ma || ma._fallback || ma.verdict == null) {
+    return `<span class="tag-deal-normal">Marché non analysé</span>`;
+  }
+  const label = ma.verdictLabel || 'Prix correct';
+  const delta = ma.deltaEur;
+  const sign = delta > 0 ? '+' : '';
+  if (label === 'Très bonne affaire') return `<span class="tag-deal-super">🟢🟢 Très bonne affaire (${sign}${delta} €)</span>`;
+  if (label === 'Bonne affaire') return `<span class="tag-deal-good">🟢 Bonne affaire (${sign}${delta} €)</span>`;
+  if (label === 'Très cher') return `<span class="tag-deal-superhigh">🔴 Trop cher (${sign}${delta} €)</span>`;
+  if (label === 'Trop cher') return `<span class="tag-deal-superhigh">🔴 Trop cher (${sign}${delta} €)</span>`;
+  return `<span class="tag-deal-normal">${label} (${sign}${delta} €)</span>`;
+}
+
+/** Nom identifié par l'IA Analyse (fallback sur le titre si absent). */
+function identifiedName(a) {
+  const aa = a.adAnalysis;
+  if (aa && aa.identifiedProduct && !aa._fallback) return aa.identifiedProduct;
+  return a.title || 'Sans titre';
+}
+
+/** Résumé court produit par l'IA Analyse (fallback sur la description). */
+function analysisSummary(a) {
+  const aa = a.adAnalysis;
+  if (aa && aa.summary && !aa._fallback) return aa.summary;
+  return (a.description || '').slice(0, 120) || 'Aucun résumé IA disponible.';
+}
+
+/** Bénéfice/perte lisible (€) issu de l'IA Marché. */
+function marketDeltaText(ma) {
+  if (!ma || ma._fallback || ma.deltaEur == null) return '-';
+  const sign = ma.deltaEur > 0 ? '+' : '';
+  const color = ma.deltaEur >= 0 ? 'var(--green-deal)' : 'var(--text-muted)';
+  return `<strong style="color:${color};">${sign}${ma.deltaEur} €</strong>`;
+}
+
+/** Valeur réelle estimée (€) issue de l'IA Marché. */
+function marketValueText(ma) {
+  if (!ma || ma._fallback || ma.realValue == null) return '<small style="color:var(--text-muted);">Non estimé</small>';
+  let txt = `<strong>${ma.realValue} €</strong>`;
+  if (ma.valueRangeLow != null && ma.valueRangeHigh != null) {
+    txt += `<br><small style="color:var(--text-muted);">${ma.valueRangeLow} € - ${ma.valueRangeHigh} €</small>`;
+  }
+  return txt;
+}
+
+/** Filtre les annonces par verdict (pour le filtre tag de l'Explorateur). */
+function matchesVerdictFilter(a, tagFilter) {
+  if (tagFilter === 'FAV') return starredAds.has(String(a.id));
+  const v = a.marketAnalysis && a.marketAnalysis.verdictLabel;
+  if (tagFilter === 'SUPER') return v === 'Très bonne affaire';
+  if (tagFilter === 'GOOD') return v === 'Bonne affaire' || v === 'Très bonne affaire';
+  if (tagFilter === 'HIGH') return v === 'Trop cher' || v === 'Très cher';
+  return true;
+}
+
 let allJobsCache = [];
 let priceDistChartInstance = null;
 let sellerChartInstance = null;
@@ -424,6 +526,7 @@ startBtn.addEventListener('click', () => {
     aiConfig: {
       provider: aiProvider.value,
       model: aiModelName.value.trim() || 'llama3',
+      visionModel: localStorage.getItem('ai-vision-model') || 'llava',
       apiKey: getAiApiKey(),
     },
   };
@@ -444,15 +547,24 @@ stopBtn.addEventListener('click', () => {
 triggerMarketBtn.addEventListener('click', async () => {
   const jobId = sessionSelect.value;
   triggerMarketBtn.disabled = true;
-  statusText.textContent = 'Analyse de marché IA en cours...';
+  statusText.textContent = 'Analyse de marché IA (recherche Internet + estimation)...';
 
   try {
+    // adIds : si des annonces sont sélectionnées pour comparaison, on analyse
+    // ciblée celles-là ; sinon on analyse tout le job.
+    const adIds = compareSet.size > 0 ? [...compareSet].map(String) : undefined;
     await window.api.analyzeMarket({
       jobId,
+      adIds,
       aiConfig: {
         provider: aiProvider.value,
         model: aiModelName.value.trim() || 'llama3',
+        visionModel: localStorage.getItem('ai-vision-model') || 'llava',
         apiKey: getAiApiKey(),
+      },
+      searchConfig: {
+        provider: (searchProviderSelect && searchProviderSelect.value) || 'duckduckgo',
+        apiKey: getSearchApiKey(),
       },
     });
 
@@ -626,17 +738,13 @@ function renderExplorerAds() {
     const price = typeof a.price === 'number' ? a.price : parseFloat(a.price) || 0;
     const matchesPrice = price >= minP && price <= maxP;
 
-    let matchesTag = true;
-    if (tagFilter === 'FAV') matchesTag = starredAds.has(String(a.id));
-    else if (tagFilter === 'SUPER') matchesTag = a.marketAnalysis?.classification === 'Très bonne affaire';
-    else if (tagFilter === 'GOOD') matchesTag = a.marketAnalysis?.classification === 'Bonne affaire' || a.marketAnalysis?.classification === 'Très bonne affaire';
-    else if (tagFilter === 'HIGH') matchesTag = a.marketAnalysis?.classification === 'Trop cher';
+    const matchesTag = matchesVerdictFilter(a, tagFilter);
 
     return matchesQuery && matchesPrice && matchesTag;
   });
 
   if (sortMode === 'DEAL_DESC') {
-    filtered.sort((a, b) => (a.marketAnalysis?.diffPct || 0) - (b.marketAnalysis?.diffPct || 0));
+    filtered.sort((a, b) => (b.marketAnalysis?.deltaEur ?? -Infinity) - (a.marketAnalysis?.deltaEur ?? -Infinity));
   } else if (sortMode === 'PRICE_ASC') {
     filtered.sort((a, b) => (a.price || 0) - (b.price || 0));
   } else if (sortMode === 'PRICE_DESC') {
@@ -655,42 +763,30 @@ function renderExplorerAds() {
     adsTableBody.innerHTML = filtered
       .map((a) => {
         const ma = a.marketAnalysis || {};
-        let badgeHtml = `<span class="tag-deal-normal">Prix marché</span>`;
-
-        if (ma.classification === 'Très bonne affaire') {
-          badgeHtml = `<span class="tag-deal-super">🟢🟢 Très Bonne Affaire (${ma.diffPct}%)</span>`;
-        } else if (ma.classification === 'Bonne affaire') {
-          badgeHtml = `<span class="tag-deal-good">🟢 Bonne Affaire (${ma.diffPct}%)</span>`;
-        } else if (ma.classification === 'Légèrement cher') {
-          badgeHtml = `<span class="tag-deal-high">🟡 Légèrement cher (+${ma.diffPct}%)</span>`;
-        } else if (ma.classification === 'Trop cher') {
-          badgeHtml = `<span class="tag-deal-superhigh">🔴 Trop cher (+${ma.diffPct}%)</span>`;
-        }
+        const badgeHtml = renderMarketBadge(ma);
 
         const isStarred = starredAds.has(String(a.id));
         const starIcon = `<span class="star-icon ${isStarred ? 'starred' : ''}" onclick="toggleStar('${a.id}')">★</span>`;
         const isChecked = compareSet.has(String(a.id));
 
-        const identifiedName = ma.productName ? `<strong>${escapeHtml(ma.productName)}</strong><br><small style="color:var(--text-muted);">${escapeHtml(a.title)}</small>` : escapeHtml(a.title || 'Sans titre');
-        const marketRange = ma.marketMin ? `<strong>${ma.marketMin} € - ${ma.marketMax} €</strong><br><small style="color:var(--text-muted);">Moyenne : ${ma.marketAvg} €</small>` : '<small style="color:var(--text-muted);">-</small>';
-        const resellText = ma.netMarginEur != null ? `<strong style="color:var(--green-deal);">${ma.netMarginEur > 0 ? '+' : ''}${ma.netMarginEur} €</strong><br><small>(${ma.roiPct}% ROI)</small>` : '-';
-        const explanationText = ma.summary ? `<div class="desc-tooltip" title="${escapeHtml(ma.summary)}">${escapeHtml(ma.summary)}</div>` : '<small style="color:var(--text-muted);">-</small>';
+        const nameHtml = (a.adAnalysis && !a.adAnalysis._fallback && a.adAnalysis.identifiedProduct)
+          ? `<strong>${escapeHtml(a.adAnalysis.identifiedProduct)}</strong><br><small style="color:var(--text-muted);">${escapeHtml(a.title)}</small>`
+          : escapeHtml(a.title || 'Sans titre');
+        const valueHtml = marketValueText(ma);
+        const deltaHtml = marketDeltaText(ma);
+        const summaryHtml = `<div class="desc-tooltip" title="${escapeHtml(analysisSummary(a))}">${escapeHtml(analysisSummary(a))}</div>`;
 
-        // Rendu de la note sémantique sur 100
-        const scoreHtml = ma.score !== undefined 
-          ? `<br><small style="color:var(--text-muted); font-weight:bold;">Note : ${ma.score}/100</small>` 
-          : '';
 
         return `
         <tr>
           <td class="text-center"><input type="checkbox" ${isChecked ? 'checked' : ''} onchange="toggleCompare('${a.id}')"></td>
           <td class="text-center">${starIcon}</td>
-          <td>${identifiedName}</td>
+          <td>${nameHtml}</td>
           <td><strong>${a.price != null ? a.price + ' €' : '-'}</strong></td>
-          <td>${marketRange}</td>
-          <td>${resellText}</td>
-          <td>${badgeHtml}${scoreHtml}</td>
-          <td>${explanationText}</td>
+          <td>${valueHtml}</td>
+          <td>${deltaHtml}</td>
+          <td>${badgeHtml}</td>
+          <td>${summaryHtml}</td>
           <td>
             <div style="display:flex; gap:4px;">
               <button class="btn btn-secondary btn-small" onclick="openAdDetail('${a.id}')">👁️ Fiche</button>
@@ -707,15 +803,7 @@ function renderExplorerAds() {
     adsGridContainer.innerHTML = filtered
       .map((a) => {
         const ma = a.marketAnalysis || {};
-        let badgeHtml = `<span class="tag-deal-normal">Prix marché</span>`;
-
-        if (ma.classification === 'Très bonne affaire') {
-          badgeHtml = `<span class="tag-deal-super">🟢🟢 -${Math.abs(ma.diffPct)}%</span>`;
-        } else if (ma.classification === 'Bonne affaire') {
-          badgeHtml = `<span class="tag-deal-good">🟢 -${Math.abs(ma.diffPct)}%</span>`;
-        } else if (ma.classification === 'Trop cher') {
-          badgeHtml = `<span class="tag-deal-superhigh">🔴 +${ma.diffPct}%</span>`;
-        }
+        const badgeHtml = renderMarketBadge(ma);
 
         const isStarred = starredAds.has(String(a.id));
         const thumbUrl = Array.isArray(a.images) && a.images.length > 0 ? a.images[0] : 'https://via.placeholder.com/250x160?text=Pas+de+photo';
@@ -728,7 +816,7 @@ function renderExplorerAds() {
             <div class="ad-card-star"><span class="star-icon ${isStarred ? 'starred' : ''}" onclick="toggleStar('${a.id}')">★</span></div>
           </div>
           <div class="ad-card-body">
-            <div class="ad-card-title">${escapeHtml(ma.productName || a.title)}</div>
+            <div class="ad-card-title">${escapeHtml(identifiedName(a))}</div>
             <div class="ad-card-price">${a.price != null ? a.price + ' €' : '-'}</div>
             <div class="ad-card-city">📍 ${escapeHtml(a.city || 'Inconnue')}</div>
             <div class="ad-card-footer">
@@ -766,11 +854,16 @@ window.openAdDetail = (adId) => {
   if (!targetAd) return;
 
   const ma = targetAd.marketAnalysis || {};
-  modalAdTitle.textContent = targetAd.title || 'Détails de l\'annonce';
+  const aa = targetAd.adAnalysis || {};
+  modalAdTitle.textContent = identifiedName(targetAd);
   modalPrice.textContent = targetAd.price != null ? targetAd.price : '-';
-  modalMarketAvg.textContent = ma.marketAvg || '-';
-  modalMarketRange.textContent = ma.marketMin ? `${ma.marketMin} € - ${ma.marketMax} €` : 'Non estimé';
-  modalResellMargin.textContent = ma.netMarginEur != null ? `${ma.netMarginEur > 0 ? '+' : ''}${ma.netMarginEur} € (ROI ${ma.roiPct}%)` : '-';
+  modalMarketAvg.textContent = ma.realValue != null ? `${ma.realValue} €` : '-';
+  modalMarketRange.textContent = (ma.valueRangeLow != null && ma.valueRangeHigh != null)
+    ? `${ma.valueRangeLow} € - ${ma.valueRangeHigh} €`
+    : 'Non estimé';
+  modalResellMargin.textContent = ma.deltaEur != null
+    ? `${ma.deltaEur > 0 ? '+' : ''}${ma.deltaEur} € (${ma.verdictLabel || '—'})`
+    : '-';
   modalCity.textContent = targetAd.city || 'Inconnue';
   modalSeller.textContent = `${targetAd.seller || 'Particulier'}${targetAd.isPro ? ' (Pro)' : ''}`;
   modalDate.textContent = targetAd.date || '-';
@@ -803,11 +896,23 @@ window.openAdDetail = (adId) => {
     deliveryText += ` — ${targetAd.deliveryLabel}`;
   }
   setExtraVal('modalDeliveryMode', deliveryText);
-  modalSummary.textContent = ma.summary || 'Aucune analyse effectuée.';
+  // Résumé IA : combine le résumé de l'IA Analyse (ce qu'est l'objet) et la
+  // rationale de l'IA Marché (pourquoi cette estimation en €).
+  let summaryText = aa.summary || '';
+  if (ma.rationale && !ma._fallback) {
+    summaryText = summaryText ? `${summaryText}\n\n💰 ${ma.rationale}` : `💰 ${ma.rationale}`;
+  }
+  if (Array.isArray(ma.sources) && ma.sources.length > 0) {
+    const srcTxt = ma.sources.slice(0, 3).map((s) => s.title || s.url || s).join(' · ');
+    summaryText = summaryText ? `${summaryText}\n\nSources marché : ${srcTxt}` : `Sources marché : ${srcTxt}`;
+  }
+  modalSummary.textContent = summaryText || 'Aucune analyse IA disponible. Lancez « Analyse IA » puis « IA Marché ».';
   modalDescription.textContent = targetAd.description || 'Aucune description disponible.';
 
-  // Analyse visuelle IA (si disponible)
-  const vision = targetAd.imageAnalysis || ma;
+  // Analyse visuelle IA : désormais intégrée dans adAnalysis.vision (produite
+  // par l'IA Analyse en un seul appel texte+vision). Fallback imageAnalysis
+  // pour les jeux de données analysés avec l'ancien système.
+  const vision = (targetAd.adAnalysis && targetAd.adAnalysis.vision) || targetAd.imageAnalysis || null;
   if (vision && (vision.photoType || vision.visibleCondition || vision.summary)) {
     const photoTypeLabels = {
       REAL_PRODUCT: '📸 Photo authentique (produit réel)',
@@ -846,16 +951,18 @@ window.openAdDetail = (adId) => {
     modalVisionCard.classList.add('hidden');
   }
 
-  // Badges Modal
-  if (ma.classification === 'Très bonne affaire') {
-    modalDealBadge.className = 'tag-deal-super';
-    modalDealBadge.textContent = `🟢🟢 Très Bonne Affaire (${ma.diffPct}%)`;
-  } else if (ma.classification === 'Bonne affaire') {
-    modalDealBadge.className = 'tag-deal-good';
-    modalDealBadge.textContent = `🟢 Bonne Affaire (${ma.diffPct}%)`;
+  // Badge verdict IA Marché (bénéfice/perte en € — plus de score ni de %)
+  if (ma && !ma._fallback && ma.verdictLabel) {
+    const cls = ma.verdictLabel === 'Très bonne affaire' ? 'tag-deal-super'
+      : ma.verdictLabel === 'Bonne affaire' ? 'tag-deal-good'
+      : (ma.verdictLabel === 'Trop cher' || ma.verdictLabel === 'Très cher') ? 'tag-deal-superhigh'
+      : 'tag-deal-normal';
+    modalDealBadge.className = cls;
+    const sign = ma.deltaEur > 0 ? '+' : '';
+    modalDealBadge.textContent = `${ma.verdictLabel} (${sign}${ma.deltaEur != null ? ma.deltaEur : '?'} €)`;
   } else {
     modalDealBadge.className = 'tag-deal-normal';
-    modalDealBadge.textContent = 'Prix marché';
+    modalDealBadge.textContent = 'Marché non analysé';
   }
 
   // Photos & Carrousel

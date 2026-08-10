@@ -6,23 +6,47 @@ Repository knowledge for AI agents working on this codebase.
 - Electron app (main + renderer, contextIsolation + sandbox)
 - Node.js main process, Playwright (Chromium) pour le scraping
 - ExcelJS pour l'export .xlsx
-- IA : Ollama (local) / OpenAI / Google Gemini (analyse de marché + vision)
+- IA 100% locale via Ollama (texte : llama3/mistral, vision : llava/moondream)
+- IA Marché : recherche Web sans-clé (DuckDuckGo Lite) + estimation IA
+
+## Architecture IA (3 systèmes, nouvelle archi v2)
+```
+services/ai/
+  adAnalyzer.js          IA 1 — Analyse pendant le scraping (texte + vision)
+                         → adAnalysis { identifiedName, summary, vision{...}, _fallback }
+  marketValueAnalyzer.js IA 2 — Marché : recherche Internet + verdict en €
+                         → marketAnalysis { verdict, verdictLabel, deltaEur, realValue,
+                           marketMin/Max, sources[], rationale, _fallback }
+  promptGenerator.js     IA 3 — Prompt (~50 lignes, tout produit) via getAIProvider
+  providers/             interface AIProvider + OllamaProvider + aiProviderRegistry
+  search/                interface SearchProvider + DuckDuckGoSearchProvider (keyless) + registry
+  aiCache.js             cache préfixé (analyse: / market:) — MAX 5000 entrées
+  ollamaHealth.js        santé + modèles Ollama
+services/analysis/
+  adStats.js             statistiques de prix brutes (remplace dealFinder — PLUS de scoring)
+```
+
+### Champs d'annonce (nouveau schéma)
+- `adAnalysis` : identifié par l'IA 1 (identifiedName, summary, vision, _fallback)
+- `marketAnalysis` : produit par l'IA 2 (verdict, deltaEur, realValue, sources, rationale)
+- ANCIENS champs SUPPRIMÉS : classification, diffPct, netMarginEur, scamScore,
+  dealTag, dealDiscountPct, hasRisk, detectedRisks, points, multipliers, roiPct
 
 ## Architecture (src/main/)
 ```
 main.js                      cycle de vie Electron, fenêtres, single-instance lock
-core/ipcHandlers.js          TOUS les handlers IPC (job, IA, fichiers, secrets)
+core/ipcHandlers.js          TOUS les handlers IPC (job, IA, fichiers, secrets, search)
 core/settings.js             persistance user-settings.json
 config/constants.js          BASE_OUT_DIR, JOBS_DIR, GLOBAL_SESSION_PATH (require electron/app)
-config/risk-keywords.js      mots-clés de risque (arnaque)
+config/risk-keywords.js      mots-clés de risque (legacy, plus utilisé par scoring)
 services/scraping/           harCapturer (Playwright) + pipelineRunner (fork) + leboncoin-pipeline
-services/ai/                 marketAnalyzer, imageAnalyzer, aiCache, ollamaHealth
-services/jobs/               jobHistory (listing/lecture/suppression jobs)
-services/analysis/dealFinder statistiques + tags GOOD/HIGH
+services/ai/                 adAnalyzer, marketValueAnalyzer, promptGenerator, aiCache, ollamaHealth, providers/, search/
+services/jobs/               jobHistory (listing/lecture/suppression jobs, stats via AdStats)
+services/analysis/adStats.js statistiques de prix (sans scoring — remplace dealFinder)
 services/maintenance/storageCleaner
 infrastructure/              excelExporter, fileManager, notifications
 utils/                      helpers, diagnostics, integrity, rateLimiter, logger, secretStore
-renderer/                    app.js (1266 lignes), index.html, styles.css, widget.html, aiStudioModule.js, helpModule.js (FAQ/Help/Feedback)
+renderer/                    app.js, index.html, styles.css, widget.html, aiStudioModule.js, helpModule.js (FAQ/Help/Feedback)
 ```
 
 ## Conventions clés
@@ -39,9 +63,13 @@ renderer/                    app.js (1266 lignes), index.html, styles.css, widge
 - `constants.js` et `logger.js` et `secretStore.js` require('electron') au
   top-level → NE JAMAIS les require depuis le pipeline sous-processus (fork), qui
   n'a pas accès à `app`.
+- IA Providers : NE PAS faire de fetch direct dans adAnalyzer/marketValueAnalyzer/
+  promptGenerator — toujours passer par `getAIProvider()` (abstraction Ollama/etc.).
+- Search Providers : NE PAS faire de fetch direct dans marketValueAnalyzer —
+  toujours passer par `getSearchProvider()` (abstraction DuckDuckGo/etc.).
 
 ## Tests
-- `node test/regression.test.js` → 269 assertions (syntaxe + stubs Electron).
+- `node test/regression.test.js` → 296 assertions (syntaxe + stubs Electron).
 - Le test stub `electron` : BrowserWindow a `webContents.send` mais PAS `isDestroyed`.
 - Avant tout commit : `node --check` sur les fichiers modifiés + lancer la suite.
 

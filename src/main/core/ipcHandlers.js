@@ -9,8 +9,8 @@ const { FileManager } = require('../infrastructure/fileManager');
 const { JobHistoryManager } = require('../services/jobs/jobHistory');
 const { StorageCleaner } = require('../services/maintenance/storageCleaner');
 const { ExcelExporter } = require('../infrastructure/excelExporter');
-const { MarketAnalyzer } = require('../services/ai/marketAnalyzer');
-const { ImageAnalyzer } = require('../services/ai/imageAnalyzer');
+const { AdAnalyzer } = require('../services/ai/adAnalyzer');
+const { MarketValueAnalyzer } = require('../services/ai/marketValueAnalyzer');
 const { PromptGenerator } = require('../services/ai/promptGenerator');
 const { checkOllamaHealth } = require('../services/ai/ollamaHealth');
 const { Notifier } = require('../infrastructure/notifications');
@@ -22,7 +22,6 @@ const { loadSettings, saveSettings } = require('./settings');
 function setupIpcHandlers(getMainWindow) {
   let activeCapturer = null;
   let activeRunner = null;
-  let activeImageAnalyzer = null;
   let isRunning = false;
 
   // Getter de fenêtre principale : renvoie null si détruite/fichermée,
@@ -57,6 +56,9 @@ function setupIpcHandlers(getMainWindow) {
     isRunning = true;
 
     const { searchUrl, pages = 1, noDesc = false, csv = true, autoAiMarket = true, analyzeImages = false, limit, aiConfig, proxyUrl } = config;
+    // Note : analyzeImages est conservé pour rétro-compatibilité UI mais n'a plus
+    // d'effet séparé — l'IA Analyse (adAnalyzer) combine déjà texte + vision en
+    // un seul appel quand des photos sont disponibles et qu'un modèle vision est configuré.
     const userSettings = loadSettings();
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -137,13 +139,17 @@ function setupIpcHandlers(getMainWindow) {
         let ads = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
         sendLog({ level: 'debug', message: `[job:start] annonces.json lu : ${summarizeAds(ads)}.` });
 
-        // 🧠 ANALYSE IA CONDITIONNELLE (Seulement si coche activée)
+        // 🧠 IA ANALYSE (Texte + Vision) — uniquement si « Analyse IA » cochée.
+        // L'IA Analyse reconstitue ce qu'est réellement l'objet vendu en croisant
+        // titre + description + données scraper + photos. Pas de score ni de
+        // scam score : juste un résumé précis + les attributs clés (modèle, état,
+        // défauts, accessoires…). Résultat stocké dans ad.adAnalysis.
         if (autoAiMarket) {
           // 🩺 Health-check Ollama avant l'analyse (si provider ollama)
-          if (aiConfig?.provider === 'ollama') {
+          if (aiConfig?.provider === 'ollama' || !aiConfig?.provider) {
             const { checkModelAvailable } = require('../services/ai/ollamaHealth');
             const ollamaUrl = aiConfig.ollamaUrl || 'http://127.0.0.1:11434';
-            const modelName = aiConfig.model || 'llama3';
+            const modelName = aiConfig.visionModel || aiConfig.model || 'llava';
             sendLog({ level: 'debug', message: `[IA] Health-check Ollama (${ollamaUrl}, modèle ${modelName})...` });
             const health = await checkModelAvailable(ollamaUrl, modelName);
             if (!health.ok) {
@@ -153,71 +159,44 @@ function setupIpcHandlers(getMainWindow) {
             }
           }
 
-          sendStatus({ state: 'processing', message: 'Analyse du marché IA multi-sources...' });
-          sendLog({ level: 'info', message: `🧠 Lancement de l'Analyse de Marché IA Multi-Sources (${ads.length} annonces, parallèle x${aiConfig.concurrency || 5})...` });
+          sendStatus({ state: 'processing', message: 'Analyse IA des annonces (texte + vision)...' });
+          const visionModel = aiConfig?.visionModel || 'llava';
+          sendLog({ level: 'info', message: `🧠 Lancement de l'IA Analyse (${ads.length} annonces, texte + ${analyzeImages ? 'vision activée' : 'vision si photos'}, parallèle x${aiConfig.concurrency || 4}, modèle ${visionModel})...` });
 
           const t0Ai = Date.now();
-          const aiLog = (msg, level = 'debug') => sendLog({ level, message: `[IA] ${msg}` });
-          ads = await MarketAnalyzer.analyzeAds(ads, { ...aiConfig, concurrency: userSettings.aiConcurrency || 5, _log: aiLog }, (prog) => {
-            sendProgress({
+          const analysisConfig = {
+            provider: aiConfig?.provider || 'ollama',
+            ...(aiConfig?.ollamaUrl ? { ollamaUrl: aiConfig.ollamaUrl } : {}),
+            ...(aiConfig?.model ? { textModel: aiConfig.model } : {}),
+            ...(visionModel ? { visionModel } : {}),
+          };
+          ads = await AdAnalyzer.analyzeAds(ads, analysisConfig, {
+            concurrency: userSettings.aiConcurrency || 4,
+            onProgress: (prog) => sendProgress({
               percent: 75 + Math.round((prog.percent / 100) * 25),
               status: prog.status,
-            });
+            }),
           });
           const aiElapsed = Math.round((Date.now() - t0Ai) / 1000);
-          sendLog({ level: 'info', message: `✅ Analyse IA terminée en ${aiElapsed}s (${ads.length} annonces).` });
-          sendLog({ level: 'debug', message: `[job:start] Phase analyse IA terminée en ${aiElapsed}s.` });
+          const analyzedCount = ads.filter((a) => a.adAnalysis && !a.adAnalysis._fallback).length;
+          sendLog({ level: 'info', message: `✅ IA Analyse terminée en ${aiElapsed}s (${analyzedCount}/${ads.length} annonces analysées, ${ads.length - analyzedCount} fallback).` });
+          sendLog({ level: 'debug', message: `[job:start] Phase IA Analyse terminée en ${aiElapsed}s.` });
 
           writeWithChecksum(jsonPath, ads, null, 2);
         } else {
-          sendLog({ level: 'debug', message: '[job:start] Analyse IA ignorée (autoAiMarket=false).' });
-        }
-
-        // 🖼️ ANALYSE D'IMAGES PAR IA VISION (si activée)
-        if (analyzeImages) {
-          sendStatus({ state: 'processing', message: 'Analyse visuelle des images par IA...' });
-          const visionModel = aiConfig?.visionModel || 'llava';
-          sendLog({ level: 'info', message: `🖼️ Lancement de l'Analyse Visuelle IA (${ads.length} annonces, 3 images/annonce, modèle ${visionModel})...` });
-
-          const t0Vision = Date.now();
-          try {
-            const imageAnalyzer = new ImageAnalyzer(
-              { ...aiConfig, model: visionModel, concurrency: userSettings.aiConcurrency || 4 },
-              { onProgress: (prog) => sendProgress({ percent: 75 + Math.round((prog.percent / 100) * 20), status: prog.status }), useCache: true }
-            );
-            activeImageAnalyzer = imageAnalyzer;
-            const visionResults = await imageAnalyzer.analyzeAll(ads);
-            activeImageAnalyzer = null;
-
-            let analyzedCount = 0;
-            for (const ad of ads) {
-              const v = visionResults.get(ad.id);
-              if (v) {
-                ad.imageAnalysis = v;
-                MarketAnalyzer.applyImageAnalysis(ad);
-                analyzedCount++;
-              }
-            }
-            const visionElapsed = Math.round((Date.now() - t0Vision) / 1000);
-            sendLog({ level: 'info', message: `✅ Analyse visuelle terminée en ${visionElapsed}s (${analyzedCount}/${ads.length} analyses).` });
-            writeWithChecksum(jsonPath, ads, null, 2);
-          } catch (err) {
-            activeImageAnalyzer = null;
-            sendLog({ level: 'warn', message: `[Vision] Analyse visuelle échouée : ${describeError(err)} — le scraping continue sans analyse d'images.` });
-          }
-        } else {
-          sendLog({ level: 'debug', message: "[job:start] Analyse d'images ignorée (analyzeImages=false)." });
+          sendLog({ level: 'debug', message: '[job:start] IA Analyse ignorée (autoAiMarket=false).' });
         }
 
         await ExcelExporter.exportToXlsx(ads, xlsxPath);
         sendLog({ level: 'info', message: '📊 Export Excel (.xlsx) généré avec succès !' });
 
-        const goodDeals = ads.filter((a) => a.marketAnalysis?.classification === 'Très bonne affaire');
-        if (goodDeals.length > 0) {
-          sendLog({ level: 'debug', message: `[job:start] ${goodDeals.length} "Très bonne affaire" détectée(s) — notification déclenchée pour la 1ère : "${(goodDeals[0].title || '').slice(0, 40)}".` });
-          Notifier.notifyGoodDeal(goodDeals[0]);
-        } else {
-          sendLog({ level: 'debug', message: '[job:start] Aucune "Très bonne affaire" détectée dans ce dataset.' });
+        // Note : la notification « Très bonne affaire » dépendait de l'ancien
+        // scoring marketAnalysis.classification. L'IA Marché est désormais une
+        // action manuelle (bouton « Analyse IA » dans l'Explorateur) qui produit
+        // le verdict en € — la notification sera déclenchée depuis ce flux manuel.
+        const analyzed = ads.filter((a) => a.adAnalysis && !a.adAnalysis._fallback).length;
+        if (analyzed > 0) {
+          sendLog({ level: 'debug', message: `[job:start] ${analyzed} annonce(s) analysée(s) par l'IA (résumés produits + attributs).` });
         }
       } else {
         sendLog({ level: 'warn', message: `[job:start] annonces.json introuvable après pipeline : ${jsonPath} — le scraping a peut-être échoué silencieusement.` });
@@ -250,7 +229,6 @@ function setupIpcHandlers(getMainWindow) {
       isRunning = false;
       activeCapturer = null;
       activeRunner = null;
-      activeImageAnalyzer = null;
     }
   });
 
@@ -258,36 +236,81 @@ function setupIpcHandlers(getMainWindow) {
     if (!isRunning) return;
     sendLog({ level: 'warn', message: 'Demande d\'arrêt utilisateur envoyée...' });
     if (activeRunner) activeRunner.stop();
-    if (activeCapturer) activeCapturer.stop(); // 🟢 FIX : Arrêt immédiat de la capture HAR en cours
-    if (activeImageAnalyzer) activeImageAnalyzer.stop();
+    if (activeCapturer) activeCapturer.stop(); // Arrêt immédiat de la capture HAR en cours
   });
 
-  ipcMain.handle('market:analyze', async (event, { jobId, aiConfig }) => {
-    if (isRunning) throw new Error('Un job de scraping est en cours — attendez la fin avant de réanalyser.');
+  // 🌐 IA MARCHÉ — recherche Internet + estimation réelle de la valeur.
+  // Bouton « Analyse IA » dans l'Explorateur. Reçoit les annonces (avec
+  // adAnalysis déjà produit par l'IA 1) et estime la valeur réelle de chaque
+  // produit via recherche web (SearchProvider sans-clé par défaut) + synthèse IA.
+  // Résultat stocké dans ad.marketAnalysis : { realValue, verdict, deltaEur, sources[], rationale }.
+  ipcMain.handle('market:analyze', async (event, { jobId, aiConfig, searchConfig, adIds }) => {
+    if (isRunning) throw new Error('Un job de scraping est en cours — attendez la fin avant d\'analyser le marché.');
     const jobs = JobHistoryManager.listAllJobs();
     const targetJob = jobs.find((j) => j.id === jobId);
 
-    if (!targetJob) {
-      throw new Error(`Job introuvable (id: ${jobId}). Aucune analyse possible.`);
-    }
-    if (!targetJob.files.json) {
-      throw new Error('Aucun fichier de résultats trouvé pour ce job.');
-    }
+    if (!targetJob) throw new Error(`Job introuvable (id: ${jobId}). Aucune analyse possible.`);
+    if (!targetJob.files.json) throw new Error('Aucun fichier de résultats trouvé pour ce job.');
 
     let ads = JSON.parse(fs.readFileSync(targetJob.files.json, 'utf8'));
 
+    // Filtrer aux annonces sélectionnées si adIds fourni (analyse ciblée).
+    let targetAds = ads;
+    if (Array.isArray(adIds) && adIds.length > 0) {
+      const idSet = new Set(adIds);
+      targetAds = ads.filter((a) => idSet.has(a.id));
+      sendLog({ level: 'info', message: `[IA Marché] Analyse ciblée sur ${targetAds.length}/${ads.length} annonce(s).` });
+    }
+
+    const missing = targetAds.filter((a) => !a.adAnalysis);
+    if (missing.length > 0) {
+      sendLog({ level: 'warn', message: `[IA Marché] ${missing.length} annonce(s) sans adAnalysis (IA 1 manquante) — elles seront ignorées.` });
+      targetAds = targetAds.filter((a) => a.adAnalysis);
+    }
+
     const reanalyzeSettings = loadSettings();
-    const aiLog2 = (msg, level = 'debug') => sendLog({ level, message: `[IA] ${msg}` });
-    ads = await MarketAnalyzer.analyzeAds(ads, { ...aiConfig, concurrency: reanalyzeSettings.aiConcurrency || 5, _log: aiLog2 }, (prog) => {
-      sendProgress({ percent: prog.percent, status: prog.status });
+    const marketAiConfig = {
+      provider: aiConfig?.provider || 'ollama',
+      ...(aiConfig?.ollamaUrl ? { ollamaUrl: aiConfig.ollamaUrl } : {}),
+      ...(aiConfig?.model ? { textModel: aiConfig.model } : {}),
+    };
+    const sConfig = {
+      provider: (searchConfig && searchConfig.provider) || 'duckduckgo',
+      ...(searchConfig && searchConfig.apiKey ? { apiKey: searchConfig.apiKey } : {}),
+      ...(searchConfig && searchConfig.timeoutMs ? { timeoutMs: searchConfig.timeoutMs } : {}),
+    };
+
+    sendStatus({ state: 'processing', message: 'Analyse de marché (recherche Internet + estimation)...' });
+    sendLog({ level: 'info', message: `🌐 Lancement IA Marché (${targetAds.length} annonces, moteur ${sConfig.provider}, parallèle x${reanalyzeSettings.aiConcurrency || 3})...` });
+
+    const t0 = Date.now();
+    targetAds = await MarketValueAnalyzer.analyzeMarketBatch(targetAds, marketAiConfig, sConfig, {
+      concurrency: reanalyzeSettings.aiConcurrency || 3,
+      onProgress: (prog) => sendProgress({ percent: prog.percent, status: prog.status }),
     });
+    const elapsed = Math.round((Date.now() - t0) / 1000);
+    const estimated = targetAds.filter((a) => a.marketAnalysis && !a.marketAnalysis._fallback).length;
+    sendLog({ level: 'info', message: `✅ IA Marché terminée en ${elapsed}s (${estimated}/${targetAds.length} estimations réussies).` });
 
     writeWithChecksum(targetJob.files.json, ads, null, 2);
     if (targetJob.files.xlsx) {
       await ExcelExporter.exportToXlsx(ads, targetJob.files.xlsx);
     }
 
+    // Notification si une « Très bonne affaire » est détectée.
+    const greatDeals = targetAds.filter((a) => a.marketAnalysis && a.marketAnalysis.verdictLabel === 'Très bonne affaire');
+    if (greatDeals.length > 0) {
+      sendLog({ level: 'info', message: `[IA Marché] ${greatDeals.length} « Très bonne affaire » détectée(s).` });
+      Notifier.notifyGoodDeal(greatDeals[0]);
+    }
+
     return JobHistoryManager.getLatestJob();
+  });
+
+  // 🔍 Liste les moteurs de recherche disponibles (pour l'UI de l'IA Marché).
+  ipcMain.handle('search:providers', async () => {
+    const { listSearchProviders } = require('../services/ai/search/searchProviderRegistry');
+    return { providers: listSearchProviders() };
   });
 
   ipcMain.handle('config:get', async () => {
@@ -314,12 +337,12 @@ function setupIpcHandlers(getMainWindow) {
   // Aucune IA sur le web, aucune clé API : tout passe par le serveur Ollama
   // local. L'utilisateur peut aussi vérifier qu'Ollama est démarré et lister
   // les modèles installés.
-  ipcMain.handle('prompt:generate', async (event, { domain, objective, customHints, vars, ollamaUrl, ollamaModel }) => {
+  ipcMain.handle('prompt:generate', async (event, { domain, objective, customHints, vars, ollamaUrl, ollamaModel, priceRange, topN, rankings }) => {
     const url = ollamaUrl || 'http://127.0.0.1:11434';
     const model = ollamaModel || 'llama3';
-    sendStatus({ state: 'processing', message: `Génération du prompt par Ollama (${model})…` });
+    sendStatus({ state: 'processing', message: `Génération du prompt par l'IA (${model})…` });
     const prompt = await PromptGenerator.generate(
-      { domain, objective, customHints, vars, ollamaUrl: url, ollamaModel: model },
+      { domain, objective, customHints, vars, ollamaUrl: url, textModel: model, priceRange, topN, rankings },
       (prog) => sendProgress({ percent: prog.percent, status: prog.status })
     );
     return { prompt };

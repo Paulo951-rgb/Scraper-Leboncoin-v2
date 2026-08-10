@@ -2,30 +2,29 @@
 
 /**
  * Notifications système (Electron Notification).
- * La notification est déclenchée par le handler job:start lorsqu'une
- * "Très bonne affaire" est détectée à la fin d'un scraping.
+ * Déclenchée par le handler market:analyze (IA Marché) lorsqu'une
+ * « Très bonne affaire » est détectée (verdict basé sur la valeur réelle en €).
  */
 const { Notification } = require('electron');
 
 class Notifier {
   /**
-   * Envoie une notification Windows/native si une Bonne Affaire est trouvée.
-   * Utilise le champ `marketAnalysis.diffPct` produit par MarketAnalyzer.
+   * Envoie une notification native si une bonne affaire est trouvée.
+   * Utilise les champs `marketAnalysis.deltaEur` et `verdictLabel` produits
+   * par l'IA Marché (MarketValueAnalyzer).
    */
   static notifyGoodDeal(ad) {
     if (!Notification.isSupported()) return;
 
     const ma = ad.marketAnalysis || {};
-    const diffPct = ma.diffPct;
-    const discountText =
-      diffPct != null
-        ? `${diffPct > 0 ? '+' : ''}${diffPct}% vs marché`
-        : '';
+    const delta = ma.deltaEur;
+    const deltaText = delta != null ? `${delta > 0 ? '+' : ''}${delta} € vs marché` : '';
+    const verdict = ma.verdictLabel || 'Bonne affaire';
 
-    const body = `${ad.title || 'Annonce'} - ${ad.price ? ad.price + '€' : ''} (${ad.city || 'Inconnue'})${discountText ? '\n' + discountText : ''}`;
+    const body = `${ad.title || 'Annonce'} - ${ad.price ? ad.price + ' €' : ''} (${ad.city || 'Inconnue'})${deltaText ? '\n' + deltaText : ''}`;
 
     new Notification({
-      title: '🟢 NOUVELLE BONNE AFFAIRE LEBONCOIN !',
+      title: `🟢 ${verdict.toUpperCase()} LEBONCOIN !`,
       body,
       silent: false,
     }).show();

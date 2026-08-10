@@ -1,61 +1,67 @@
 'use strict';
 
 /**
- * PromptGenerator — génère des prompts d'analyse personnalisés via une IA
- * LOCALE (Ollama), au lieu d'une IA sur le web.
+ * PromptGenerator — IA 3 : génération de prompts pour le module AI Studio.
  *
- * Aucune clé API, aucune requête vers internet : tout passe par le serveur
- * Ollama local (http://127.0.0.1:11434 par défaut). Réutilise la même logique
- * de fetch / timeout (AbortController) que marketAnalyzer.
+ * Indépendante des IA 1 (Analyse) et IA 2 (Marché). Génère un PROMPT complet,
+ * structuré et détaillé (≈50 lignes si nécessaire), adapté à N'IMPORTE QUEL
+ * type de produit — même un type jamais traité auparavant (plantes, meubles,
+ * voitures, livres…). L'IA déduit les critères pertinents à rechercher pour
+ * la catégorie fournie.
  *
- * Mission : produire un prompt d'analyse détaillé adapté au domaine et à
- * l'objectif de l'utilisateur. Ce prompt est ensuite collé dans Google AI
- * Studio avec le fichier d'annonces.
+ * Utilise AIProvider (Ollama local aujourd'hui, infra distante demain) au lieu
+ * d'un fetch direct → cohérent avec le reste de l'architecture IA.
  */
 
+const { getAIProvider } = require('./providers/aiProviderRegistry');
 const { truncate, formatMs } = require('../../utils/diagnostics');
 
-const DEFAULT_OLLAMA_URL = 'http://127.0.0.1:11434';
-const DEFAULT_MODEL = 'llama3';
+const GENERATION_TIMEOUT_MS = 180000;
 
-// Méta-instructions : ce que l'IA locale doit PRODUIRE (un prompt, pas une
-// analyse). On lui fournit contexte + variables, il génère le prompt final
-// à coller dans AI Studio avec le fichier d'annonces.
-const META_SYSTEM = `Tu es un ingénieur de prompts expert en analyse d'annonces Leboncoin pour l'achat-revente.
-On te donne un contexte (domaine, recherche, variables) et tu dois générer un PROMPT complet, détaillé et prêt à coller dans Google AI Studio.
+// Méta-instructions : l'IA locale doit PRODUIRE un prompt (pas une analyse).
+const META_SYSTEM = `Tu es un ingénieur de prompts expert en analyse d'annonces de vente en ligne (Leboncoin et sites équivalents) pour l'achat-revente et la détection de bonnes affaires.
+On te donne un contexte (type de produit, objectif, fourchette de prix, classements souhaités, consignes) et tu dois générer un PROMPT complet, très détaillé et prêt à coller dans Google AI Studio.
 
-Le prompt que tu génères sera envoyé avec un fichier .json contenant plusieurs centaines/milliers d'annonces issues d'une recherche Leboncoin.
+Le prompt que tu génères sera envoyé avec un fichier .json contenant plusieurs centaines/milliers d'annonces issues d'une recherche Leboncoin. L'IA qui recevra ce prompt devra analyser TOUTES les annonces et produire des classements pertinents.
 
-RÈGLES pour le prompt que tu génères :
-- Analyse 100 % des annonces, sans en oublier, sans se limiter à la recherche initiale.
-- Demande des classements finaux Top N (meilleures affaires, achat-revente, composants, pépites sous-évaluées, à éviter).
-- Demande pour chaque annonce intéressante : catégorie, prix demandé, valeur réelle estimée, score /100, recommandation (Acheter/Négocier/Surveiller/Éviter), risques.
-- Détection d'arnaques (niveau Faible/Moyen/Élevé, "suspicion" sans certitude).
-- Opportunités indirectes (composants récupérables, lots, machines en panne).
-- Adapte le vocabulaire et les critères au DOMAINE fourni (hardware, livres, smartphones, etc.).
-- Réponds UNIQUEMENT avec le prompt final (texte), sans préambule ni explication, sans markdown autour.
+RÈGLES OBLIGATOIRES pour le prompt que tu génères :
+1. Contexte : commence par définir clairement le rôle de l'IA cible (expert en achat-revente, spécialiste du type de produit) et l'objectif précis.
+2. Critères pertinents : DÉDUIS TOI-MÊME les critères importants pour le type de produit fourni, même s'il s'agit d'une catégorie inédite (plantes, meubles, voitures, livres, électroménager…). Pour chaque type, identifie ce qui fait la valeur : marque/modèle, état, défauts, authenticité, rareté, accessoires, dimensions, année, kilométrage, édition, état de fonctionnement, etc.
+3. Analyse exhaustive : exige l'analyse de 100 % des annonces, sans en oublier, sans se limiter à la recherche initiale.
+4. Pour chaque annonce intéressante : modèle précis, prix demandé, valeur réelle estimée, état réel, défauts/éléments manquants, recommandation (Acheter / Négocier / Surveiller / Éviter).
+5. Classements finaux : demande TOUS les classements demandés (meilleures affaires, lots, composants récupérables, pépites sous-évaluées, produits à éviter, etc.) avec le Top N précisé.
+6. Détection d'arnaques : suspicion (Faible/Moyen/Élevé) sans jamais affirmer, prix aberrants, photos incohérentes, annonces vagues.
+7. Opportunités indirectes : composants récupérables, lots, machines en panne, produits réparables.
+8. Fourchette de prix : si fournie, filtre et prends-la en compte.
+9. Format de sortie : précise un format structuré (tableaux Markdown, JSON, ou sections claires) pour chaque classement.
+10. Robustesse : demande de signaler les annonces incomplètes, sans photo, ou à identifier avec prudence.
 
-Voici le contexte fourni par l'utilisateur :`;
+Le prompt généré doit être long, structuré et complet (typiquement 40-60 lignes). Réponds UNIQUEMENT avec le prompt final (texte), sans préambule, sans explication, sans markdown autour.`;
 
 class PromptGenerator {
   /**
-   * Génère un prompt d'analyse personnalisé via Ollama (local).
-   * @param {Object} input { domain, objective, customHints, vars, ollamaUrl, ollamaModel }
-   * @param {Function} onProgress callback optionnel {percent,status}
+   * Génère un prompt d'analyse complet via AIProvider (Ollama local).
+   * @param {Object} input { domain, objective, customHints, vars,
+   *                         priceRange, topN, rankings,
+   *                         provider, textModel, ollamaUrl }
+   * @param {Function} onProgress callback {percent,status}
    * @returns {Promise<string>} le prompt généré (texte)
    */
   static async generate(input = {}, onProgress) {
     const {
       domain = 'produits',
-      objective = 'Trouve les meilleures affaires et opportunités d\'achat-revente.',
+      objective = "Trouve les meilleures affaires et opportunités d'achat-revente.",
       customHints = '',
       vars = {},
-      ollamaUrl = DEFAULT_OLLAMA_URL,
-      ollamaModel = DEFAULT_MODEL,
+      priceRange = null,
+      topN = 10,
+      rankings = [],
+      provider = 'ollama',
+      textModel,
+      ollamaUrl,
     } = input;
 
-    if (!ollamaUrl) throw new Error('URL Ollama manquante.');
-    if (!ollamaModel) throw new Error('Modèle Ollama manquant.');
+    const aiConfig = { provider, ...(textModel ? { textModel } : {}), ...(ollamaUrl ? { ollamaUrl } : {}) };
 
     if (onProgress) onProgress({ percent: 10, status: 'Construction du contexte…' });
 
@@ -64,25 +70,39 @@ class PromptGenerator {
       .map(([k, v]) => `- ${k}: ${v}`)
       .join('\n');
 
-    const userContext = `Domaine : ${domain}
+    const rankingsBlock = Array.isArray(rankings) && rankings.length > 0
+      ? rankings.map((r) => `- ${r}`).join('\n')
+      : '- Meilleures affaires (achat-revente)';
+
+    const priceBlock = priceRange && (priceRange.min != null || priceRange.max != null)
+      ? `Fourchette de prix : ${priceRange.min != null ? priceRange.min + ' €' : '—'} à ${priceRange.max != null ? priceRange.max + ' €' : '—'}`
+      : '(fourchette non précisée — analyse toutes les gammes de prix)';
+
+    const userContext = `Type de produit / domaine : ${domain}
 Objectif de l'analyse : ${objective}
-${customHints ? `Consignes supplémentaires : ${customHints}\n` : ''}Variables (à intégrer dans le prompt généré) :
+${priceBlock}
+Top des résultats souhaité : Top ${topN}
+Classements demandés :
+${rankingsBlock}
+${customHints ? `Consignes supplémentaires de l'utilisateur : ${customHints}\n` : ''}Variables / contexte complémentaire :
 ${varsBlock || '(aucune)'}
 
-Génère maintenant le prompt complet à coller dans AI Studio.`;
+Génère maintenant le prompt complet, structuré et détaillé à coller dans AI Studio. DÉDUIS les critères pertinents pour ce type de produit (« ${domain} »), même si tu n'as jamais traité cette catégorie.`;
 
     const metaPrompt = `${META_SYSTEM}
 
+=== CONTEXTE FOURNI PAR L'UTILISATEUR ===
 ${userContext}`;
 
-    console.log(`[PromptGenerator] Génération locale Ollama — domain=${domain} | model=${ollamaModel} | url=${ollamaUrl} | prompt=${truncate(metaPrompt, 80)}`);
+    console.log(`[PromptGenerator] Génération ${provider} — domain=${domain} | top=${topN} | prompt=${truncate(metaPrompt, 80)}`);
 
-    if (onProgress) onProgress({ percent: 30, status: `Appel à Ollama (${ollamaModel})…` });
+    if (onProgress) onProgress({ percent: 30, status: `Appel à l'IA (${textModel || 'défaut'})…` });
 
     let raw;
     const t0 = Date.now();
     try {
-      raw = await this._callOllama(metaPrompt, ollamaUrl, ollamaModel, onProgress);
+      const ai = getAIProvider(aiConfig);
+      raw = await ai.chatText(metaPrompt, { temperature: 0.4, timeoutMs: GENERATION_TIMEOUT_MS });
     } catch (err) {
       console.error(`[PromptGenerator] Échec génération après ${formatMs(Date.now() - t0)} : ${err.message}`);
       throw err;
@@ -92,46 +112,6 @@ ${userContext}`;
     if (onProgress) onProgress({ percent: 100, status: 'Prompt généré.' });
 
     return raw.trim();
-  }
-
-  static async _callOllama(prompt, ollamaUrl, model, onProgress) {
-    const base = (ollamaUrl || DEFAULT_OLLAMA_URL).replace(/\/$/, '');
-    const url = `${base}/api/generate`;
-    const controller = new AbortController();
-    // Ollama local peut être lent sur un gros prompt — timeout généreux (3 min).
-    const timer = setTimeout(() => controller.abort(), 180000);
-    let res;
-    try {
-      res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: model || DEFAULT_MODEL,
-          prompt,
-          stream: false,
-        }),
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timer);
-    }
-
-    if (!res.ok) {
-      let detail = '';
-      try {
-        detail = await res.text().catch(() => '');
-      } catch (_) {}
-      console.error(`[PromptGenerator] Ollama HTTP ${res.status} : ${truncate(detail, 200)}`);
-      if (res.status === 404) {
-        throw new Error(`Ollama a répondu 404 — le modèle « ${model} » n'est pas installé. Lancez : ollama pull ${model}`);
-      }
-      throw new Error(`Ollama a répondu HTTP ${res.status}. Vérifiez que le serveur Ollama est démarré.`);
-    }
-
-    const data = await res.json();
-    const text = data && (data.response || data.message || '');
-    if (!text) throw new Error('Réponse Ollama vide (pas de texte généré).');
-    return text.trim();
   }
 }
 

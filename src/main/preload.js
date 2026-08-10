@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('api', {
   analyzeMarket: (data) => ipcRenderer.invoke('market:analyze', data),
   generatePrompt: (data) => ipcRenderer.invoke('prompt:generate', data),
   listOllamaModels: (data) => ipcRenderer.invoke('ollama:models', data),
+  listSearchProviders: () => ipcRenderer.invoke('search:providers'),
 
   getHistory: () => ipcRenderer.invoke('job:getHistory'),
   deleteJob: (jobId) => ipcRenderer.invoke('job:delete', jobId),

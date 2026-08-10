@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { DealFinder } = require('../analysis/dealFinder');
+const { AdStats } = require('../analysis/adStats');
 const { JOBS_DIR } = require('../../config/constants');
 const { readWithChecksum } = require('../../utils/integrity');
 
@@ -49,7 +49,7 @@ class JobHistoryManager {
         console.debug(`[JobHistory] ${entry.name} : pas d'annonces.json (résultats absents).`);
       }
 
-      const { stats, enrichedAds } = DealFinder.analyze(rawAds);
+      const { stats, ads: enrichedAds } = AdStats.analyze(rawAds);
 
       jobs.push({
         id: entry.name,

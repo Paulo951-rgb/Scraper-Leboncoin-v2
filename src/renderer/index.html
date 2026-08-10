@@ -100,28 +100,26 @@
             <div class="form-row">
               <div class="form-group">
                 <label class="checkbox-label">
-                  <input type="checkbox" id="autoAiMarket">
-                  <strong>🧠 Analyser automatiquement le marché avec l'IA après le scraping</strong>
+                  <input type="checkbox" id="autoAiMarket" checked>
+                  <strong>🧠 Analyse IA pendant le scraping (texte + vision si photos)</strong>
                 </label>
               </div>
 
               <div class="form-group">
-                <label class="checkbox-label">
-                  <input type="checkbox" id="analyzeImages">
-                  <strong>🖼️ Analyser les images par IA Vision (3 premières photos)</strong>
-                </label>
-              </div>
-
-              <div class="form-group">
-                <label for="aiProvider">Moteur IA :</label>
+                <label for="aiProvider">Moteur IA (texte) :</label>
                 <select id="aiProvider">
                   <option value="ollama">Ollama Local (100% Gratuit sur votre PC)</option>
                 </select>
               </div>
 
               <div class="form-group">
-                <label for="aiModelName">Nom du Modèle (ex: llama3, mistral) :</label>
+                <label for="aiModelName">Modèle texte (ex: llama3, mistral) :</label>
                 <input type="text" id="aiModelName" value="llama3">
+              </div>
+
+              <div class="form-group">
+                <label for="aiVisionModel">Modèle vision (ex: llava, moondream) :</label>
+                <input type="text" id="aiVisionModel" value="llava">
               </div>
             </div>
           </div>
@@ -368,7 +366,20 @@
                 <button id="viewTableBtn" class="btn btn-secondary btn-small active">📊 Tableau</button>
                 <button id="viewGridBtn" class="btn btn-secondary btn-small">🖼️ Galerie</button>
               </div>
-              <button id="triggerMarketBtn" class="btn btn-primary btn-small">🧠 Relancer Analyse IA</button>
+              <button id="triggerMarketBtn" class="btn btn-primary btn-small">🌐 IA Marché (valeur réelle)</button>
+            </div>
+          </div>
+
+          <div class="filter-row">
+            <div class="form-group">
+              <label for="searchProvider">Moteur de recherche (IA Marché) :</label>
+              <select id="searchProvider">
+                <option value="duckduckgo">DuckDuckGo (sans clé)</option>
+              </select>
+            </div>
+            <div class="form-group hidden">
+              <label for="searchApiKey">Clé API moteur (si requis) :</label>
+              <input type="password" id="searchApiKey" placeholder="Aucune clé nécessaire pour DuckDuckGo">
             </div>
           </div>
           
@@ -430,10 +441,10 @@
                   <th style="width:3%;">⭐</th>
                   <th style="width:25%;">Produit Identifié</th>
                   <th style="width:10%;">Prix</th>
-                  <th style="width:12%;">Estimation Marché</th>
-                  <th style="width:12%;">Marge Revente</th>
-                  <th style="width:12%;">Évaluation</th>
-                  <th style="width:18%;">Détails & Explication</th>
+                  <th style="width:12%;">Valeur Marché</th>
+                  <th style="width:12%;">Bénéfice/Perte</th>
+                  <th style="width:12%;">Verdict</th>
+                  <th style="width:18%;">Résumé IA</th>
                   <th style="width:5%;">Actions</th>
                 </tr>
               </thead>
@@ -680,9 +691,9 @@
           </div>
           <div class="price-box">
             <div class="price-big"><span id="modalPrice"></span> €</div>
-            <div class="market-range-info">Estimation marché : <strong id="modalMarketRange"></strong> (Moyenne : <span id="modalMarketAvg"></span> €)</div>
+            <div class="market-range-info">Valeur marché estimée : <strong id="modalMarketRange"></strong> (Valeur centrale : <span id="modalMarketAvg"></span> €)</div>
             <div style="font-size:0.85rem; color:var(--green-deal); font-weight:bold; margin-top:5px;">
-              💸 Marge Revente Estimée : <span id="modalResellMargin"></span>
+              💰 Bénéfice / Perte : <span id="modalResellMargin"></span>
             </div>
           </div>
           <div class="seller-info-banner">
