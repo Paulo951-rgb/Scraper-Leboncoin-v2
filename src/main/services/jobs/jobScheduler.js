@@ -104,7 +104,11 @@ class JobSchedulerManager {
     const timer = setInterval(() => {
       console.log(`⏰ [Scheduler] Lancement automatique de la tâche : ${id} (URL : ${searchUrl})`);
       stored.lastRun = Date.now();
-      if (!opts.skipSave) this._saveToDisk();
+      // On persiste systématiquement au déclenchement (les runs sont rares,
+      // un write disque est négligeable) — sinon les tâches restaurées au
+      // démarrage (skipSave=true à l'ajout) ne mettraient jamais lastRun à
+      // jour et nextRun resterait calculé sur addedAt indéfiniment.
+      this._saveToDisk();
       this.onTriggerJob(this._triggerPayload(stored));
     }, intervalMs);
 
