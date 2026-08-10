@@ -2,7 +2,7 @@
 
 const path = require('path');
 const fs = require('fs');
-const { ipcMain, shell } = require('electron');
+const { ipcMain, shell, app } = require('electron');
 const { HarCapturer } = require('../services/scraping/harCapturer');
 const { PipelineRunner } = require('../services/scraping/pipelineRunner');
 const { FileManager } = require('../infrastructure/fileManager');
@@ -292,6 +292,22 @@ function setupIpcHandlers(getMainWindow) {
 
   ipcMain.handle('config:get', async () => {
     return loadSettings();
+  });
+
+  // ℹ️ Diagnostic applicatif (non sensible) pour le formulaire de feedback.
+  // Renvoie version, plateforme, arch et date — rien de personnel.
+  ipcMain.handle('app:getDiagnostics', async () => {
+    const os = require('os');
+    return {
+      appVersion: app.getVersion(),
+      electronVersion: process.versions.electron,
+      nodeVersion: process.versions.node,
+      platform: os.platform(),
+      arch: process.arch,
+      osRelease: os.release(),
+      locale: app.getLocale(),
+      timestamp: new Date().toISOString(),
+    };
   });
 
   // Génération de prompt personnalisé via Ollama LOCAL (module AI Studio).

@@ -44,6 +44,10 @@ document.addEventListener('keydown', (e) => {
     adDetailModal.classList.add('hidden');
     compareModal.classList.add('hidden');
     settingsModal.classList.add('hidden');
+    // Modales d'aide (FAQ / Help / Feedback)
+    document.getElementById('faqModal')?.classList.add('hidden');
+    document.getElementById('helpModal')?.classList.add('hidden');
+    document.getElementById('feedbackModal')?.classList.add('hidden');
   }
 });
 
@@ -243,8 +247,14 @@ openCompareModalBtn.addEventListener('click', () => {
 closeCompareModalBtn.addEventListener('click', () => compareModal.classList.add('hidden'));
 
 // Widget Flottant — fenêtre always-on-top qui affiche la progression du scraping
-document.getElementById('toggleWidgetBtn').addEventListener('click', () => {
+// Feedback visuel : le bouton bascule en état "actif" tant que le widget est ouvert.
+const toggleWidgetBtn = document.getElementById('toggleWidgetBtn');
+let widgetActive = false;
+toggleWidgetBtn.addEventListener('click', () => {
   window.api.toggleWidget();
+  widgetActive = !widgetActive;
+  toggleWidgetBtn.classList.toggle('btn-active', widgetActive);
+  toggleWidgetBtn.title = widgetActive ? 'Widget flottant ouvert — cliquez pour fermer' : 'Ouvrir le widget flottant';
 });
 
 // Modal Paramètres

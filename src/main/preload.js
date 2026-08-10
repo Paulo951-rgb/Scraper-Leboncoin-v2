@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld('api', {
 
   getConfig: () => ipcRenderer.invoke('config:get'),
   saveConfig: (patch) => ipcRenderer.invoke('config:save', patch),
+  getDiagnostics: () => ipcRenderer.invoke('app:getDiagnostics'),
 
   checkOllamaHealth: (opts) => ipcRenderer.invoke('ollama:health', opts),
   checkNetwork: () => ipcRenderer.invoke('network:check'),

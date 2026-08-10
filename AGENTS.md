@@ -22,7 +22,7 @@ services/analysis/dealFinder statistiques + tags GOOD/HIGH
 services/maintenance/storageCleaner
 infrastructure/              excelExporter, fileManager, notifications
 utils/                      helpers, diagnostics, integrity, rateLimiter, logger, secretStore
-renderer/                    app.js (1266 lignes), index.html, styles.css, widget.html
+renderer/                    app.js (1266 lignes), index.html, styles.css, widget.html, aiStudioModule.js, helpModule.js (FAQ/Help/Feedback)
 ```
 
 ## Conventions clés
@@ -41,7 +41,7 @@ renderer/                    app.js (1266 lignes), index.html, styles.css, widge
   n'a pas accès à `app`.
 
 ## Tests
-- `node test/regression.test.js` → 222 assertions (syntaxe + stubs Electron).
+- `node test/regression.test.js` → 239 assertions (syntaxe + stubs Electron).
 - Le test stub `electron` : BrowserWindow a `webContents.send` mais PAS `isDestroyed`.
 - Avant tout commit : `node --check` sur les fichiers modifiés + lancer la suite.
 

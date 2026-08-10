@@ -77,6 +77,7 @@ L'application est pensée pour un usage **semi-automatisé** : l'utilisateur peu
 - 🎨 **13 thèmes visuels**.
 - 📶 **Mode hors-ligne** — badge de connectivité, scraping désactivé mais historique consultable.
 - 📜 **Logs rotatifs** (un fichier par jour, rétention configurable).
+- ❓ **Système d'aide intégré** — FAQ (accordéon), guide d'utilisation pas à pas et formulaire de feedback (problèmes & améliorations), accessibles discrètement depuis l'en-tête.
 
 ---
 
@@ -142,7 +143,7 @@ Le main suit une **architecture en couches** : `core/` (orchestration), `service
 leboncoin-scraper-app/
 ├── package.json                          # Métadonnées, dépendances, script "start"
 ├── test/
-│   └── regression.test.js                # Suite de non-régression (222 assertions)
+│   └── regression.test.js                # Suite de non-régression (239 assertions)
 └── src/
     ├── main/                             # Processus principal Electron
     │   ├── main.js                       # Cycle de vie + fenêtres + session AI Studio
@@ -188,10 +189,11 @@ leboncoin-scraper-app/
     │       ├── logger.js                 # Logger rotatif quotidien + rétention
     │       └── secretStore.js            # Secrets chiffrés (safeStorage + fallback AES)
     └── renderer/
-        ├── index.html                    # UI (onglets, modales, webview AI Studio)
+        ├── index.html                    # UI (onglets, modales, webview AI Studio, FAQ/Help/Feedback)
         ├── widget.html                   # Widget flottant
         ├── app.js                        # Logique front-end
         ├── aiStudioModule.js             # Module Navigateur IA Studio
+        ├── helpModule.js                 # Module d'aide (FAQ + guide + feedback)
         └── styles.css                    # Habillage + 13 thèmes + stat-cards
 ```
 
@@ -411,14 +413,14 @@ Pour chaque job (`output/jobs/job-<timestamp>/`) :
 
 ## 🧪 Tests de non-régression
 
-`test/regression.test.js` — script Node.js autonome (sans framework externe), **222 assertions** couvrant :
+`test/regression.test.js` — script Node.js autonome (sans framework externe), **239 assertions** couvrant :
 
 1. **utils/diagnostics.js** — helpers de log.
 2. **Modules principaux** — MarketAnalyzer, DealFinder, StorageCleaner, SecretStore, settings.
 3. **Pipeline via fork** — crée un faux HAR, lance le vrai pipeline, vérifie l'extraction.
 4. **Corrections & renderer** — fixes présents (mapInstance, escapeHtml, stats, gestion 429).
 5. **Architecture** — structure en couches, contrat IPC (21 canaux), widget, sandbox.
-6. **Features** — intégrité SHA-256, rate limiting, logs rotatifs, health-check Ollama, secretStore, suppression auto jobs, mode hors-ligne, module AI Studio.
+6. **Features** — intégrité SHA-256, rate limiting, logs rotatifs, health-check Ollama, secretStore, suppression auto jobs, mode hors-ligne, module AI Studio, module d'aide (FAQ/Help/Feedback).
 7. **Audit fiabilité** — crash renderer (getAiApiKey), nettoyage jobs (timestamp), timeout géocodage, plafond cache IA.
 
 ### Exécuter
@@ -427,7 +429,7 @@ Pour chaque job (`output/jobs/job-<timestamp>/`) :
 node test/regression.test.js
 ```
 
-Résultat attendu : `=== RÉSULTAT : 222 réussis, 0 échoués ===`
+Résultat attendu : `=== RÉSULTAT : 239 réussis, 0 échoués ===`
 
 > Le test installe des **stubs** pour `electron`, `playwright` et `exceljs` afin de `require()` les modules en Node pur, sans lancer Electron/Chromium.
 

@@ -35,6 +35,11 @@
         <span id="offlineBadge" class="badge badge-offline hidden" title="Mode hors-ligne — vous pouvez consulter les jobs déjà scrapés, mais le scraping est désactivé.">📶 Hors-ligne</span>
         <button id="toggleWidgetBtn" class="btn btn-secondary btn-small">🖥️ Widget Flottant</button>
         <button id="openSettingsModalBtn" class="btn btn-secondary btn-small">⚙️ Paramètres</button>
+        <div class="header-help-btns">
+          <button id="openFaqBtn" class="help-btn" title="Questions fréquentes" aria-label="FAQ">❓</button>
+          <button id="openHelpBtn" class="help-btn" title="Guide d'utilisation" aria-label="Aide">📖</button>
+          <button id="openFeedbackBtn" class="help-btn" title="Signaler un problème ou proposer une amélioration" aria-label="Problèmes & Améliorations">💬</button>
+        </div>
 
         <div class="nav-tabs">
           <button class="tab-btn active" data-tab="tab-scraper">🚀 Scraper</button>
@@ -703,6 +708,78 @@
     </div>
   </div>
 
+  <!-- ❓ MODALE FAQ -->
+  <div id="faqModal" class="modal-overlay hidden">
+    <div class="modal-card modal-large" style="max-width:720px;">
+      <div class="modal-header">
+        <h3 style="margin:0;">❓ Questions fréquentes (FAQ)</h3>
+        <button class="btn-close" data-close-modal="faqModal" aria-label="Fermer">×</button>
+      </div>
+      <p class="text-muted" style="font-size:0.82rem; margin-bottom:12px;">Cliquez sur une question pour afficher / masquer sa réponse.</p>
+      <div id="faqAccordion" class="faq-accordion"></div>
+      <div class="modal-actions" style="margin-top:18px; text-align:right;">
+        <button class="btn btn-secondary" data-close-modal="faqModal">Fermer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 📖 MODALE GUIDE D'UTILISATION -->
+  <div id="helpModal" class="modal-overlay hidden">
+    <div class="modal-card modal-large" style="max-width:720px;">
+      <div class="modal-header">
+        <h3 style="margin:0;">📖 Guide d'utilisation</h3>
+        <button class="btn-close" data-close-modal="helpModal" aria-label="Fermer">×</button>
+      </div>
+      <p class="text-muted" style="font-size:0.82rem; margin-bottom:12px;">Suivez ce guide pas à pas : de la première recherche à l'analyse fine des résultats.</p>
+      <div id="helpContent" class="help-content"></div>
+      <div class="modal-actions" style="margin-top:18px; text-align:right;">
+        <button class="btn btn-secondary" data-close-modal="helpModal">Fermer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 💬 MODALE PROBLÈMES & AMÉLIORATIONS -->
+  <div id="feedbackModal" class="modal-overlay hidden">
+    <div class="modal-card modal-large" style="max-width:560px;">
+      <div class="modal-header">
+        <h3 style="margin:0;">💬 Problèmes &amp; Améliorations</h3>
+        <button class="btn-close" data-close-modal="feedbackModal" aria-label="Fermer">×</button>
+      </div>
+      <p class="text-muted" style="font-size:0.82rem; margin-bottom:12px;">Signalez un bug, proposez une amélioration ou demandez une nouvelle fonctionnalité. Votre rapport nous aide à améliorer le logiciel.</p>
+
+      <div class="form-group text-left">
+        <label style="font-size:0.8rem; color:var(--text-muted); display:block; margin-bottom:6px;">Type de message :</label>
+        <select id="feedbackType" style="width:100%;">
+          <option value="bug">🐛 Problème / Bug</option>
+          <option value="improvement">💡 Amélioration</option>
+          <option value="feature">✨ Nouvelle fonctionnalité</option>
+          <option value="other">❓ Autre</option>
+        </select>
+      </div>
+
+      <div class="form-group text-left" style="margin-top:12px;">
+        <label style="font-size:0.8rem; color:var(--text-muted); display:block; margin-bottom:6px;">Votre message <span style="color:var(--danger,#ef4444);">*</span> :</label>
+        <textarea id="feedbackMessage" rows="6" placeholder="Décrivez le problème ou votre suggestion avec le plus de détails possible (étapes pour reproduire, comportement attendu, comportement observé…)" style="width:100%; resize:vertical; font-family:inherit;"></textarea>
+      </div>
+
+      <details class="feedback-diag" style="margin-top:10px;">
+        <summary style="cursor:pointer; font-size:0.8rem; color:var(--text-muted);">ℹ️ Informations techniques jointes automatiquement</summary>
+        <div id="feedbackDiagPreview" class="feedback-diag-preview"></div>
+      </details>
+
+      <div id="feedbackStatus" class="feedback-status hidden"></div>
+
+      <div class="modal-actions" style="margin-top:18px; display:flex; justify-content:space-between; align-items:center;">
+        <span class="text-muted" style="font-size:0.72rem;">L'envoi vers un serveur sera activé dans une version ultérieure.</span>
+        <div style="display:flex; gap:10px;">
+          <button class="btn btn-secondary" data-close-modal="feedbackModal">Annuler</button>
+          <button id="submitFeedbackBtn" class="btn btn-primary">📤 Envoyer</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="helpModule.js"></script>
   <script src="aiStudioModule.js"></script>
   <script src="app.js"></script>
 </body>

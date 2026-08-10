@@ -440,6 +440,32 @@ assert(/aistudioLoginPreload\.js/.test(htmlCode), 'index.html: webview reçoit l
 assert(/contextIsolation=no/.test(htmlCode), 'index.html: webview contextIsolation=no (override navigator côté page)');
 assert(/openAiStudioLogin/.test(preloadCodeFull), 'preload.js: expose openAiStudioLogin');
 
+// === MODULE D'AIDE : FAQ / Help / Feedback ===
+assert(/openFaqBtn/.test(htmlCode), 'index.html: bouton FAQ présent');
+assert(/openHelpBtn/.test(htmlCode), 'index.html: bouton Help présent');
+assert(/openFeedbackBtn/.test(htmlCode), 'index.html: bouton Problèmes & Améliorations présent');
+assert(/id="faqModal"/.test(htmlCode), 'index.html: modale FAQ présente');
+assert(/id="helpModal"/.test(htmlCode), 'index.html: modale Help présente');
+assert(/id="feedbackModal"/.test(htmlCode), 'index.html: modale Feedback présente');
+assert(/helpModule\.js/.test(htmlCode), 'index.html: inclut helpModule.js');
+assert(existsSync(path.join(__dirname, '..', 'src/renderer', 'helpModule.js')), 'renderer/helpModule.js present');
+const helpModCode = fs.readFileSync(path.join(__dirname, '..', 'src/renderer', 'helpModule.js'), 'utf8');
+assert(/FAQ_DATA/.test(helpModCode), 'helpModule: données FAQ présentes');
+assert(/HELP_SECTIONS/.test(helpModCode), 'helpModule: sections du guide présentes');
+assert(/submitFeedback/.test(helpModCode), 'helpModule: fonction submitFeedback (préparée pour future API)');
+assert(/window\.helpModule/.test(helpModCode), 'helpModule: exposé sur window.helpModule');
+// Les boutons d'aide sont discrets (classe help-btn), distincts des onglets principaux
+assert(/class="help-btn"/.test(htmlCode), 'index.html: boutons aide discrets (class help-btn)');
+// IPC diagnostic non sensible pour le feedback
+assert(/app:getDiagnostics/.test(ipcHandlersCode), 'ipcHandlers: handler app:getDiagnostics (diagnostic feedback)');
+assert(/getDiagnostics/.test(preloadCodeFull), 'preload.js: expose getDiagnostics');
+// Le feedback n'envoie rien sur le réseau tant que l'API n'est pas branchée (V2).
+// On vérifie l'absence de fetch ACTIF (hors commentaires) et la présence de
+// l'archive locale (comportement réel tant que le backend n'existe pas).
+const helpNoComments = helpModCode.replace(/\/\/[^\n]*\n/g, '');
+assert(!/fetch\(\s*['"]https/.test(helpNoComments), 'helpModule: pas d\'envoi HTTP actif (API backend pas encore développé)');
+assert(/localStorage.*feedback-archive/.test(helpModCode), 'helpModule: rapport archivé localement (V2 en attendant le serveur)');
+
 console.log(`\n=== RÉSULTAT : ${pass} réussis, ${fail} échoués ===`);
 process.exit(fail > 0 ? 1 : 0);
 }
