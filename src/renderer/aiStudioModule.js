@@ -136,7 +136,7 @@ const AiStudioModule = {
     const domainSel = this.el.aistudioDomainSelect;
     const domainObj = DOMAINS.find((d) => d.id === domainSel.value) || DOMAINS[0];
     const objective = (this.el.aistudioObjective.value || '').trim()
-      || 'Trouve les meilleures affaires et opportunités d\'achat-revente, classe par score et marge nette, détecte les arnaques.';
+      || 'Trouve les meilleures affaires et opportunités d\'achat-revente, estime la valeur marché de chaque annonce (recherche Web + IA locale) et calcule l\'écart de prix en €.';
     const customHints = (this.el.aistudioCustomHints.value || '').trim();
     const vars = this.collectVars();
     const ollamaUrl = (this.el.aistudioOllamaUrl.value || '').trim() || 'http://127.0.0.1:11434';

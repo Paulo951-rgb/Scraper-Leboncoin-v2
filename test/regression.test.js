@@ -632,6 +632,57 @@ assert(/setExtraVal\('modalDeliveryMode'/.test(appCodeFull), 'app.js: openAdDeta
 assert(/GEOCODE_CONCURRENCY/.test(appCodeFull), 'app.js: géocodage carte parallélisé (GEOCODE_CONCURRENCY)');
 assert(!/for \(const a of targetAds\) \{\s*$/.test(appCodeFull), 'app.js: boucle séquentielle de géocodage retirée');
 
+// === AUDIT STABILISATION : Lots A/B/C/D ===
+// Lot C — aiCache : sauvegarde debouncée (pas de writeFileSync synchrone à chaque set)
+assert(/SAVE_DEBOUNCE_MS\s*=\s*\d+/.test(aiCacheCode), 'aiCache: constante SAVE_DEBOUNCE_MS définie');
+assert(/_scheduleSave/.test(aiCacheCode), 'aiCache: _scheduleSave (debounce écriture)');
+assert(/_flushSave/.test(aiCacheCode), 'aiCache: _flushSave (écriture forcée)');
+assert(/function _saveNow/.test(aiCacheCode), 'aiCache: _saveNow séparé de _scheduleSave');
+// set() ne doit PLUS appeler _save() synchrone (anciennement) ; appelle _scheduleSave
+assert(/_scheduleSave\(\);/.test(aiCacheCode.replace(/\/\/[\s\S]*?\n/g, '')), 'aiCache: set() planifie la sauvegarde (debounce)');
+assert(!/\nfunction _save\(\)/.test(aiCacheCode), 'aiCache: ancienne fonction synchrone _save() retirée');
+assert(/_flushSave/.test(fs.readFileSync(path.join(base, 'services/ai/adAnalyzer.js'), 'utf8')), 'adAnalyzer: flush cache en fin de batch');
+assert(/_flushSave/.test(fs.readFileSync(path.join(base, 'services/ai/marketValueAnalyzer.js'), 'utf8')), 'marketValueAnalyzer: flush cache en fin de batch');
+// Test fonctionnel : set() ne persiste pas immédiatement (debounce), mais
+// _flushSave() force l'écriture disque. On le prouve en rechargeant un cache
+// neuf depuis le disque après flush.
+aiCache.clear();
+const _aiCache2 = require(path.join(base, 'services/ai/aiCache'));
+_aiCache2.set('persist-1', { v: 42 }, 'analyse');
+assert(_aiCache2.get('persist-1', 'analyse') && _aiCache2.get('persist-1', 'analyse').v === 42, 'aiCache: get voit la valeur en mémoire juste après set()');
+_aiCache2._flushSave(); // force l'écriture disque
+// Recharge un cache neuf depuis le disque pour prouver la persistance
+const aiCachePath = require.resolve(path.join(base, 'services/ai/aiCache'));
+delete require.cache[aiCachePath];
+const freshCache = require(aiCachePath);
+const persisted = freshCache.get('persist-1', 'analyse');
+assert(persisted && persisted.v === 42, 'aiCache: _flushSave persiste la valeur sur disque (recharge OK)');
+freshCache.clear();
+
+// Lot D — Carte Leaflet : anti race condition (compteur de génération)
+assert(/mapRenderGen\s*=\s*0/.test(appCodeFull), 'app.js: mapRenderGen (compteur génération carte)');
+assert(/const gen = \+\+mapRenderGen/.test(appCodeFull), 'app.js: renderMap incrémente la génération');
+assert(/isStale\(\)/.test(appCodeFull), 'app.js: renderMap vérifie isStale() avant d\'ajouter marqueurs');
+assert(/if \(isStale\(\)\) return/.test(appCodeFull), 'app.js: worker carte abandonne si stale');
+
+// Lot B — Rafraîchissement onglet actif après scraping terminé
+assert(/refreshActiveDataTab/.test(appCodeFull), 'app.js: refreshActiveDataTab défini');
+assert(/refreshActiveDataTab\(\)/.test(appCodeFull), 'app.js: onStatusChange appelle refreshActiveDataTab sur completed');
+
+// Lot A — Presets 1-clic complets : capture URL + pages + limit + noDesc + AI
+assert(/savePresetBtn/.test(appCodeFull), 'app.js: savePresetBtn référencé');
+assert(/loadPreset\b/.test(appCodeFull), 'app.js: loadPreset présent');
+assert(/collectSearchConfig/.test(appCodeFull), 'app.js: collectSearchConfig (capture config complète pour preset)');
+assert(/applySearchConfig/.test(appCodeFull), 'app.js: applySearchConfig (restaure config complète du preset)');
+assert(/noPhotoUrl/.test(appCodeFull), 'app.js: noPhotoUrl (placeholder local)');
+assert(/escapeHtml\b/.test(appCodeFull), 'app.js: escapeHtml (échappement HTML)');
+// plus de dépendance externe via.placeholder.com dans du code réel (hors commentaires)
+const appCodeNoComments = appCodeFull.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+assert(!/via\.placeholder\.com/.test(appCodeNoComments), 'app.js: plus de dépendance externe via.placeholder.com (hors commentaires)');
+
+// Cohérence tri explorateur : défaut sauvegardé = 'DEFAULT' (option réelle)
+assert(/sort:\s*sortSelect\?\.value\s*\|\|\s*'DEFAULT'/.test(appCodeFull), 'app.js: défaut tri explorateur = DEFAULT (cohérent avec <select>');
+
 console.log(`\n=== RÉSULTAT : ${pass} réussis, ${fail} échoués ===`);
 process.exit(fail > 0 ? 1 : 0);
 }
