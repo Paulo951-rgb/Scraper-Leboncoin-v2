@@ -180,17 +180,23 @@
         </div>
 
         <div class="ai-studio-grid">
-          <!-- COLONNE GAUCHE : import + bibliothèque de prompts -->
+          <!-- COLONNE GAUCHE : actions rapides + générateur de prompt IA -->
           <div class="ai-studio-side">
             <div class="card">
               <h3>📥 Envoyer le fichier .json à AI Studio</h3>
               <p class="text-muted mb-15" style="line-height:1.5;">Pour analyser un fichier d'annonces, <strong>glissez-déposez-le directement dans la zone de chat de Google AI Studio</strong> (la fenêtre du navigateur à droite), comme dans un Chrome normal. Le fichier est envoyé à AI Studio, pas stocké par ce module.</p>
-              <p class="text-muted font-small">💡 Le module ne sert qu'à préparer le <strong>prompt</strong> ci-dessous — copiez-le puis collez-le dans le chat AI Studio avec votre fichier.</p>
-              <p class="text-muted font-small">🔑 <strong>Première connexion :</strong> si AI Studio vous demande de vous connecter à Google et affiche « ce navigateur ne semble pas sécurisé », cliquez sur le bouton <strong>🔑 Se connecter</strong> dans la barre du navigateur (à droite). Une vraie fenêtre s'ouvre pour la connexion — la session est ensuite partagée avec l'onglet.</p>
+              <p class="text-muted font-small">🔑 <strong>Première connexion :</strong> si AI Studio affiche « ce navigateur ne semble pas sécurisé », cliquez sur <strong>🔑 Se connecter</strong> dans la barre du navigateur.</p>
             </div>
 
             <div class="card">
-              <h3>📚 Bibliothèque de prompts</h3>
+              <h3>📂 Ouvrir les jobs</h3>
+              <p class="text-muted mb-15">Ouvre le dossier où sont enregistrés les résultats de vos scrapings Leboncoin.</p>
+              <button id="aistudioOpenJobsBtn" class="btn btn-primary">📂 Ouvrir le dossier des jobs</button>
+            </div>
+
+            <div class="card">
+              <h3>🤖 Générateur de prompt (IA)</h3>
+              <p class="text-muted mb-15 font-small">Plus de prompts statiques pré-enregistrés. Décrivez votre objectif, Gemini génère un prompt d'analyse complet adapté à votre domaine et vos variables.</p>
 
               <div class="form-group">
                 <label for="aistudioDomainSelect">Domaine / type de données :</label>
@@ -198,8 +204,13 @@
               </div>
 
               <div class="form-group">
-                <label for="aistudioPromptSelect">Prompt prédéfini :</label>
-                <select id="aistudioPromptSelect" class="filter-select"></select>
+                <label for="aistudioObjective">Objectif de l'analyse</label>
+                <textarea id="aistudioObjective" class="filter-input" rows="3" placeholder="Ex : Trouve les meilleures affaires et opportunités d'achat-revente, classe par score et marge nette, détecte les arnaques."></textarea>
+              </div>
+
+              <div class="form-group">
+                <label for="aistudioCustomHints">Consignes supplémentaires (optionnel)</label>
+                <textarea id="aistudioCustomHints" class="filter-input" rows="2" placeholder="Ex : ignore les annonces &gt; 500€, privilégie les PC fixes avec GPU dédié…"></textarea>
               </div>
 
               <div class="form-row">
@@ -255,10 +266,21 @@
                 </div>
               </div>
 
+              <div class="form-group">
+                <label for="aistudioGeminiModel">Modèle Gemini</label>
+                <select id="aistudioGeminiModel" class="filter-select">
+                  <option value="gemini-2.0-flash">gemini-2.0-flash (rapide)</option>
+                  <option value="gemini-2.0-flash-lite">gemini-2.0-flash-lite (léger)</option>
+                  <option value="gemini-1.5-flash">gemini-1.5-flash</option>
+                  <option value="gemini-1.5-pro">gemini-1.5-pro (plus costaud)</option>
+                </select>
+              </div>
+
               <div class="actions">
-                <button id="aistudioGenerateBtn" class="btn btn-primary">✨ Générer le prompt</button>
+                <button id="aistudioGenerateBtn" class="btn btn-primary">✨ Générer par IA</button>
                 <button id="aistudioCopyBtn" class="btn btn-secondary">📋 Copier le prompt</button>
               </div>
+              <p id="aistudioGenStatus" class="text-muted font-small" style="margin-top:8px;"></p>
             </div>
           </div>
 
