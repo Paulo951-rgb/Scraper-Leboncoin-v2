@@ -658,12 +658,34 @@ window.api.onStatusChange(({ state, message }) => {
     stopBtn.disabled = true;
     progressBar.style.width = '100%';
     etaText.textContent = '';
+
+    // Un scraping vient de se terminer : on rafraîchit l'onglet de données
+    // actuellement affiché pour qu'aucune donnée ancienne ne persiste après
+    // un nouveau scraping (cohérence Historique / Explorateur / Statistiques).
+    // On ne rafraîchit QUE l'onglet actif pour éviter un rechargement inutile
+    // des autres (ils se rafraîchiront au prochain clic sur leur onglet).
+    if (state === 'completed') {
+      refreshActiveDataTab();
+    }
   }
   // Transmet au widget flottant (si ouvert)
   if (typeof window.api.sendWidgetStatus === 'function') {
     window.api.sendWidgetStatus({ state, message });
   }
 });
+
+// Rafraîchit la vue de données de l'onglet actuellement actif. Sans effet si
+// l'onglet actif n'est pas un onglet de données (Scraper / Logs / Aide).
+function refreshActiveDataTab() {
+  try {
+    const activeId = document.querySelector('.tab-content.active')?.id;
+    if (activeId === 'tab-history') loadHistoryPage();
+    else if (activeId === 'tab-explorer') loadExplorerPage();
+    else if (activeId === 'tab-stats') loadStatsPage();
+  } catch (err) {
+    console.warn('[status] Rafraîchissement onglet actif échoué :', err.message);
+  }
+}
 
 // PAGE 3 : HISTORIQUE
 async function loadHistoryPage() {
