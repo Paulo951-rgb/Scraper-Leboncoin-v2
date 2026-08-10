@@ -118,6 +118,9 @@ class DuckDuckGoSearchProvider extends SearchProvider {
     body.set('q', query);
     body.set('kl', 'fr-fr');
 
+    // Le signal couvre en-têtes + lecture du corps : sans cela, une réponse
+    // DDG qui envoie les en-têtes puis bloque le corps pendait res.text()
+    // indéfiniment (le timer était libéré trop tôt).
     const to = _withTimeout(timeoutMs);
     let res;
     try {
@@ -138,25 +141,26 @@ class DuckDuckGoSearchProvider extends SearchProvider {
       const reason = err.name === 'AbortError' ? `timeout (${timeoutMs}ms)` : err.message;
       return { ok: false, results: [], message: `DuckDuckGo injoignable : ${reason}` };
     }
-    to.done();
 
     if (!res.ok) {
+      to.done();
       return { ok: false, results: [], message: `DuckDuckGo HTTP ${res.status}` };
     }
 
-    let html;
     try {
-      html = await res.text();
+      const html = await res.text();
+      const all = parseDdgLite(html);
+      if (all.length === 0) {
+        // HTML non reconnu (structure changée) ou 0 résultat.
+        return { ok: false, results: [], message: 'Aucun résultat parsé (structure DuckDuckGo modifiée ou 0 résultat).' };
+      }
+      return { ok: true, results: all.slice(0, limit) };
     } catch (err) {
-      return { ok: false, results: [], message: `Lecture réponse impossible : ${err.message}` };
+      const reason = err.name === 'AbortError' ? `timeout (${timeoutMs}ms)` : err.message;
+      return { ok: false, results: [], message: `Lecture réponse impossible : ${reason}` };
+    } finally {
+      to.done();
     }
-
-    const all = parseDdgLite(html);
-    if (all.length === 0) {
-      // HTML non reconnu (structure changée) ou 0 résultat.
-      return { ok: false, results: [], message: 'Aucun résultat parsé (structure DuckDuckGo modifiée ou 0 résultat).' };
-    }
-    return { ok: true, results: all.slice(0, limit) };
   }
 }
 

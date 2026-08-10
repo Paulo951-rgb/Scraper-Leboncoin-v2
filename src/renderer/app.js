@@ -544,6 +544,10 @@ stopBtn.addEventListener('click', () => {
 
 triggerMarketBtn.addEventListener('click', async () => {
   const jobId = sessionSelect.value;
+  if (!jobId) {
+    alert('Veuillez sélectionner un scraping dans le menu déroulant de l\'Explorateur avant de lancer l\'analyse de marché.');
+    return;
+  }
   triggerMarketBtn.disabled = true;
   progressBar.style.width = '0%';
   statusText.textContent = 'Analyse de marché IA (recherche Internet + estimation)...';
@@ -568,7 +572,14 @@ triggerMarketBtn.addEventListener('click', async () => {
     });
 
     await loadExplorerPage();
+    // Le handler market:analyze envoie un état 'processing' mais jamais
+    // 'completed' (action manuelle via invoke, pas le cycle job:start) :
+    // on réinitialise explicitement le statut pour éviter un message
+    // « Analyse de marché… » qui reste affiché indéfiniment.
+    progressBar.style.width = '100%';
+    statusText.textContent = 'Statut : Analyse de marché terminée.';
   } catch (err) {
+    statusText.textContent = 'Statut : Échec de l\'analyse de marché.';
     alert(`Erreur d'analyse : ${err.message}`);
   } finally {
     triggerMarketBtn.disabled = false;
