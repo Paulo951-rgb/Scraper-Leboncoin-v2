@@ -602,6 +602,7 @@ async function main() {
 
   // Preset de vitesse : ajuste batchSize et délais selon le choix utilisateur
   const SPEED_PRESETS = {
+    ultra:    { batchSize: 20, minDelayMs: 0,    maxDelayMs: 300,  mode: 'parallèle' },
     fast:     { batchSize: 10, minDelayMs: 500,  maxDelayMs: 1000, mode: 'parallèle' },
     balanced: { batchSize: 5,  minDelayMs: 1000, maxDelayMs: 2000, mode: 'parallèle' },
     safe:     { batchSize: 5,  minDelayMs: 1500, maxDelayMs: 3000, mode: 'séquentiel' },

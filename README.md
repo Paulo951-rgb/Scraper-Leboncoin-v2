@@ -41,7 +41,7 @@ Application de bureau **Electron** pour scraper, enrichir, analyser (via IA **10
 5. **Exporte** les résultats en JSON, CSV, TXT et Excel (`.xlsx`) avec mise en forme conditionnelle.
 6. Offre un **navigateur IA Studio intégré** pour générer des prompts d'analyse personnalisés via Ollama et les utiliser dans Google AI Studio directement dans le logiciel.
 
-L'IA est **100% locale** (Ollama) pour l'analyse par annonce et la génération de prompts : aucune clé API payante, aucun envoi de données vers le cloud, fonctionnement hors-ligne. Seule l'Analyse Globale optionnelle utilise Google Gemini (gratuit).
+L'IA est **100% locale** (Ollama) pour l'analyse par annonce et la génération de prompts : aucune clé API payante, aucun envoi de données vers le cloud, fonctionnement hors-ligne.
 
 L'application est pensée pour un usage **semi-automatisé** : l'utilisateur peut devoir résoudre un captcha manuellement si Leboncoin détecte une activité robotique, après quoi le scraping reprend automatiquement.
 
@@ -65,18 +65,13 @@ L'application est pensée pour un usage **semi-automatisé** : l'utilisateur peu
 - 🧠 **Cache IA** — les annonces déjà analysées (même `list_id`) ne sont pas re-demandées (plafond 5000 entrées avec éviction des plus anciennes).
 - 🩺 **Health-check Ollama** — vérifie que le serveur est démarré et le modèle chargé avant l'analyse.
 
-### Analyse Globale (Gemini, optionnel)
-- 🧠 **Analyse Globale IA (Gemini 2.0 Flash)** — analyse « grand contexte » de tout un job en une fois, classement des meilleures opportunités.
-- ⚠️ **Gestion d'erreur 429** — message clair avec délai suggéré, retry auto (3×), proposition de réessayer ou d'utiliser l'analyse locale.
-
 ### Export & visualisation
 - 📊 **Export Excel (.xlsx)** stylisé (couleurs, filtres auto, liens, mise en forme conditionnelle).
 - 📄 Export **JSON, CSV et TXT** lisible.
 - 🔍 **Explorateur d'annonces** — filtres (mot-clé, prix, tag de deal), tri, vue tableau/grille, fiche détaillée, comparateur.
 - 📊 **Statistiques** — 8 cartes colorées (Total, Prix Moyen/Médian/Min/Max, Main Propre, Pro/Particulier) + 3 graphiques (Distribution des prix, Vendeurs, Top 10 Villes).
-- 🗺️ **Carte interactive** (Leaflet) — répartition géographique avec filtre « remise main propre », géocodage via API Gouv France (cache + timeout 10s).
+- 🗺️ **Carte interactive** (Leaflet) — répartition géographique avec filtre « remise main propre », géocodage via API Gouv France (cache + timeout 10s). Déduplication des annonces par id.
 - 🆚 **Comparateur** d'annonces côte à côte.
-- ⏰ **Planificateur** de scrapings récurrents avec notifications natives.
 - 📁 **Historique** complet des jobs avec suppression.
 - 🖥️ **Widget flottant** always-on-top (progression temps réel).
 - 🎨 **13 thèmes visuels**.
@@ -147,7 +142,7 @@ Le main suit une **architecture en couches** : `core/` (orchestration), `service
 leboncoin-scraper-app/
 ├── package.json                          # Métadonnées, dépendances, script "start"
 ├── test/
-│   └── regression.test.js                # Suite de non-régression (231 assertions)
+│   └── regression.test.js                # Suite de non-régression (222 assertions)
 └── src/
     ├── main/                             # Processus principal Electron
     │   ├── main.js                       # Cycle de vie + fenêtres + session AI Studio
@@ -171,7 +166,6 @@ leboncoin-scraper-app/
     │   │   │   └── userAgents.js         # 10 User-Agents réalistes en rotation
     │   │   ├── ai/
     │   │   │   ├── marketAnalyzer.js     # Analyse IA par annonce (Ollama) + scoring
-    │   │   │   ├── globalAnalyzer.js     # Analyse globale du dataset (Gemini, retry 429)
     │   │   │   ├── imageAnalyzer.js      # Analyse d'images IA Vision (Ollama LLaVA)
     │   │   │   ├── promptGenerator.js    # Génération de prompts via Ollama local
     │   │   │   ├── aiCache.js            # Cache IA (plafond 5000 + éviction)
@@ -179,8 +173,7 @@ leboncoin-scraper-app/
     │   │   ├── analysis/
     │   │   │   └── dealFinder.js         # Détection statistique affaires/risques
     │   │   ├── jobs/
-    │   │   │   ├── jobHistory.js         # Listing/lecture/suppression jobs (checksum)
-    │   │   │   └── jobScheduler.js       # Planification scrapings récurrents
+    │   │   │   └── jobHistory.js         # Listing/lecture/suppression jobs (checksum)
     │   │   └── maintenance/
     │   │       └── storageCleaner.js     # Nettoyage .har + jobs (âge = timestamp dossier)
     │   ├── infrastructure/
@@ -212,7 +205,6 @@ leboncoin-scraper-app/
 | Scraping           | **Playwright 1.41**  | Pilotage Chromium, capture réseau HAR                        |
 | IA locale          | **Ollama**           | Analyse par annonce + génération de prompts (100% local)     |
 | IA vision          | **Ollama LLaVA**     | Analyse d'images (optionnel)                                 |
-| IA globale         | **Google Gemini 2.0**| Analyse globale du dataset (optionnel, gratuit)              |
 | Export Excel       | **ExcelJS 4.4**      | Génération .xlsx stylisé                                     |
 | Carte              | **Leaflet.js**       | Carte interactive des annonces                               |
 | Graphiques         | **Chart.js**         | Distribution prix, vendeurs, top villes                       |
@@ -309,8 +301,6 @@ L'analyse d'images (si activée) affine ensuite le score via `applyImageAnalysis
 |---|---|
 | 🚀 **Scraper** | Lancement d'un scraping (URL, pages, limite, proxy, config IA Ollama, options), presets 1-clic, progression temps réel. **Analyse auto du marché décochée par défaut** (à cocher manuellement). |
 | 🌐 **AI Studio** | Navigateur intégré (Google AI Studio) + génération de prompts par Ollama local + test Ollama + bouton dossier jobs + drag & drop .json. |
-| 🧠 **Analyse Globale IA** | Sélection d'un job, clé API Gemini, presets/instructions personnalisées, KPIs + classement des meilleures opportunités. Gestion d'erreur 429. |
-| ⏰ **Planificateur** | Scrapings récurrents (URL + intervalle minutes) + liste des tâches actives. |
 | 📜 **Logs** | Console de logs en direct (info/warn/error/debug). |
 | 📁 **Historique Jobs** | Liste des scrapings passés + accès fichiers + suppression. |
 | 🔍 **Explorateur Annonces** | Filtres, tri, vue tableau/grille, fiche détaillée, comparateur, analyse marché manuelle. |
@@ -335,7 +325,7 @@ Paramètres persistés dans `config/user-settings.json`. Bouton **Réinitialiser
 
 Le renderer n'a **aucun accès direct à Node.js** (`contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`). Toute communication passe par `preload.js` → `window.api` → `ipcMain` dans `ipcHandlers.js`.
 
-**27 canaux IPC** : `job:start/stop`, `market:analyze`, `globalai:analyze`, `prompt:generate`, `ollama:health/models`, `scheduler:add/remove/list`, `job:getHistory/delete`, `file:openFolder/openFile`, `shell:openExternal`, `config:get/save`, `secret:get/set/has/remove`, `network:check`, `aistudio:openLogin`, `widget:toggle/progress/status/close`, `log/progress/status`, `scheduler:trigger`.
+**21 canaux IPC** : `job:start/stop`, `market:analyze`, `prompt:generate`, `ollama:health/models`, `job:getHistory/delete`, `file:openFolder/openFile`, `shell:openExternal`, `config:get/save`, `secret:get/set/has/remove`, `network:check`, `aistudio:openLogin`, `widget:toggle/progress/status/close`, `log/progress/status`.
 
 Les listeners utilisent `removeAllListeners` avant re-souscription pour éviter les fuites. Le getter `getMainWindow()` renvoie null si la fenêtre est détruite (pas de capture par closure).
 
@@ -399,9 +389,8 @@ npm start
 |---|---|---|
 | Analyse par annonce + génération de prompts | **Ollama (local, gratuit)** | Onglet Scraper → URL + nom du modèle (ex: `llama3`). Health-check intégré. |
 | Analyse d'images (optionnel) | **Ollama LLaVA** | Case à cocher « Analyser les images » + modèle vision. |
-| Analyse Globale (optionnel) | **Google Gemini** | Onglet Analyse Globale → clé API Google AI Studio gratuite (aistudio.google.com). |
 
-**OpenAI a été retiré** : l'IA se fait 100% en local via Ollama (aucune clé payante, hors-ligne). La clé Gemini (seule clé API restante) est stockée chiffrée via `safeStorage`.
+**OpenAI a été retiré** : l'IA se fait 100% en local via Ollama (aucune clé payante, hors-ligne). Aucune clé API n'est requise.
 
 ---
 
@@ -422,15 +411,15 @@ Pour chaque job (`output/jobs/job-<timestamp>/`) :
 
 ## 🧪 Tests de non-régression
 
-`test/regression.test.js` — script Node.js autonome (sans framework externe), **231 assertions** couvrant :
+`test/regression.test.js` — script Node.js autonome (sans framework externe), **222 assertions** couvrant :
 
 1. **utils/diagnostics.js** — helpers de log.
-2. **Modules principaux** — MarketAnalyzer, GlobalAnalyzer, JobScheduler, DealFinder, StorageCleaner, SecretStore, settings.
+2. **Modules principaux** — MarketAnalyzer, DealFinder, StorageCleaner, SecretStore, settings.
 3. **Pipeline via fork** — crée un faux HAR, lance le vrai pipeline, vérifie l'extraction.
 4. **Corrections & renderer** — fixes présents (mapInstance, escapeHtml, stats, gestion 429).
-5. **Architecture** — structure en couches, contrat IPC (27 canaux), widget, sandbox.
+5. **Architecture** — structure en couches, contrat IPC (21 canaux), widget, sandbox.
 6. **Features** — intégrité SHA-256, rate limiting, logs rotatifs, health-check Ollama, secretStore, suppression auto jobs, mode hors-ligne, module AI Studio.
-7. **Audit fiabilité** — crash renderer (getAiApiKey), scheduler lastRun, nettoyage jobs (timestamp), timeout géocodage, plafond cache IA.
+7. **Audit fiabilité** — crash renderer (getAiApiKey), nettoyage jobs (timestamp), timeout géocodage, plafond cache IA.
 
 ### Exécuter
 
@@ -438,7 +427,7 @@ Pour chaque job (`output/jobs/job-<timestamp>/`) :
 node test/regression.test.js
 ```
 
-Résultat attendu : `=== RÉSULTAT : 231 réussis, 0 échoués ===`
+Résultat attendu : `=== RÉSULTAT : 222 réussis, 0 échoués ===`
 
 > Le test installe des **stubs** pour `electron`, `playwright` et `exceljs` afin de `require()` les modules en Node pur, sans lancer Electron/Chromium.
 

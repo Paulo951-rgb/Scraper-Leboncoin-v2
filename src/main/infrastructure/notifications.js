@@ -2,8 +2,8 @@
 
 /**
  * Notifications système (Electron Notification).
- * Responsabilité isolée du JobSchedulerManager pour séparer
- * l'ordonnancement (planning) de la notification (présentation OS).
+ * La notification est déclenchée par le handler job:start lorsqu'une
+ * "Très bonne affaire" est détectée à la fin d'un scraping.
  */
 const { Notification } = require('electron');
 

@@ -39,8 +39,6 @@
         <div class="nav-tabs">
           <button class="tab-btn active" data-tab="tab-scraper">🚀 Scraper</button>
           <button class="tab-btn" data-tab="tab-ai-studio">🤖 Navigateur IA Studio</button>
-          <button class="tab-btn" data-tab="tab-global-ai">🧠 Analyse Globale IA</button>
-          <button class="tab-btn" data-tab="tab-scheduler">⏰ Planificateur</button>
           <button class="tab-btn" data-tab="tab-logs">📜 Logs</button>
           <button class="tab-btn" data-tab="tab-history">📁 Historique Jobs</button>
           <button class="tab-btn" data-tab="tab-explorer">🔍 Explorateur Annonces</button>
@@ -98,7 +96,7 @@
               <div class="form-group">
                 <label class="checkbox-label">
                   <input type="checkbox" id="autoAiMarket">
-                  <strong>☑️ Analyser automatiquement le marché avec l'IA après le scraping</strong>
+                  <strong>🧠 Analyser automatiquement le marché avec l'IA après le scraping</strong>
                 </label>
               </div>
 
@@ -314,127 +312,6 @@
         </div>
       </section>
 
-
-      <!-- PAGE ANALYSE GLOBALE IA -->
-      <section id="tab-global-ai" class="tab-content">
-        <div class="card">
-          <h2>🧠 Moteur d'Analyse Globale Gemini IA (1M+ Tokens)</h2>
-          <p class="text-muted mb-15">Analysez l'ensemble des annonces d'un dataset en une seule fois pour établir un classement intelligent Top 20.</p>
-
-          <div class="form-row">
-            <div class="form-group flex-2">
-              <label for="globalJobSelect">Session à analyser :</label>
-              <select id="globalJobSelect" class="filter-select">
-                <option value="ALL">🌐 Tous les scrapings combinés (Dataset Global)</option>
-              </select>
-            </div>
-
-            <div class="form-group flex-2">
-              <label for="globalPresetSelect">Mode d'Analyse Globale :</label>
-              <select id="globalPresetSelect" class="filter-select">
-                <option value="TOP_DEALS">🏆 Top 20 Meilleures Affaires & Pépites</option>
-                <option value="RESELL_FLIP">💸 Spécial Achat-Revente / Flip (Marge Nette)</option>
-                <option value="PERF_PRICE">⚡ Rapport Performance / Prix Maximal</option>
-                <option value="CUSTOM">✏️ Consigne Personnalisée (Custom)</option>
-              </select>
-            </div>
-
-            <div class="form-group flex-2">
-              <label for="geminiApiKey">Clé API Google AI Studio (100% Gratuite) :</label>
-              <input type="password" id="geminiApiKey" placeholder="AIzaSy...">
-            </div>
-          </div>
-
-          <div class="form-group hidden" id="customInstructionGroup">
-            <label for="customInstructionText">Consigne Personnalisée :</label>
-            <textarea id="customInstructionText" rows="3" class="filter-input" placeholder="Ex: Trouve les 5 meilleures cartes graphiques à moins de 80€..."></textarea>
-          </div>
-
-          <div class="actions" style="margin-top:15px;">
-            <button id="startGlobalAiBtn" class="btn btn-primary">🚀 Lancer l'Analyse Globale Gemini</button>
-            <small class="text-muted" style="align-self:center;">Obtenez une clé API gratuite en 30s sur <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:var(--primary-color);">aistudio.google.com</a></small>
-          </div>
-        </div>
-
-        <div id="globalReportContainer" class="hidden">
-          <div class="stats-grid">
-            <div class="stat-card">
-              <span class="stat-title">Annonces Comparées</span>
-              <span id="kpiTotalAnalyzed" class="stat-value">-</span>
-            </div>
-            <div class="stat-card">
-              <span class="stat-title">Meilleure Pépite</span>
-              <span id="kpiBestDeal" class="stat-value text-green font-small">-</span>
-            </div>
-            <div class="stat-card">
-              <span class="stat-title">Profit Revente Potentiel</span>
-              <span id="kpiTotalProfit" class="stat-value text-green">-</span>
-            </div>
-          </div>
-
-          <div class="card">
-            <h3>📋 Vue d'Ensemble & Stratégie</h3>
-            <p id="kpiOverviewText" class="text-muted" style="font-size:0.9rem; line-height:1.5;"></p>
-          </div>
-
-          <div class="card">
-            <h3>🏆 Classement des Meilleures Opportunités</h3>
-            <div id="rankingCardsBox" class="ranking-cards-box"></div>
-          </div>
-        </div>
-      </section>
-
-      <!-- PAGE PLANIFICATEUR -->
-      <section id="tab-scheduler" class="tab-content">
-        <div class="card">
-          <h2>⏰ Planificateur de Scraping Automatique</h2>
-          <p class="text-muted mb-15">Programmez des scrapings réguliers en arrière-plan. Une notification Windows surgira dès qu'une Bonne Affaire est trouvée !</p>
-
-          <div class="form-row">
-            <div class="form-group flex-3">
-              <label for="schedUrl">URL à surveiller :</label>
-              <input type="url" id="schedUrl" placeholder="https://www.leboncoin.fr/recherche?text=processeur">
-            </div>
-
-            <div class="form-group flex-1">
-              <label for="schedInterval">Intervalle d'exécution :</label>
-              <select id="schedInterval">
-                <option value="15">Toutes les 15 minutes</option>
-                <option value="30" selected>Toutes les 30 minutes</option>
-                <option value="60">Toutes les 1 heure</option>
-                <option value="120">Toutes les 2 heures</option>
-                <option value="360">Toutes les 6 heures</option>
-              </select>
-            </div>
-
-            <div class="form-group flex-1">
-              <label>&nbsp;</label>
-              <button id="addSchedBtn" class="btn btn-primary">➕ Programmer Tâche</button>
-            </div>
-          </div>
-        </div>
-
-        <div class="card">
-          <h2>Tâches Planifiées Actives</h2>
-          <div class="history-table-container">
-            <table class="history-table">
-              <thead>
-                <tr>
-                  <th>URL de Recherche</th>
-                  <th>Intervalle</th>
-                  <th>Statut</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody id="schedTableBody">
-                <tr>
-                  <td colspan="4" class="text-center">Aucune tâche planifiée activée</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </section>
 
       <!-- PAGE LOGS -->
       <section id="tab-logs" class="tab-content">
@@ -694,6 +571,9 @@
           <option value="balanced">⚖️ Équilibré — 5 parallèle, délais modérés</option>
           <option value="safe">🛡️ Prudent — séquentiel, délais humains (anti-blocage max)</option>
         </select>
+        <small class="form-hint" id="speedHint" style="display:block; margin-top:4px; color:var(--text-muted); font-size:0.72rem;">
+          ⚠️ « Rapide » n'extrait pas les descriptions détaillées (le titre + prix suffisent). Pour l'analyse de marché IA, préférez « Équilibré » ou « Prudent ».
+        </small>
       </div>
 
       <div class="form-group text-left" style="margin-top:12px;">
