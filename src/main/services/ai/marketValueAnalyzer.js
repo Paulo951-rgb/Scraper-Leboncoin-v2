@@ -136,11 +136,21 @@ function parseMarket(rawText) {
  * Pas de score/100 : juste la différence en € + un label simple.
  */
 function computeVerdict(adPrice, realValue) {
-  if (typeof adPrice !== 'number' || typeof realValue !== 'number') {
-    return { verdict: 'Non déterminable', deltaEur: null };
+  // Coerce en nombre : le prix d'annonce peut venir en string depuis le scraping
+  // et realValue a déjà été normalisé (mais on garde la garde par sécurité).
+  // ATTENTION : Number(null) === 0 (pas NaN), donc null doit être traité
+  // explicitement comme "non déterminable" — sinon un realValue null devenait 0€
+  // et le verdict se calculait faussement (perte énorme = "Très cher").
+  if (adPrice == null || realValue == null) {
+    return { verdict: 'Non déterminable', verdictLabel: 'Non déterminable', deltaEur: null, deltaPct: null };
   }
-  const delta = Math.round((realValue - adPrice) * 100) / 100;
-  const deltaPct = adPrice > 0 ? Math.round((delta / adPrice) * 100) : null;
+  const price = typeof adPrice === 'number' ? adPrice : Number(adPrice);
+  const rv = typeof realValue === 'number' ? realValue : Number(realValue);
+  if (!Number.isFinite(price) || !Number.isFinite(rv)) {
+    return { verdict: 'Non déterminable', verdictLabel: 'Non déterminable', deltaEur: null, deltaPct: null };
+  }
+  const delta = Math.round((rv - price) * 100) / 100;
+  const deltaPct = price > 0 ? Math.round((delta / price) * 100) : null;
   let label;
   if (delta >= 0) {
     // bénéfice potentiel
@@ -234,6 +244,28 @@ class MarketValueAnalyzer {
       return fallbackMarket(ad, 'Réponse IA non interprétable (JSON invalide).', searchRes.results);
     }
 
+    // Normalise les champs numériques : un LLM peut renvoyer realValue sous forme
+    // de chaîne ("300" voire "300 €"). On coerce en number, sinon null, pour que
+    // computeVerdict et le renderer manipulent toujours des nombres propres.
+    const toNum = (v) => {
+      if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+      if (typeof v === 'string') {
+        const n = Number(v.replace(/[^\d.,-]/g, '').replace(',', '.'));
+        return Number.isFinite(n) ? n : null;
+      }
+      return null;
+    };
+    parsed.realValue = toNum(parsed.realValue);
+    parsed.valueRangeLow = toNum(parsed.valueRangeLow);
+    parsed.valueRangeHigh = toNum(parsed.valueRangeHigh);
+    // Cohérence des bornes : low <= high (sinon on inverse pour ne pas afficher
+    // une fourchette absurde si l'IA les a interverties).
+    if (parsed.valueRangeLow != null && parsed.valueRangeHigh != null && parsed.valueRangeLow > parsed.valueRangeHigh) {
+      const tmp = parsed.valueRangeLow;
+      parsed.valueRangeLow = parsed.valueRangeHigh;
+      parsed.valueRangeHigh = tmp;
+    }
+
     // 3. Conserver les sources réellement trouvées (pour l'utilisateur)
     parsed.sources = searchRes.results.slice(0, MAX_SNIPPETS);
     parsed.query = query;
@@ -293,4 +325,4 @@ class MarketValueAnalyzer {
   }
 }
 
-module.exports = { MarketValueAnalyzer };
+module.exports = { MarketValueAnalyzer, _computeVerdict: computeVerdict };

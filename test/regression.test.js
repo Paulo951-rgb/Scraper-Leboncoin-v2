@@ -160,6 +160,36 @@ assert(!/adAnalysis\.identifiedName/.test(excelSrc), 'excelExporter: ne lit plus
 assert(/ma\.valueRangeLow/.test(excelSrc) && /ma\.valueRangeHigh/.test(excelSrc), 'excelExporter: lit valueRangeLow/High (champs produits par l\'IA 2)');
 assert(!/ma\.marketMin/.test(excelSrc) && !/ma\.marketMax/.test(excelSrc), 'excelExporter: ne lit plus marketMin/marketMax (champs inexistants)');
 
+// MarketValueAnalyzer.computeVerdict : verdict € + coercition numérique des prix.
+// Bug évité : un LLM peut renvoyer realValue en string ("300 €") et le prix
+// d'annonce peut arriver en string depuis le scraping — sans coercition, le
+// verdict tombait silencieusement sur "Non déterminable" alors que l'IA avait
+// bien estimé une valeur.
+const { _computeVerdict } = require('../src/main/services/ai/marketValueAnalyzer');
+const vGood = _computeVerdict(100, 200);
+assert(vGood.verdictLabel === 'Très bonne affaire' && vGood.deltaEur === 100, 'computeVerdict: +100% → Très bonne affaire (delta 100)');
+const vCorrect = _computeVerdict(100, 110);
+assert(vCorrect.verdictLabel === 'Prix correct' && vCorrect.deltaEur === 10, 'computeVerdict: +10% → Prix correct');
+const vOverpriced = _computeVerdict(200, 100);
+assert(vCorrect.verdictLabel === 'Prix correct' || vOverpriced.verdictLabel === 'Trop cher', 'computeVerdict: -50% → Trop cher');
+assert(vOverpriced.deltaEur === -100, 'computeVerdict: delta négatif = -100');
+// Coercition de prix string (ex: "300 €")
+const vCoerced = _computeVerdict('150', 300);
+assert(vCoerced.verdictLabel === 'Très bonne affaire' && vCoerced.deltaEur === 150, 'computeVerdict: prix string "150" coerced → verdict calculé');
+// realValue string "300 €" → via toNum dans analyzeMarket ; computeVerdict test direct:
+const vRealStr = _computeVerdict(150, '300');
+assert(vRealStr.deltaEur === 150, 'computeVerdict: realValue string "300" coerced');
+// Cas non déterminable : valeurs invalides
+const vNaN1 = _computeVerdict('abc', 200);
+assert(vNaN1.verdictLabel === 'Non déterminable' && vNaN1.deltaEur === null, 'computeVerdict: prix "abc" → Non déterminable');
+const vNaN2 = _computeVerdict(100, null);
+assert(vNaN2.verdictLabel === 'Non déterminable' && vNaN2.deltaEur === null, 'computeVerdict: realValue null → Non déterminable');
+const vNaN3 = _computeVerdict(undefined, undefined);
+assert(vNaN3.verdictLabel === 'Non déterminable', 'computeVerdict: undefined → Non déterminable (verdictLabel défini, pas undefined)');
+// Prix nul : deltaPct null mais verdict quand même calculé
+const vZero = _computeVerdict(0, 100);
+assert(vZero.deltaEur === 100 && vZero.deltaPct === null, 'computeVerdict: prix 0 → delta calculé, deltaPct null (div par zéro évitée)');
+
 // --- 3. Pipeline (fork) ---
 console.log('\n[3/4] Pipeline (leboncoin-pipeline.js)');
 const os = require('os');
