@@ -510,6 +510,12 @@ let priceDistChartInstance = null;
 let sellerChartInstance = null;
 let topCitiesChartInstance = null;
 let mapInstance = null;
+// Compteur de génération pour éviter une race condition sur la carte : comme
+// renderMap est asynchrone (géocodage réseau), un changement rapide de session
+// lance plusieurs runs concurrents. Chaque run capture sa génération et
+// abandonne si une renderMap plus récente a démarré — sinon les marqueurs
+// d'une ancienne session s'ajouteraient APRÈS le nettoyage de la nouvelle.
+let mapRenderGen = 0;
 let pendingDeleteJobId = null;
 let isConfirming = false;
 
@@ -1174,6 +1180,10 @@ async function geocodeCityGov(cityName, zipcode) {
 async function renderMap(ads) {
   if (typeof L === 'undefined') return;
 
+  // Invalide tout run précédent : on est désormais la plus récente renderMap.
+  const gen = ++mapRenderGen;
+  const isStale = () => gen !== mapRenderGen;
+
   try {
     if (!mapInstance) {
       mapInstance = L.map('leafletMap').setView([46.603354, 1.888334], 5);
@@ -1220,6 +1230,7 @@ async function renderMap(ads) {
     const queue = [...targetAds];
     const placeMarker = (a, coords) => {
       if (!coords) return;
+      if (isStale()) return; // une renderMap plus récente a démarré : on n'ajoute pas
       const jitterCoords = [
         coords[0] + (Math.random() - 0.5) * 0.012,
         coords[1] + (Math.random() - 0.5) * 0.012
@@ -1243,6 +1254,7 @@ async function renderMap(ads) {
 
     const worker = async () => {
       while (queue.length > 0) {
+        if (isStale()) return; // abandon si une renderMap plus récente a démarré
         const a = queue.shift();
         if (!a) break;
         try {
