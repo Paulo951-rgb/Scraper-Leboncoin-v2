@@ -199,28 +199,13 @@ function renderPrompt(template, vars) {
   });
 }
 
-function formatBytes(n) {
-  if (!n || n < 0) return '0 o';
-  if (n < 1024) return n + ' o';
-  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' Ko';
-  if (n < 1024 * 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + ' Mo';
-  return (n / (1024 * 1024 * 1024)).toFixed(2) + ' Go';
-}
-
-const state = {
-  import: { fileName: null, fileSize: 0, adCount: 0, ok: false, preview: null, error: null },
-};
-
 const $ = (id) => document.getElementById(id);
 
 const AiStudioModule = {
   init() {
     const els = [
-      'aistudioDropzone', 'aistudioPickFileBtn', 'aistudioFileInput',
-      'aistudioImportInfo', 'iiFileName', 'iiCount', 'iiSize', 'iiState', 'iiPreview',
-      'aistudioClearImportBtn',
       'aistudioDomainSelect', 'aistudioPromptSelect',
-      'aistudioGenerateBtn', 'aistudioCopyBtn', 'aistudioCopyForAistudioBtn',
+      'aistudioGenerateBtn', 'aistudioCopyBtn',
       'aistudioPromptOutput',
       'aistudioWebview', 'aistudioWebviewLoading',
       'aistudioBackBtn', 'aistudioFwdBtn', 'aistudioReloadBtn', 'aistudioHomeBtn',
@@ -235,7 +220,6 @@ const AiStudioModule = {
     this.populateDomainSelect();
     this.populatePromptSelect();
     this.applyDomainDefaults(DOMAINS[0].id);
-    this.bindImport(e);
     this.bindPrompts(e);
     this.bindBrowser(e);
   },
@@ -277,115 +261,10 @@ const AiStudioModule = {
     return vars;
   },
 
-  bindImport(e) {
-    const dz = e.aistudioDropzone;
-    const input = e.aistudioFileInput;
-
-    dz.addEventListener('click', (ev) => {
-      if (ev.target === e.aistudioPickFileBtn) return;
-      input.click();
-    });
-    e.aistudioPickFileBtn.addEventListener('click', (ev) => { ev.stopPropagation(); input.click(); });
-
-    input.addEventListener('change', () => {
-      if (input.files && input.files[0]) this.handleFile(input.files[0]);
-    });
-
-    ['dragenter', 'dragover'].forEach((evt) =>
-      dz.addEventListener(evt, (ev) => { ev.preventDefault(); ev.stopPropagation(); dz.classList.add('dragover'); })
-    );
-    ['dragleave', 'drop'].forEach((evt) =>
-      dz.addEventListener(evt, (ev) => { ev.preventDefault(); ev.stopPropagation(); dz.classList.remove('dragover'); })
-    );
-    dz.addEventListener('drop', (ev) => {
-      const f = ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0];
-      if (f) this.handleFile(f);
-    });
-
-    e.aistudioClearImportBtn.addEventListener('click', () => this.clearImport());
-  },
-
-  async handleFile(file) {
-    const e = this.el;
-    if (!file) return;
-    const name = file.name || 'fichier';
-    if (!/\.json$/i.test(name) && file.type !== 'application/json') {
-      this.showImport(file, 0, '❌ Type de fichier invalide (attendu .json)', null, false);
-      return;
-    }
-
-    this.showImport(file, 0, '⏳ Lecture en cours…', null, false);
-
-    try {
-      const text = await file.text();
-      let data;
-      try { data = JSON.parse(text); }
-      catch (parseErr) {
-        this.showImport(file, 0, '❌ JSON invalide : ' + parseErr.message, null, false);
-        return;
-      }
-
-      const ads = this.extractAds(data);
-      const preview = this.buildPreview(ads, data);
-      if (ads.length === 0) {
-        this.showImport(file, 0, '⚠️ Aucune annonce détectée dans le fichier.', preview, false);
-      } else {
-        this.showImport(file, ads.length, '✅ Import réussi', preview, true);
-      }
-    } catch (err) {
-      this.showImport(file, 0, '❌ Erreur de lecture : ' + (err && err.message ? err.message : err), null, false);
-    }
-  },
-
-  // Accepte tableau d'annonces, ou objet contenant un tableau (ads/results/annonces/data/items).
-  extractAds(data) {
-    if (Array.isArray(data)) return data;
-    if (data && typeof data === 'object') {
-      for (const key of ['ads', 'results', 'annonces', 'data', 'items', 'list']) {
-        if (Array.isArray(data[key])) return data[key];
-      }
-    }
-    return [];
-  },
-
-  buildPreview(ads, rawData) {
-    if (ads.length === 0) {
-      const head = JSON.stringify(rawData, null, 2).slice(0, 1500);
-      return head + (head.length >= 1500 ? '\n…' : '');
-    }
-    const sample = ads.slice(0, 3).map((a, i) => `--- Annonce ${i + 1} ---\n${JSON.stringify(a, null, 2)}`).join('\n\n');
-    return sample + (ads.length > 3 ? `\n\n… +${ads.length - 3} autre(s) annonce(s)` : '');
-  },
-
-  showImport(file, count, stateText, preview, ok) {
-    const e = this.el;
-    e.aistudioImportInfo.classList.remove('hidden');
-    e.iiFileName.textContent = file.name || '—';
-    e.iiCount.textContent = count;
-    e.iiSize.textContent = formatBytes(file.size || 0);
-    e.iiState.textContent = stateText;
-    e.iiState.className = 'ii-value ' + (ok ? 'text-green' : 'text-muted');
-    if (preview !== null) e.iiPreview.textContent = preview;
-    this.state.import = { fileName: file.name, fileSize: file.size, adCount: count, ok, preview };
-  },
-
-  clearImport() {
-    const e = this.el;
-    e.aistudioImportInfo.classList.add('hidden');
-    e.iiFileName.textContent = '—';
-    e.iiCount.textContent = '—';
-    e.iiSize.textContent = '—';
-    e.iiState.textContent = '—';
-    e.iiPreview.textContent = '';
-    e.aistudioFileInput.value = '';
-    this.state.import = { fileName: null, fileSize: 0, adCount: 0, ok: false, preview: null };
-  },
-
   bindPrompts(e) {
     e.aistudioDomainSelect.addEventListener('change', (ev) => this.applyDomainDefaults(ev.target.value));
     e.aistudioGenerateBtn.addEventListener('click', () => this.generatePrompt());
-    e.aistudioCopyBtn.addEventListener('click', () => this.copyPrompt(false));
-    e.aistudioCopyForAistudioBtn.addEventListener('click', () => this.copyPrompt(true));
+    e.aistudioCopyBtn.addEventListener('click', () => this.copyPrompt());
   },
 
   generatePrompt() {
@@ -397,19 +276,12 @@ const AiStudioModule = {
     return rendered;
   },
 
-  async copyPrompt(withFileInfo) {
+  async copyPrompt() {
     let text = this.el.aistudioPromptOutput.value;
     if (!text) text = this.generatePrompt();
-    if (withFileInfo) {
-      const imp = this.state.import;
-      const header = imp && imp.ok
-        ? `Fichier fourni : « ${imp.fileName} » (${imp.adCount} annonces, ${formatBytes(imp.fileSize)}).\n\n`
-        : '(Aucun fichier importé — joignez votre fichier .json dans AI Studio.)\n\n';
-      text = header + text;
-    }
     try {
       await navigator.clipboard.writeText(text);
-      const btn = withFileInfo ? this.el.aistudioCopyForAistudioBtn : this.el.aistudioCopyBtn;
+      const btn = this.el.aistudioCopyBtn;
       const orig = btn.textContent;
       btn.textContent = '✅ Copié !';
       setTimeout(() => { btn.textContent = orig; }, 1500);

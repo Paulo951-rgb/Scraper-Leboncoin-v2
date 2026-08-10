@@ -183,27 +183,9 @@
           <!-- COLONNE GAUCHE : import + bibliothèque de prompts -->
           <div class="ai-studio-side">
             <div class="card">
-              <h3>📥 Import du fichier d'annonces (.json)</h3>
-              <div id="aistudioDropzone" class="dropzone">
-                <p class="dz-icon">📄</p>
-                <p class="dz-text">Glissez-déposez un fichier <code>.json</code> ici</p>
-                <p class="text-muted font-small">— ou —</p>
-                <button id="aistudioPickFileBtn" class="btn btn-secondary btn-small">📂 Parcourir…</button>
-                <input type="file" id="aistudioFileInput" accept=".json,application/json" hidden>
-                <p class="text-muted font-small" id="aistudioDzHint">Accepte de très gros fichiers (plusieurs milliers d'annonces).</p>
-              </div>
-
-              <div id="aistudioImportInfo" class="import-info hidden">
-                <div class="import-info-row"><span class="ii-label">Fichier :</span> <span id="iiFileName" class="ii-value">—</span></div>
-                <div class="import-info-row"><span class="ii-label">Annonces détectées :</span> <span id="iiCount" class="ii-value">—</span></div>
-                <div class="import-info-row"><span class="ii-label">Taille :</span> <span id="iiSize" class="ii-value">—</span></div>
-                <div class="import-info-row"><span class="ii-label">État :</span> <span id="iiState" class="ii-value">—</span></div>
-                <details class="import-preview">
-                  <summary>Aperçu du contenu</summary>
-                  <pre id="iiPreview" class="preview-pre"></pre>
-                </details>
-                <button id="aistudioClearImportBtn" class="btn btn-secondary btn-small">🗑️ Vider</button>
-              </div>
+              <h3>📥 Envoyer le fichier .json à AI Studio</h3>
+              <p class="text-muted mb-15" style="line-height:1.5;">Pour analyser un fichier d'annonces, <strong>glissez-déposez-le directement dans la zone de chat de Google AI Studio</strong> (la fenêtre du navigateur à droite), comme dans un Chrome normal. Le fichier est envoyé à AI Studio, pas stocké par ce module.</p>
+              <p class="text-muted font-small">💡 Le module ne sert qu'à préparer le <strong>prompt</strong> ci-dessous — copiez-le puis collez-le dans le chat AI Studio avec votre fichier.</p>
             </div>
 
             <div class="card">
@@ -274,8 +256,7 @@
 
               <div class="actions">
                 <button id="aistudioGenerateBtn" class="btn btn-primary">✨ Générer le prompt</button>
-                <button id="aistudioCopyBtn" class="btn btn-secondary">📋 Copier</button>
-                <button id="aistudioCopyForAistudioBtn" class="btn btn-secondary">📋 + infos fichier</button>
+                <button id="aistudioCopyBtn" class="btn btn-secondary">📋 Copier le prompt</button>
               </div>
             </div>
           </div>
@@ -292,8 +273,8 @@
                 <button id="aistudioOpenExternalBtn" class="btn btn-secondary btn-small" title="Ouvrir dans le navigateur externe">↗</button>
               </div>
               <div class="browser-container">
-                <webview id="aistudioWebview" src="https://aistudio.google.com/" allowpopups></webview>
-                <div id="aistudioWebviewLoading" class="browser-loading">Chargement de Google AI Studio…</div>
+                <webview id="aistudioWebview" src="https://aistudio.google.com/" allowpopups disablewebsecurity></webview>
+                <div id="aistudioWebviewLoading" class="browser-loading-badge">⏳ Chargement…</div>
               </div>
             </div>
 
