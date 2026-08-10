@@ -69,9 +69,32 @@ renderer/                    app.js, index.html, styles.css, widget.html, aiStud
   toujours passer par `getSearchProvider()` (abstraction DuckDuckGo/etc.).
 
 ## Tests
-- `node test/regression.test.js` → 296 assertions (syntaxe + stubs Electron).
+- `node test/regression.test.js` → 318 assertions (syntaxe + stubs Electron).
 - Le test stub `electron` : BrowserWindow a `webContents.send` mais PAS `isDestroyed`.
 - Avant tout commit : `node --check` sur les fichiers modifiés + lancer la suite.
+- aiCache est testé en isolation (variable `_aiCacheUnderTest` pour éviter la
+  redéclaration avec la section plafond/éviction existante plus loin).
+
+## Pièges corrigés (audit 2026-08) — à ne PAS réintroduire
+- **aiCache.get()** doit renvoyer la VALEUR mise en cache (entry.specs), PAS le
+  wrapper `{ specs, cachedAt }`. Sinon AdAnalyzer/MarketValueAnalyzer reçoivent
+  un objet sans `identifiedProduct`/`realValue`/`_fallback` → affichage IA cassé
+  ET un fallback caché est retourné à tort comme valide (la détection `!cached._fallback`
+  devient toujours vraie).
+- **Cohérence des noms de champs IA ↔ consommateurs** :
+  - AdAnalyzer produit `identifiedProduct` (PAS `identifiedName`).
+  - MarketValueAnalyzer produit `valueRangeLow`/`valueRangeHigh` (PAS `marketMin`/`marketMax`).
+  - Le renderer (app.js) utilise les bons noms ; l'ExcelExporter lisait les anciens
+    → colonnes « Produit Identifié (IA) » et « Fourchette Marché (€) » toujours vides.
+  - Avant d'ajouter un consommateur d'IA, vérifier les champs réellement produits
+    par adAnalyzer.js / marketValueAnalyzer.js (le prompt JSON spec est la source de vérité).
+- **AdStats médiane** : pour un nombre pair de prix, moyenne des deux valeurs
+  centrales (le renderer fait pareil dans renderStatsView). Ne pas reprendre
+  `validPrices[Math.floor(n/2)]` qui est faux pour les longueurs paires.
+
+## Code mort retiré
+- `runWithConcurrency` et `formatDuration` (utils/helpers.js) n'étaient utilisés
+  nulle part (les batchs IA utilisent leur propre queue de workers).
 
 ## Sécurité (déjà en place)
 - Renderer sandboxé (sandbox:true, contextIsolation:true, nodeIntegration:false)
