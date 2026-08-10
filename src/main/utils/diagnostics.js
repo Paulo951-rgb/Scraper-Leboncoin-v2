@@ -71,7 +71,6 @@ function summarizeHarEntries(entries) {
   if (entries.length === 0) return '0 entrée HAR';
   const byMime = {};
   let withBody = 0;
-  let totalSize = 0;
   let errorStatus = 0;
   for (const e of entries) {
     const res = e.response || {};

@@ -105,7 +105,8 @@ const adObj = {
   url: 'https://www.leboncoin.fr/ad/12345.htm',
   location: { city: 'Lyon', zipcode: '69000' },
   has_option: { shipping: false },
-  owner: { name: 'Vendeur', type: 'particulier' },
+  category_name: 'Téléphones',
+  owner: { name: 'Vendeur', type: 'particulier', rating: 4.8, nb_ratings: 27 },
 };
 const htmlPayload = '<html><script id="__NEXT_DATA__" type="application/json">' + JSON.stringify(adObj) + '</script></html>';
 const har = {
@@ -132,6 +133,19 @@ await new Promise((resolve) => {
     assert(ads[0].shipping === false, 'pipeline extracts shipping as boolean');
     assert(ads[0].city === 'Lyon', 'pipeline extracts city');
     assert(ads[0].isPro === false, 'pipeline extracts isPro');
+    assert(ads[0].category === 'Téléphones', 'pipeline extracts category_name');
+    assert(ads[0].sellerRating === 4.8, 'pipeline extracts sellerRating from owner.rating');
+    assert(ads[0].sellerRatingCount === 27, 'pipeline extracts sellerRatingCount from owner.nb_ratings');
+    assert(ads[0].deliveryMode === 'main_propre', 'pipeline derives deliveryMode=main_propre from shipping=false');
+    assert(ads[0].handDelivery === true, 'pipeline derives handDelivery=true when shipping=false');
+    // Mode de remise enrichi via l'export CSV (présence des nouveaux en-têtes)
+    if (fs.existsSync(path.join(tmpOut, 'annonces.csv'))) {
+      const csv = fs.readFileSync(path.join(tmpOut, 'annonces.csv'), 'utf8');
+      const headerLine = csv.split('\n')[0];
+      assert(headerLine.includes('category'), 'CSV export inclut la colonne category');
+      assert(headerLine.includes('sellerRating'), 'CSV export inclut la colonne sellerRating');
+      assert(headerLine.includes('deliveryMode'), 'CSV export inclut la colonne deliveryMode');
+    }
     fs.rmSync(tmpOut, { recursive: true, force: true });
     resolve();
   });
@@ -465,6 +479,45 @@ assert(/getDiagnostics/.test(preloadCodeFull), 'preload.js: expose getDiagnostic
 const helpNoComments = helpModCode.replace(/\/\/[^\n]*\n/g, '');
 assert(!/fetch\(\s*['"]https/.test(helpNoComments), 'helpModule: pas d\'envoi HTTP actif (API backend pas encore développé)');
 assert(/localStorage.*feedback-archive/.test(helpModCode), 'helpModule: rapport archivé localement (V2 en attendant le serveur)');
+
+// --- 7. Nouveaux champs extraits : catégorie, note vendeur, mode de remise ---
+console.log('\n[7] Nouveaux champs d\'extraction (catégorie / note vendeur / remise)');
+const pipelineCode = fs.readFileSync(path.join(__dirname, '..', 'src/main/services/scraping/leboncoin-pipeline.js'), 'utf8');
+const excelCode = fs.readFileSync(path.join(__dirname, '..', 'src/main/infrastructure/excelExporter.js'), 'utf8');
+const appCodeFull = fs.readFileSync(path.join(__dirname, '..', 'src/renderer', 'app.js'), 'utf8');
+const htmlCodeFull = fs.readFileSync(path.join(__dirname, '..', 'src/renderer', 'index.html'), 'utf8');
+
+// Pipeline : helpers d'extraction défensive présents
+assert(/function extractDeliveryInfo/.test(pipelineCode), 'pipeline: extractDeliveryInfo helper');
+assert(/function extractCategory/.test(pipelineCode), 'pipeline: extractCategory helper');
+assert(/function extractSellerRating/.test(pipelineCode), 'pipeline: extractSellerRating helper');
+// normalizeAd peuple les nouveaux champs
+assert(/deliveryMode:\s*delivery\.deliveryMode/.test(pipelineCode), 'pipeline: normalizeAd définit deliveryMode');
+assert(/sellerRating,/.test(pipelineCode), 'pipeline: normalizeAd définit sellerRating');
+assert(/category:\s*extractCategory\(raw\)/.test(pipelineCode), 'pipeline: normalizeAd définit category via extractCategory');
+assert(/handDelivery:\s*delivery\.handDelivery/.test(pipelineCode), 'pipeline: normalizeAd définit handDelivery');
+// mergeDuplicates préserve les valeurs non-null (ne pas écraser par null)
+assert(/mergeKeepingNonNull/.test(pipelineCode), 'pipeline: mergeKeepingNonNull préserve les champs non-null');
+// Enrichissement page détail : récupère aussi category/rating/delivery
+assert(/extractSellerRating\(target\)/.test(pipelineCode), 'pipeline: enrichissement page détil extrait sellerRating');
+assert(/extractCategory\(target\)/.test(pipelineCode), 'pipeline: enrichissement page détail extrait category');
+
+// Excel : nouvelles colonnes présentes
+assert(/header:\s*'Catégorie'/.test(excelCode), 'excelExporter: colonne Catégorie');
+assert(/header:\s*'Note Vendeur'/.test(excelCode), 'excelExporter: colonne Note Vendeur');
+assert(/header:\s*'Mode de Remise'/.test(excelCode), 'excelExporter: colonne Mode de Remise');
+assert(/deliveryLabelMap/.test(excelCode), 'excelExporter: libellé humain du mode de remise');
+
+// UI : la fiche détaillée affiche les 3 nouveaux champs
+assert(/id="modalCategory"/.test(htmlCodeFull), 'index.html: modalCategory span');
+assert(/id="modalSellerRating"/.test(htmlCodeFull), 'index.html: modalSellerRating span');
+assert(/id="modalDeliveryMode"/.test(htmlCodeFull), 'index.html: modalDeliveryMode span');
+assert(/setExtraVal\('modalCategory'/.test(appCodeFull), 'app.js: openAdDetail remplit modalCategory');
+assert(/setExtraVal\('modalSellerRating'/.test(appCodeFull), 'app.js: openAdDetail remplit modalSellerRating');
+assert(/setExtraVal\('modalDeliveryMode'/.test(appCodeFull), 'app.js: openAdDetail remplit modalDeliveryMode');
+// Carte : géocodage parallélisé (concurrence) au lieu d'une boucle séquentielle
+assert(/GEOCODE_CONCURRENCY/.test(appCodeFull), 'app.js: géocodage carte parallélisé (GEOCODE_CONCURRENCY)');
+assert(!/for \(const a of targetAds\) \{\s*$/.test(appCodeFull), 'app.js: boucle séquentielle de géocodage retirée');
 
 console.log(`\n=== RÉSULTAT : ${pass} réussis, ${fail} échoués ===`);
 process.exit(fail > 0 ? 1 : 0);

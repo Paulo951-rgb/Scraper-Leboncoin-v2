@@ -774,6 +774,35 @@ window.openAdDetail = (adId) => {
   modalCity.textContent = targetAd.city || 'Inconnue';
   modalSeller.textContent = `${targetAd.seller || 'Particulier'}${targetAd.isPro ? ' (Pro)' : ''}`;
   modalDate.textContent = targetAd.date || '-';
+
+  // Nouveaux champs : catégorie, note vendeur, mode de remise
+  const setExtraVal = (spanId, text) => {
+    const span = document.getElementById(spanId);
+    if (span) {
+      const valEl = span.querySelector('.modal-extra-val');
+      if (valEl) valEl.textContent = text;
+    }
+  };
+
+  setExtraVal('modalCategory', targetAd.category || 'Non précisée');
+
+  let ratingText = '-';
+  if (targetAd.sellerRating != null) {
+    ratingText = `${targetAd.sellerRating}/5`;
+    if (targetAd.sellerRatingCount != null) ratingText += ` (${targetAd.sellerRatingCount} avis)`;
+  }
+  setExtraVal('modalSellerRating', targetAd.sellerRating != null ? ratingText : 'Aucune note');
+
+  const deliveryLabels = {
+    livraison: '📦 Livraison',
+    main_propre: '🤝 Main propre',
+    inconnu: 'ℹ️ Non précisée',
+  };
+  let deliveryText = deliveryLabels[targetAd.deliveryMode] || 'ℹ️ Non précisée';
+  if (targetAd.deliveryLabel && targetAd.deliveryMode === 'livraison') {
+    deliveryText += ` — ${targetAd.deliveryLabel}`;
+  }
+  setExtraVal('modalDeliveryMode', deliveryText);
   modalSummary.textContent = ma.summary || 'Aucune analyse effectuée.';
   modalDescription.textContent = targetAd.description || 'Aucune description disponible.';
 
@@ -1000,30 +1029,50 @@ async function renderMap(ads) {
     console.log(`[Carte] Filtre main propre OFF : ${dedupedAds.length} annonces affichées — ${ads.length - dedupedAds.length} doublon(s) supprimé(s)`);
   }
 
-  for (const a of targetAds) {
-    // Interroger l'API Gouv avec cache
-    const coords = await geocodeCityGov(a.city, a.zipcode);
-    
-    if (coords) {
-      // Légère variation aléatoire (jitter) pour éviter que les annonces de la même ville se superposent
-      const jitterCoords = [
-        coords[0] + (Math.random() - 0.5) * 0.012,
-        coords[1] + (Math.random() - 0.5) * 0.012
-      ];
+  // Géocodage à concurrence limitée (au lieu d'un await séquentiel qui
+  // pouvait prendre plusieurs minutes pour 100+ annonces). On borne à 6
+  // requêtes parallèles pour rester dans les limites de l'API Gouv.
+  const GEOCODE_CONCURRENCY = 6;
+  const queue = [...targetAds];
+  const placeMarker = (a, coords) => {
+    if (!coords) return;
+    const jitterCoords = [
+      coords[0] + (Math.random() - 0.5) * 0.012,
+      coords[1] + (Math.random() - 0.5) * 0.012
+    ];
+    const marker = L.marker(jitterCoords).addTo(mapInstance);
+    const deliveryTxt = a.deliveryMode === 'livraison'
+      ? '📦 Livraison possible'
+      : a.deliveryMode === 'main_propre'
+        ? '🤝 Remise en main propre'
+        : 'ℹ️ Remise non précisée';
+    marker.bindPopup(`
+      <div style="font-family:sans-serif; font-size:0.8rem; line-height:1.3;">
+        <strong>${escapeHtml(a.title)}</strong><br>
+        <span style="color:var(--primary-color); font-weight:bold;">${a.price} €</span><br>
+        📍 ${escapeHtml(a.city || 'Ville')}<br>
+        ${deliveryTxt}${a.category ? '<br>🏷️ ' + escapeHtml(a.category) : ''}<br>
+        <a href="#" onclick="openUrl('${escapePath(a.url)}'); return false;" style="color:#38bdf8; text-decoration:underline;">Ouvrir l'annonce</a>
+      </div>
+    `);
+  };
 
-      const marker = L.marker(jitterCoords).addTo(mapInstance);
-      marker.bindPopup(`
-        <div style="font-family:sans-serif; font-size:0.8rem; line-height:1.3;">
-          <strong>${escapeHtml(a.title)}</strong><br>
-          <span style="color:var(--primary-color); font-weight:bold;">${a.price} €</span><br>
-          📍 ${escapeHtml(a.city || 'Ville')}<br>
-          🤝 Remise en main propre<br>
-          <a href="#" onclick="openUrl('${escapePath(a.url)}'); return false;" style="color:#38bdf8; text-decoration:underline;">Ouvrir l'annonce</a>
-        </div>
-      `);
+  const worker = async () => {
+    while (queue.length > 0) {
+      const a = queue.shift();
+      if (!a) break;
+      try {
+        const coords = await geocodeCityGov(a.city, a.zipcode);
+        placeMarker(a, coords);
+      } catch (err) {
+        console.warn(`[Carte] géocodage échoué pour ${a.city || '?'} :`, err.message);
+      }
     }
-  }
+  };
+
+  await Promise.all(Array.from({ length: Math.min(GEOCODE_CONCURRENCY, targetAds.length) }, () => worker()));
 }
+
 
 function renderCharts(ads) {
   if (typeof Chart === 'undefined' || ads.length === 0) return;
