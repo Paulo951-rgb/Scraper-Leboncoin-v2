@@ -38,6 +38,7 @@
 
         <div class="nav-tabs">
           <button class="tab-btn active" data-tab="tab-scraper">🚀 Scraper</button>
+          <button class="tab-btn" data-tab="tab-ai-studio">🤖 Navigateur IA Studio</button>
           <button class="tab-btn" data-tab="tab-global-ai">🧠 Analyse Globale IA</button>
           <button class="tab-btn" data-tab="tab-scheduler">⏰ Planificateur</button>
           <button class="tab-btn" data-tab="tab-logs">📜 Logs</button>
@@ -156,6 +157,154 @@
           </div>
         </div>
       </section>
+
+      <!-- PAGE NAVIGATEUR IA STUDIO -->
+      <section id="tab-ai-studio" class="tab-content">
+        <div class="card ai-studio-hero">
+          <h2>🤖 Navigateur IA Studio + Analyse de fichiers</h2>
+          <p class="text-muted mb-15">Module dédié à <strong>Google AI Studio</strong> : un navigateur intégré pour utiliser AI Studio sans quitter le logiciel, un import de gros fichiers <code>.json</code> d'annonces, et une bibliothèque de prompts génériques et réutilisables.</p>
+
+          <details class="help-panel" id="aiStudioHelpPanel">
+            <summary>❓ Comment utiliser ce module ?</summary>
+            <ol class="help-steps">
+              <li><strong>Scraper</strong> les annonces depuis l'onglet « 🚀 Scraper ».</li>
+              <li><strong>Récupérer</strong> le fichier <code>.json</code> contenant les annonces (depuis l'Historique Jobs ou l'Explorateur).</li>
+              <li><strong>Glisser-déposer</strong> ce fichier <code>.json</code> dans la zone d'import ci-dessous.</li>
+              <li><strong>Choisir</strong> le type d'analyse (prompt) et le domaine (hardware, livres, smartphones…).</li>
+              <li><strong>Copier / utiliser</strong> le prompt généré (le bouton « Copier » le met dans le presse-papiers).</li>
+              <li><strong>Envoyer</strong> le fichier et le prompt dans AI Studio via le navigateur intégré.</li>
+              <li><strong>Récupérer</strong> les résultats directement dans AI Studio.</li>
+            </ol>
+            <p class="text-muted font-small">Ce module ne remplace pas AI Studio : il facilite énormément la préparation des données, des prompts et leur utilisation.</p>
+          </details>
+        </div>
+
+        <div class="ai-studio-grid">
+          <!-- COLONNE GAUCHE : import + bibliothèque de prompts -->
+          <div class="ai-studio-side">
+            <div class="card">
+              <h3>📥 Import du fichier d'annonces (.json)</h3>
+              <div id="aistudioDropzone" class="dropzone">
+                <p class="dz-icon">📄</p>
+                <p class="dz-text">Glissez-déposez un fichier <code>.json</code> ici</p>
+                <p class="text-muted font-small">— ou —</p>
+                <button id="aistudioPickFileBtn" class="btn btn-secondary btn-small">📂 Parcourir…</button>
+                <input type="file" id="aistudioFileInput" accept=".json,application/json" hidden>
+                <p class="text-muted font-small" id="aistudioDzHint">Accepte de très gros fichiers (plusieurs milliers d'annonces).</p>
+              </div>
+
+              <div id="aistudioImportInfo" class="import-info hidden">
+                <div class="import-info-row"><span class="ii-label">Fichier :</span> <span id="iiFileName" class="ii-value">—</span></div>
+                <div class="import-info-row"><span class="ii-label">Annonces détectées :</span> <span id="iiCount" class="ii-value">—</span></div>
+                <div class="import-info-row"><span class="ii-label">Taille :</span> <span id="iiSize" class="ii-value">—</span></div>
+                <div class="import-info-row"><span class="ii-label">État :</span> <span id="iiState" class="ii-value">—</span></div>
+                <details class="import-preview">
+                  <summary>Aperçu du contenu</summary>
+                  <pre id="iiPreview" class="preview-pre"></pre>
+                </details>
+                <button id="aistudioClearImportBtn" class="btn btn-secondary btn-small">🗑️ Vider</button>
+              </div>
+            </div>
+
+            <div class="card">
+              <h3>📚 Bibliothèque de prompts</h3>
+
+              <div class="form-group">
+                <label for="aistudioDomainSelect">Domaine / type de données :</label>
+                <select id="aistudioDomainSelect" class="filter-select"></select>
+              </div>
+
+              <div class="form-group">
+                <label for="aistudioPromptSelect">Prompt prédéfini :</label>
+                <select id="aistudioPromptSelect" class="filter-select"></select>
+              </div>
+
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="varSearchContext">Recherche initiale</label>
+                  <input type="text" id="varSearchContext" class="filter-input" placeholder="ex : PC fixes">
+                </div>
+                <div class="form-group">
+                  <label for="varProductFamily">Famille de produits</label>
+                  <input type="text" id="varProductFamily" class="filter-input" placeholder="ex : PC fixes">
+                </div>
+              </div>
+
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="varComponent">Composant clé</label>
+                  <input type="text" id="varComponent" class="filter-input" placeholder="ex : SSD / GPU">
+                </div>
+                <div class="form-group">
+                  <label for="varCapacity">Capacité / variante 1</label>
+                  <input type="text" id="varCapacity" class="filter-input" placeholder="ex : 500 Go">
+                </div>
+                <div class="form-group">
+                  <label for="varCapacity2">Capacité / variante 2</label>
+                  <input type="text" id="varCapacity2" class="filter-input" placeholder="ex : 1 To">
+                </div>
+                <div class="form-group">
+                  <label for="varDealThreshold">Seuil « bonne affaire »</label>
+                  <input type="text" id="varDealThreshold" class="filter-input" placeholder="ex : 30 €">
+                </div>
+              </div>
+
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="varTopN">Top meilleures affaires</label>
+                  <input type="number" id="varTopN" class="filter-input" min="1" max="500">
+                </div>
+                <div class="form-group">
+                  <label for="varFlipN">Top achat-revente</label>
+                  <input type="number" id="varFlipN" class="filter-input" min="1" max="500">
+                </div>
+                <div class="form-group">
+                  <label for="varCompN">Top composants</label>
+                  <input type="number" id="varCompN" class="filter-input" min="1" max="500">
+                </div>
+                <div class="form-group">
+                  <label for="varNuggetN">Top pépites</label>
+                  <input type="number" id="varNuggetN" class="filter-input" min="1" max="500">
+                </div>
+                <div class="form-group">
+                  <label for="varAvoidN">Top à éviter</label>
+                  <input type="number" id="varAvoidN" class="filter-input" min="1" max="500">
+                </div>
+              </div>
+
+              <div class="actions">
+                <button id="aistudioGenerateBtn" class="btn btn-primary">✨ Générer le prompt</button>
+                <button id="aistudioCopyBtn" class="btn btn-secondary">📋 Copier</button>
+                <button id="aistudioCopyForAistudioBtn" class="btn btn-secondary">📋 + infos fichier</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- COLONNE DROITE : navigateur intégré -->
+          <div class="ai-studio-main">
+            <div class="card ai-studio-browser-card">
+              <div class="browser-toolbar">
+                <button id="aistudioBackBtn" class="btn btn-secondary btn-small" title="Précédent">⬅</button>
+                <button id="aistudioFwdBtn" class="btn btn-secondary btn-small" title="Suivant">➡</button>
+                <button id="aistudioReloadBtn" class="btn btn-secondary btn-small" title="Recharger">🔄</button>
+                <button id="aistudioHomeBtn" class="btn btn-secondary btn-small" title="AI Studio">🏠</button>
+                <input type="text" id="aistudioUrlBar" class="browser-url" placeholder="https://aistudio.google.com/" readonly>
+                <button id="aistudioOpenExternalBtn" class="btn btn-secondary btn-small" title="Ouvrir dans le navigateur externe">↗</button>
+              </div>
+              <div class="browser-container">
+                <webview id="aistudioWebview" src="https://aistudio.google.com/" allowpopups></webview>
+                <div id="aistudioWebviewLoading" class="browser-loading">Chargement de Google AI Studio…</div>
+              </div>
+            </div>
+
+            <div class="card">
+              <h3>📝 Prompt généré</h3>
+              <textarea id="aistudioPromptOutput" rows="10" class="prompt-output" placeholder="Sélectionnez un prompt et un domaine, puis cliquez sur « Générer le prompt »."></textarea>
+            </div>
+          </div>
+        </div>
+      </section>
+
 
       <!-- PAGE ANALYSE GLOBALE IA -->
       <section id="tab-global-ai" class="tab-content">
@@ -626,6 +775,7 @@
     </div>
   </div>
 
+  <script src="aiStudioModule.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
