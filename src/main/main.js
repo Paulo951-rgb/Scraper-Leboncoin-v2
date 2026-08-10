@@ -223,7 +223,14 @@ app.whenReady().then(() => {
   // Enregistre les handlers IPC UNE SEULE FOIS (évite "second handler" au
   // recréation de fenêtre). Le getter permet de toujours cibler la fenêtre
   // courante même après recréation.
-  if (setupIpcHandlers) setupIpcHandlers(getMainWindow);
+  if (setupIpcHandlers) {
+    const { shutdown } = setupIpcHandlers(getMainWindow);
+    // Arrêt propre des jobs en cours à la fermeture (sinon le pipeline forké
+    // et son Chromium continuaient en arrière-plan, orphelins du main).
+    app.on('before-quit', () => {
+      try { shutdown(); } catch { /* best-effort */ }
+    });
+  }
   createWindow();
 }).catch((err) => {
   console.error('❌ Erreur app.whenReady :', err);

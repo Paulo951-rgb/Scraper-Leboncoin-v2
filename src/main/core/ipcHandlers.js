@@ -53,6 +53,20 @@ function setupIpcHandlers(getMainWindow) {
     return w && !w.isDestroyed() ? w : null;
   };
 
+  // Arrêt forcé des opérations en cours (appelé sur before-quit) : stoppe le
+  // pipeline forké (SIGINT → le fils ferme son Playwright et exit) et la
+  // capture HAR (isCancelled → finally ferme le navigateur). Sans cela, fermer
+  // l'app pendant un job laissait le processus fils (leboncoin-pipeline) et son
+  // navigateur Chromium orphelins, continuant à tourner en arrière-plan.
+  function shutdown() {
+    try {
+      if (activeRunner) activeRunner.stop();
+    } catch { /* shutdown best-effort */ }
+    try {
+      if (activeCapturer) activeCapturer.stop();
+    } catch { /* shutdown best-effort */ }
+  }
+
   const settings = loadSettings();
 
   const { logger } = require('../utils/logger');
@@ -553,6 +567,8 @@ function setupIpcHandlers(getMainWindow) {
       return { success: false, error: err.message };
     }
   });
+
+  return { shutdown };
 }
 
 module.exports = { setupIpcHandlers };

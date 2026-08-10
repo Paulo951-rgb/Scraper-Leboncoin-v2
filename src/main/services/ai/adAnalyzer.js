@@ -32,6 +32,9 @@ const { truncate, formatMs } = require('../../utils/diagnostics');
 const CACHE_PREFIX = 'analyse';
 const MAX_IMAGES = 3;
 const MAX_DESC_CHARS = 800;
+// Plafond par image : au-delà, on ignore (analyse texte-seul) pour éviter de
+// saturer le contexte Ollama / la mémoire avec un base64 de ~27 Mo pour 20 Mo.
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const VISION_TIMEOUT_MS = 180000; // les modèles vision sont lents
 const TEXT_TIMEOUT_MS = 120000;
 
@@ -91,28 +94,53 @@ ${jsonSpec}`;
 }
 
 /**
- * Télécharge une image et la convertit en base64. Timeout propre.
+ * Télécharge une image et la convertit en base64. Timeout propre couvrant
+ * en-têtes + corps, validation du content-type et plafond de taille.
  */
 async function downloadImageAsBase64(url, timeoutMs = 8000) {
-  // Timeout réduit à 8s (était 15s) : une image qui met >8s à télécharger est
-  // généralement morte ou bloquée ; on n'attend pas et on tombe sur texte-seul.
+  // Le signal couvre TOUT le cycle (en-têtes + arrayBuffer). Sinon, une image
+  // qui envoie les en-têtes puis bloque le corps pendait indéfiniment.
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  let res;
   try {
-    res = await fetch(url, {
+    const res = await fetch(url, {
       signal: controller.signal,
       headers: { 'Accept': 'image/*' },
       redirect: 'follow',
     });
+    if (!res.ok) throw new Error(`image HTTP ${res.status}`);
+
+    // Valide le content-type : une URL d'image peut renvoyer du HTML (page
+    // d'erreur 200, redirection de login anti-bot). Base64-encoder du HTML et
+    // l'envoyer au modèle vision provoquerait une erreur ou un résultat aberrant.
+    const mime = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+    if (!mime.startsWith('image/')) {
+      throw new Error(`type MIME non-image ignoré : ${mime || '(absent)'}`);
+    }
+
+    // Plafond de taille : une image énorme (ex. 20 Mo) gonfle le base64 à ~27 Mo
+    // et peut saturer le contexte Ollama / la mémoire. On ignore au-delà de 5 Mo
+    // (l'analyse bascule en texte-seul via allSettled).
+    const contentLength = parseInt(res.headers.get('content-length') || '0', 10);
+    if (contentLength > MAX_IMAGE_BYTES) {
+      throw new Error(`image trop volumineuse (${(contentLength / 1048576).toFixed(1)} Mo > ${MAX_IMAGE_BYTES / 1048576} Mo)`);
+    }
+
+    const buf = await res.arrayBuffer();
+    // Double-vérification sur la taille réelle (content-length peut mentir/absent).
+    if (buf.byteLength > MAX_IMAGE_BYTES) {
+      throw new Error(`image trop volumineuse (${(buf.byteLength / 1048576).toFixed(1)} Mo)`);
+    }
+    const b64 = Buffer.from(buf).toString('base64');
+    return { data: b64, mimeType: mime };
+  } catch (err) {
+    if (err && err.name === 'AbortError') {
+      throw new Error(`image timeout (${timeoutMs}ms)`);
+    }
+    throw err;
   } finally {
     clearTimeout(timer);
   }
-  if (!res.ok) throw new Error(`image HTTP ${res.status}`);
-  const buf = await res.arrayBuffer();
-  const b64 = Buffer.from(buf).toString('base64');
-  const mime = res.headers.get('content-type') || 'image/jpeg';
-  return { data: b64, mimeType: mime };
 }
 
 /**
