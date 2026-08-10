@@ -16,15 +16,15 @@ class ExcelExporter {
     sheet.columns = [
       { header: 'ID', key: 'id', width: 14 },
       { header: 'Titre de l\'annonce', key: 'title', width: 35 },
+      { header: 'Produit Identifié (IA)', key: 'identifiedName', width: 30 },
       { header: 'Prix Demande (€)', key: 'price', width: 15 },
       { header: 'Catégorie', key: 'category', width: 18 },
-      { header: 'Classification Marché', key: 'classification', width: 22 },
-      { header: 'Prix Moyen Marché (€)', key: 'marketAvg', width: 20 },
+      { header: 'Verdict IA Marché', key: 'verdictLabel', width: 22 },
+      { header: 'Valeur Marché (€)', key: 'marketValue', width: 18 },
       { header: 'Fourchette Marché (€)', key: 'marketRange', width: 20 },
-      { header: 'Écart (€)', key: 'diffEur', width: 12 },
-      { header: 'Écart (%)', key: 'diffPct', width: 12 },
-      { header: 'Indice Confiance', key: 'confidence', width: 15 },
-      { header: 'Résumé Analyse Marché', key: 'summary', width: 45 },
+      { header: 'Bénéfice/Perte (€)', key: 'deltaEur', width: 18 },
+      { header: 'Résumé IA Analyse', key: 'adSummary', width: 45 },
+      { header: 'Justification IA Marché', key: 'maRationale', width: 45 },
       { header: 'Ville', key: 'city', width: 18 },
       { header: 'Vendeur', key: 'seller', width: 18 },
       { header: 'Note Vendeur', key: 'sellerRating', width: 14 },
@@ -45,6 +45,7 @@ class ExcelExporter {
 
     ads.forEach((ad) => {
       const ma = ad.marketAnalysis || {};
+      const adAnalysis = ad.adAnalysis || {};
 
       // Libellé humain pour le mode de remise
       const deliveryLabelMap = {
@@ -64,15 +65,15 @@ class ExcelExporter {
       const row = sheet.addRow({
         id: ad.id || '-',
         title: ad.title || '-',
+        identifiedName: adAnalysis.identifiedName || '-',
         price: typeof ad.price === 'number' ? ad.price : parseFloat(ad.price) || 0,
         category: ad.category || '-',
-        classification: ma.classification || 'Prix correct',
-        marketAvg: ma.marketAvg ? `${ma.marketAvg} €` : '-',
-        marketRange: ma.marketMin ? `${ma.marketMin} € - ${ma.marketMax} €` : '-',
-        diffEur: ma.diffEur != null ? `${ma.diffEur > 0 ? '+' : ''}${ma.diffEur} €` : '-',
-        diffPct: ma.diffPct != null ? `${ma.diffPct > 0 ? '+' : ''}${ma.diffPct} %` : '-',
-        confidence: ma.confidence || 'Faible',
-        summary: ma.summary || 'Analyse de marché non effectuée',
+        verdictLabel: ma.verdictLabel || 'Non analysé',
+        marketValue: ma.realValue != null ? `${ma.realValue} €` : '-',
+        marketRange: ma.marketMin != null ? `${ma.marketMin} € - ${ma.marketMax} €` : '-',
+        deltaEur: ma.deltaEur != null ? `${ma.deltaEur > 0 ? '+' : ''}${ma.deltaEur} €` : '-',
+        adSummary: adAnalysis.summary || 'Analyse IA non effectuée',
+        maRationale: ma.rationale || '-',
         city: `${ad.city || '-'}${ad.zipcode ? ' (' + ad.zipcode + ')' : ''}`,
         seller: `${ad.seller || 'Particulier'}${ad.isPro ? ' (Pro)' : ''}`,
         sellerRating: ratingText,
@@ -83,11 +84,11 @@ class ExcelExporter {
 
       row.alignment = { vertical: 'middle', wrapText: true };
 
-      const classCell = row.getCell('classification');
-      if (ma.classification === 'Très bonne affaire' || ma.classification === 'Bonne affaire') {
-        classCell.font = { color: { argb: '15803D' }, bold: true };
-      } else if (ma.classification === 'Trop cher') {
-        classCell.font = { color: { argb: 'B91C1C' }, bold: true };
+      const verdictCell = row.getCell('verdictLabel');
+      if (ma.verdictLabel === 'Très bonne affaire' || ma.verdictLabel === 'Bonne affaire') {
+        verdictCell.font = { color: { argb: '15803D' }, bold: true };
+      } else if (ma.verdictLabel === 'Trop cher' || ma.verdictLabel === 'Très cher') {
+        verdictCell.font = { color: { argb: 'B91C1C' }, bold: true };
       }
 
       const urlCell = row.getCell('url');

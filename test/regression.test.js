@@ -69,30 +69,37 @@ assert(diag.describeError({ code: 'ENOENT', message: 'x' }).includes('code=ENOEN
 
 // --- 2. Modules principaux ---
 console.log('\n[2/4] Modules principaux');
-const { MarketAnalyzer } = require('../src/main/services/ai/marketAnalyzer');
-const { DealFinder } = require('../src/main/services/analysis/dealFinder');
+const { AdAnalyzer } = require('../src/main/services/ai/adAnalyzer');
+const { MarketValueAnalyzer } = require('../src/main/services/ai/marketValueAnalyzer');
+const { AdStats } = require('../src/main/services/analysis/adStats');
 const { StorageCleaner } = require('../src/main/services/maintenance/storageCleaner');
 const { FileManager } = require('../src/main/infrastructure/fileManager');
 const { Notifier } = require('../src/main/infrastructure/notifications');
 const { loadSettings, saveSettings } = require('../src/main/core/settings');
-const { RISK_KEYWORDS } = require('../src/main/config/risk-keywords');
+const { getAIProvider } = require('../src/main/services/ai/providers/aiProviderRegistry');
+const { getSearchProvider, listSearchProviders } = require('../src/main/services/ai/search/searchProviderRegistry');
 
-assert(typeof MarketAnalyzer.analyzeAds === 'function', 'MarketAnalyzer.analyzeAds');
-assert(typeof DealFinder.analyze === 'function', 'DealFinder.analyze');
+assert(typeof AdAnalyzer.analyzeAds === 'function', 'AdAnalyzer.analyzeAds (IA 1)');
+assert(typeof MarketValueAnalyzer.analyzeMarketBatch === 'function', 'MarketValueAnalyzer.analyzeMarketBatch (IA 2)');
+assert(typeof AdStats.analyze === 'function', 'AdStats.analyze (remplace DealFinder)');
 assert(typeof StorageCleaner.cleanOldHars === 'function', 'StorageCleaner.cleanOldHars');
 assert(typeof FileManager.openFile === 'function', 'FileManager.openFile');
 assert(typeof FileManager.openFolder === 'function', 'FileManager.openFolder');
+assert(typeof getAIProvider === 'function', 'getAIProvider (registry IA)');
+assert(typeof getSearchProvider === 'function', 'getSearchProvider (registry recherche)');
+assert(Array.isArray(listSearchProviders()) && listSearchProviders().length > 0, 'listSearchProviders retourne au moins DuckDuckGo');
 
-// DealFinder
+// AdStats : statistiques sans scoring (remplace DealFinder)
 const ads = [
   { id: '1', title: 'iPhone 12', price: 100 },
   { id: '2', title: 'Samsung S21', price: 300 },
   { id: '3', title: 'Pixel 6', price: 200 },
 ];
-const { stats, enrichedAds } = DealFinder.analyze(ads);
-assert(stats && stats.totalAds === 3, 'DealFinder stats.totalAds');
-assert(enrichedAds.length === 3, 'DealFinder enrichedAds length');
-assert(enrichedAds[0].hasOwnProperty('dealTag'), 'DealFinder adds dealTag');
+const { stats, ads: enrichedAds } = AdStats.analyze(ads);
+assert(stats && stats.totalAds === 3, 'AdStats stats.totalAds');
+assert(enrichedAds.length === 3, 'AdStats retourne les annonces inchangées');
+assert(!enrichedAds[0].hasOwnProperty('dealTag'), 'AdStats n\'ajoute PLUS dealTag (scoring retiré)');
+assert(!enrichedAds[0].hasOwnProperty('hasRisk'), 'AdStats n\'ajoute PLUS hasRisk (scam score retiré)');
 
 // --- 3. Pipeline (fork) ---
 console.log('\n[3/4] Pipeline (leboncoin-pipeline.js)');
@@ -156,7 +163,6 @@ console.log('\n[4/4] Corrections PR #3');
 const appCode = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/app.js'), 'utf8');
 const preloadCode = fs.readFileSync(path.join(__dirname, '..', 'src/main/preload.js'), 'utf8');
 const ipcCode = fs.readFileSync(path.join(__dirname, '..', 'src/main/core/ipcHandlers.js'), 'utf8');
-const maCode = fs.readFileSync(path.join(__dirname, '..', 'src/main/services/ai/marketAnalyzer.js'), 'utf8');
 
 assert(/(let|const)\s+mapInstance\b/.test(appCode), 'app.js: mapInstance declared');
 assert(/(let|const)\s+priceDistChartInstance\b/.test(appCode), 'app.js: priceDistChartInstance declared');
@@ -185,15 +191,21 @@ assert(!/analyzeGlobalDataset/.test(appCode), 'app.js: analyzeGlobalDataset supp
 assert(/openExternal:\s*\(urlStr\)\s*=>\s*ipcRenderer\.invoke\('shell:openExternal'/.test(preloadCode), 'preload.js: openExternal exposed');
 assert(/folderPath \|\| BASE_OUT_DIR/.test(ipcCode), 'ipcHandlers.js: openFolder defaults to BASE_OUT_DIR');
 assert(/shell:openExternal/.test(ipcCode), 'ipcHandlers.js: shell:openExternal handler present');
-assert(/provider === 'openai' && !apiKey/.test(maCode), 'marketAnalyzer.js: handles openai without apiKey');
 
-// MarketAnalyzer fallback avec OpenAI sans clé
-const result = await MarketAnalyzer.analyzeAds([{ id: '1', title: 'Test', price: 100 }], { provider: 'openai' });
-assert(result.length === 1 && result[0].marketAnalysis.confidence === 'Faible', 'marketAnalyzer openai-no-key → fallback Faible');
+// Nouvelle architecture IA : plus d'ancien marketAnalyzer/dealFinder, mais les
+// nouveaux modules IA 1/2/3 et les registres sont présents et câblés.
+assert(/AdAnalyzer/.test(ipcCode), 'ipcHandlers.js: importe AdAnalyzer (IA 1)');
+assert(/MarketValueAnalyzer/.test(ipcCode), 'ipcHandlers.js: importe MarketValueAnalyzer (IA 2)');
+assert(/PromptGenerator/.test(ipcCode), 'ipcHandlers.js: importe PromptGenerator (IA 3)');
+assert(/AdAnalyzer\.analyzeAds/.test(ipcCode), 'ipcHandlers.js: appelle AdAnalyzer.analyzeAds pendant le scraping');
+assert(/MarketValueAnalyzer\.analyzeMarketBatch/.test(ipcCode), 'ipcHandlers.js: appelle MarketValueAnalyzer.analyzeMarketBatch (IA Marché)');
+assert(/search:providers/.test(ipcCode), 'ipcHandlers.js: handler search:providers (liste moteurs recherche)');
+assert(/listSearchProviders/.test(preloadCode), 'preload.js: expose listSearchProviders');
 
 // --- 5. Nouvelle architecture (refactor structure) ---
 console.log('\n[5/5] Architecture restructurée');
 const { existsSync } = fs;
+const { RISK_KEYWORDS } = require('../src/main/config/risk-keywords');
 const base = path.join(__dirname, '..', 'src/main');
 
 // Structure par couches
@@ -204,8 +216,20 @@ assert(existsSync(path.join(base, 'config/risk-keywords.js')), 'config/risk-keyw
 assert(existsSync(path.join(base, 'services/scraping/harCapturer.js')), 'services/scraping/harCapturer.js present');
 assert(existsSync(path.join(base, 'services/scraping/pipelineRunner.js')), 'services/scraping/pipelineRunner.js present');
 assert(existsSync(path.join(base, 'services/scraping/leboncoin-pipeline.js')), 'services/scraping/leboncoin-pipeline.js (déplacé du vendor/) present');
-assert(existsSync(path.join(base, 'services/ai/marketAnalyzer.js')), 'services/ai/marketAnalyzer.js present');
-assert(existsSync(path.join(base, 'services/analysis/dealFinder.js')), 'services/analysis/dealFinder.js present');
+// Nouvelle architecture IA : anciens modules supprimés, nouveaux présents
+assert(!existsSync(path.join(base, 'services/ai/marketAnalyzer.js')), 'services/ai/marketAnalyzer.js supprimé (ancien scoring)');
+assert(!existsSync(path.join(base, 'services/analysis/dealFinder.js')), 'services/analysis/dealFinder.js supprimé (ancien scoring)');
+assert(!existsSync(path.join(base, 'services/ai/imageAnalyzer.js')), 'services/ai/imageAnalyzer.js supprimé (intégré à adAnalyzer)');
+assert(existsSync(path.join(base, 'services/ai/adAnalyzer.js')), 'services/ai/adAnalyzer.js present (IA 1)');
+assert(existsSync(path.join(base, 'services/ai/marketValueAnalyzer.js')), 'services/ai/marketValueAnalyzer.js present (IA 2)');
+assert(existsSync(path.join(base, 'services/ai/promptGenerator.js')), 'services/ai/promptGenerator.js present (IA 3)');
+assert(existsSync(path.join(base, 'services/ai/providers/aiProvider.js')), 'services/ai/providers/aiProvider.js (interface)');
+assert(existsSync(path.join(base, 'services/ai/providers/ollamaProvider.js')), 'services/ai/providers/ollamaProvider.js (implémentation)');
+assert(existsSync(path.join(base, 'services/ai/providers/aiProviderRegistry.js')), 'services/ai/providers/aiProviderRegistry.js (factory)');
+assert(existsSync(path.join(base, 'services/ai/search/searchProvider.js')), 'services/ai/search/searchProvider.js (interface)');
+assert(existsSync(path.join(base, 'services/ai/search/duckDuckGoSearchProvider.js')), 'services/ai/search/duckDuckGoSearchProvider.js (keyless)');
+assert(existsSync(path.join(base, 'services/ai/search/searchProviderRegistry.js')), 'services/ai/search/searchProviderRegistry.js (factory)');
+assert(existsSync(path.join(base, 'services/analysis/adStats.js')), 'services/analysis/adStats.js (remplace dealFinder)');
 assert(existsSync(path.join(base, 'services/jobs/jobHistory.js')), 'services/jobs/jobHistory.js present');
 assert(existsSync(path.join(base, 'services/maintenance/storageCleaner.js')), 'services/maintenance/storageCleaner.js present');
 assert(existsSync(path.join(base, 'infrastructure/excelExporter.js')), 'infrastructure/excelExporter.js present');
@@ -369,10 +393,15 @@ assert(/cfgAutoCleanJobs/.test(htmlCode), 'index.html: cfgAutoCleanJobs checkbox
 assert(/cfgAutoCleanJobsDays/.test(htmlCode), 'index.html: cfgAutoCleanJobsDays input');
 assert(/cfgLogRetention/.test(htmlCode), 'index.html: cfgLogRetention input');
 assert(/badge-offline/.test(htmlCode), 'index.html: badge-offline CSS class');
-// Onglet scraper : option OpenAI retirée, autoAiMarket décoché par défaut
+// Onglet scraper : option OpenAI retirée, autoAiMarket coché par défaut (IA Analyse activée)
 assert(!/value="openai"/.test(htmlCode), 'index.html: option OpenAI ChatGPT retirée du scraper');
 assert(!/id="aiApiKey"/.test(htmlCode), 'index.html: champ clé API OpenAI retiré');
-assert(/<input type="checkbox" id="autoAiMarket">/.test(htmlCode), 'index.html: autoAiMarket décoché par défaut');
+assert(/<input type="checkbox" id="autoAiMarket" checked>/.test(htmlCode), 'index.html: autoAiMarket coché par défaut (IA Analyse activée)');
+// Nouveau champ modèle vision (l'IA Analyse combine texte + vision)
+assert(/id="aiVisionModel"/.test(htmlCode), 'index.html: champ modèle vision (aiVisionModel)');
+// Moteur de recherche pour l'IA Marché (sans-clé par défaut)
+assert(/id="searchProvider"/.test(htmlCode), 'index.html: select moteur de recherche (IA Marché)');
+assert(/id="searchApiKey"/.test(htmlCode), 'index.html: champ clé API moteur de recherche');
 assert(/value="ollama"/.test(htmlCode), 'index.html: option Ollama local conservée');
 // Stats : nouvelles cartes + retrait bonnes affaires
 assert(/statAvgPrice/.test(htmlCode), 'index.html: carte prix moyen');
@@ -395,12 +424,15 @@ assert(/webviewTag:\s*true/.test(mainCode4), 'main.js: webviewTag activé pour l
 assert(existsSync(path.join(base, 'services/ai/promptGenerator.js')), 'services/ai/promptGenerator.js present');
 const promptGenCode = fs.readFileSync(path.join(base, 'services/ai/promptGenerator.js'), 'utf8');
 assert(/class PromptGenerator/.test(promptGenCode), 'promptGenerator: classe PromptGenerator');
-assert(/_callOllama/.test(promptGenCode), 'promptGenerator: méthode _callOllama (appel local)');
-assert(/\/api\/generate/.test(promptGenCode), 'promptGenerator: endpoint Ollama /api/generate');
-assert(/AbortController/.test(promptGenCode), 'promptGenerator: AbortController (timeout fetch)');
-assert(/stream:\s*false/.test(promptGenCode), 'promptGenerator: stream:false (réponse complète)');
+assert(/getAIProvider/.test(promptGenCode), 'promptGenerator: utilise getAIProvider (délégation à AIProvider)');
+assert(/chatText/.test(promptGenCode), 'promptGenerator: appelle ai.chatText (au lieu d\'un fetch direct)');
+assert(/temperature:\s*0\.4/.test(promptGenCode), 'promptGenerator: temperature 0.4 (génération reproductible)');
+assert(/AbortController/.test(fs.readFileSync(path.join(base, 'services/ai/providers/ollamaProvider.js'), 'utf8')), 'ollamaProvider: AbortController (timeout fetch)');
 assert(!/generativelanguage\.googleapis\.com/.test(promptGenCode), 'promptGenerator: aucun appel vers Gemini (IA locale uniquement)');
 assert(!/require\('electron'\)/.test(promptGenCode), 'promptGenerator: pas de require(electron) (réutilisable hors app)');
+assert(/priceRange/.test(promptGenCode), 'promptGenerator: supporte priceRange (fourchette de prix)');
+assert(/rankings/.test(promptGenCode), 'promptGenerator: supporte rankings (classements demandés)');
+assert(/topN/.test(promptGenCode), 'promptGenerator: supporte topN (Top des résultats)');
 
 assert(/tab-ai-studio/.test(htmlCode), 'index.html: onglet tab-ai-studio présent');
 assert(/aistudioWebview/.test(htmlCode), 'index.html: webview navigateur intégré');

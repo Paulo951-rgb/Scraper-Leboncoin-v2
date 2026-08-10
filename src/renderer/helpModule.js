@@ -65,33 +65,30 @@ const FAQ_DATA = [
         <p>La carte propose un filtre « Remise en main propre uniquement » pour visualiser les annonces récupérables près de chez vous.</p>`
   },
   {
-    q: `Comment interpréter le score et la classification IA d'une annonce ?`,
-    a: `<p>Quand l'IA analyse une annonce, elle produit un <strong>score d'affaire de 0 à 100</strong> et une classification :</p>
+    q: `Comment interpréter le verdict de l'IA Marché ?`,
+    a: `<p>L'<strong>IA Marché</strong> recherche les prix réels du produit sur Internet (moteur de recherche) puis donne un <strong>verdict en €</strong> — pas un score :</p>
         <ul>
-          <li><strong>🟢🟢 Très bonne affaire</strong> (score ≥ 80) — achat vivement recommandé.</li>
-          <li><strong>🟢 Bonne affaire</strong> (score 60-79) — prix en dessous du marché.</li>
-          <li><strong>Prix correct</strong> (score 50-59) — dans la moyenne du marché.</li>
-          <li><strong>Légèrement cher</strong> (score 35-49) — au-dessus du marché.</li>
-          <li><strong>🔴 Trop cher</strong> (score &lt; 35) — à éviter.</li>
+          <li><strong>🟢🟢 Très bonne affaire</strong> — le prix demandé est bien en dessous de la valeur marché (bénéfice élevé en €).</li>
+          <li><strong>🟢 Bonne affaire</strong> — prix en dessous de la valeur marché.</li>
+          <li><strong>Prix correct</strong> — dans la moyenne du marché.</li>
+          <li><strong>🔴 Trop cher</strong> — au-dessus du marché (perte si achat-revente).</li>
         </ul>
-        <p>Le score prend en compte le produit identifié, sa gamme, son état, l'estimation comparée, la marge de revente et des malus de risque.</p>`
+        <p>Le <strong>bénéfice/perte en €</strong> = valeur marché estimée − prix demandé. Plus de score 0-100, plus de pourcentage : l'IA parle en euros réels.</p>`
   },
   {
-    q: `Qu'est-ce que le "Scam Score" (risque d'arnaque) ?`,
-    a: `<p>Le <strong>scam score</strong> est un indicateur (0-99) qui estime le <strong>risque d'arnaque</strong>. Plus il est élevé, plus l'annonce est suspecte. Il augmente si :</p>
+    q: `L'IA détecte-t-elle les arnaques ?`,
+    a: `<p>Il n'y a plus de « scam score » chiffré. L'<strong>IA Analyse</strong> (texte + vision) identifie le produit, son état, les défauts visibles et le type de photo (constructeur vs réelles). Ces éléments, combinés au verdict de l'IA Marché, vous aident à juger la fiabilité :</p>
         <ul>
-          <li>le prix est anormalement bas par rapport au marché (−50 % ou plus) ;</li>
-          <li>il n'y a pas de livraison possible (main propre uniquement) ;</li>
-          <li>la description est très vague (produit mal identifié) ;</li>
-          <li>les photos sont de type « constructeur » (images génériques, pas de vraies photos).</li>
+          <li>prix anormalement bas + photos génériques + description vague → prudence ;</li>
+          <li>l'IA Marché indique le différentiel en €, ce qui révèle les annonces trop belles pour être vraies.</li>
         </ul>
-        <p>Un scam score élevé ne prouve pas l'arnaque, mais doit inciter à la prudence.</p>`
+        <p>À vous de croiser ces indices — le logiciel ne donne plus un score d'arnaque automatique.</p>`
   },
   {
-    q: 'À quoi sert la "Marge de revente estimée" (ROI) ?',
-    a: `<p>Pour les acheteurs-revendeurs (flipping), le logiciel estime la <strong>marge nette potentielle en euros</strong> et le <strong>ROI en pourcentage</strong> : différence entre le prix de revente estimé et le prix demandé (frais déduits).</p>
-        <p>Exemple : une annonce à 80 € avec une estimation de revente de 150 € → marge +70 €, ROI 87 %.</p>
-        <p>Cet indicateur ne s'affiche que si l'IA a pu estimer un prix de revente.</p>`
+    q: 'À quoi sert le « Bénéfice / Perte » ?',
+    a: `<p>Pour les acheteurs-revendeurs (flipping), l'<strong>IA Marché</strong> estime la <strong>valeur réelle du produit en €</strong> (via recherche Internet) puis calcule le <strong>bénéfice ou la perte en euros</strong> : valeur marché − prix demandé.</p>
+        <p>Exemple : une annonce à 80 € avec une valeur marché de 150 € → bénéfice +70 €.</p>
+        <p>Plus de ROI en pourcentage ni de marge de revente séparée : un seul chiffre en €, clair et directement exploitable.</p>`
   },
   {
     q: `Pourquoi le nombre d'annonces sur la carte est-il parfois inférieur au total ?`,
@@ -187,7 +184,7 @@ const HELP_SECTIONS = [
         <li><strong>Vue tableau / grille</strong> — basculez avec le bouton dédié ou la touche <code>Espace</code>.</li>
         <li><strong>Filtres</strong> — mot-clé (titre, description, ville), prix min/max, tag de deal (favoris, très bonnes affaires, bonnes affaires, trop cher).</li>
         <li><strong>Tri</strong> — meilleures affaires d'abord, prix croissant/décroissant, ordre d'origine.</li>
-        <li><strong>Fiche détaillée</strong> — cliquez une annonce pour voir photos, description complète, analyse IA (score, classification, marge, scam score), analyse visuelle.</li>
+        <li><strong>Fiche détaillée</strong> — cliquez une annonce pour voir photos, description complète, analyse IA (produit identifié, résumé, verdict marché en €, analyse visuelle), et justification.</li>
         <li><strong>Comparateur</strong> — ajoutez des annonces aux favoris (⭐) puis comparez-les côte à côte.</li>
       </ul>
       <div class="help-tip">💡 Raccourci <code>Ctrl+N</code> pour aller vite au Scraper et focus sur l'URL.</div>`

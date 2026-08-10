@@ -149,6 +149,19 @@ const AiStudioModule = {
     this.setGenStatus('Appel à Ollama (' + ollamaModel + ')…');
 
     try {
+      // Construit les classements et la fourchette de prix à partir des vars du domaine.
+      const rankings = ['Meilleures affaires (achat-revente)', 'Pépites sous-évaluées', 'Lots / composants récupérables', 'Produits à éviter'];
+      if (vars.flipN) rankings.push(`Top ${vars.flipN} achat-revente`);
+      if (vars.compN) rankings.push(`Top ${vars.compN} composants`);
+      if (vars.nuggetN) rankings.push(`Top ${vars.nuggetN} pépites`);
+      if (vars.avoidN) rankings.push(`Top ${vars.avoidN} à éviter`);
+      const topN = parseInt(vars.topN, 10) || 50;
+      let priceRange = null;
+      const thresholdStr = String(vars.dealThreshold || '').trim();
+      if (thresholdStr && thresholdStr !== '—') {
+        const m = thresholdStr.match(/(\d+)/);
+        if (m) priceRange = { min: 0, max: parseInt(m[1], 10) * 100 };
+      }
       const res = await window.api.generatePrompt({
         domain: domainObj.label,
         objective,
@@ -156,6 +169,9 @@ const AiStudioModule = {
         vars,
         ollamaUrl,
         ollamaModel,
+        priceRange,
+        topN,
+        rankings,
       });
       const prompt = (res && res.prompt) || '';
       if (!prompt) throw new Error('Réponse vide.');
