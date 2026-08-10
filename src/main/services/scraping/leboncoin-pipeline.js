@@ -11,6 +11,8 @@ const path = require('path');
 const { sleep, randomDelay, atomicWriteFileSync, cleanText } = require('../../utils/helpers');
 const { summarizeAds, summarizeHarEntries, truncate, formatBytes, formatMs } = require('../../utils/diagnostics');
 const { getRandomUserAgent } = require('./userAgents');
+const { writeWithChecksum } = require('../../utils/integrity');
+const { AdaptiveRateLimiter } = require('../../utils/rateLimiter');
 
 const DEFAULTS = Object.freeze({
   // Mode rapide : fetchs parallèles (Promise.all) comme le code original.
@@ -286,6 +288,14 @@ class DescriptionEnricher {
     this.logger = logger;
     this.consecutiveBlocks = 0;
     this.shouldStopAll = false;
+    // Rate limiting adaptatif : ajuste dynamiquement les délais selon les
+    // signaux du serveur (latence, 429/403, erreurs réseau).
+    this.rateLimiter = new AdaptiveRateLimiter({
+      baseDelayMs: opts.minDelayMs || 800,
+      maxDelayMs: opts.maxDelayMs || 8000,
+      slowThresholdMs: 3000,
+      logger,
+    });
   }
 
   async fetchBatchInPage(page, batchItems) {
@@ -495,7 +505,22 @@ class DescriptionEnricher {
       }
 
       if (done % 10 === 0) writeOutputs(ads);
-      await randomDelay(this.opts.minDelayMs, this.opts.maxDelayMs);
+      // Rate limiting adaptatif : on signale le résultat du batch au limiteur
+      // qui ajuste dynamiquement le délai (backoff exponentiel si blocage,
+      // accélération si succès rapides). Remplace le randomDelay fixe.
+      const batchDuration = Date.now() - t0Batch;
+      const batchHadBlock = batch.some((ad) => results[ad.id]?.error === 'BLOCKED_403');
+      const batchHadError = batch.some((ad) => {
+        const e = results[ad.id]?.error;
+        return e && e !== 'BLOCKED_403' && !e.startsWith('HTTP_');
+      });
+      if (batchHadBlock) {
+        await this.rateLimiter.waitAfter({ durationMs: batchDuration, blocked: true, status: 403 });
+      } else if (batchHadError) {
+        await this.rateLimiter.waitAfter({ durationMs: batchDuration, error: true });
+      } else {
+        await this.rateLimiter.waitAfter({ durationMs: batchDuration });
+      }
 
       if (done > 0 && done % this.opts.recycleContextEvery === 0 && i + batchSize < targets.length) {
         this.logger.info(`🔄 Purge mémoire RAM (${done} items)...`);
@@ -549,7 +574,7 @@ function writeOutputsFactory(outDir, opts) {
   const csvPath = path.join(outDir, 'annonces.csv');
 
   return function writeOutputs(ads) {
-    atomicWriteFileSync(jsonPath, JSON.stringify(ads, null, 2));
+    writeWithChecksum(jsonPath, ads, null, 2);
     atomicWriteFileSync(txtPath, ads.map(toReadableBlock).join('\n'));
     if (opts.csv) {
       const headers = ['id', 'title', 'price', 'city', 'seller', 'date', 'url', 'main_image', 'images', 'description'];

@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { DealFinder } = require('../analysis/dealFinder');
 const { JOBS_DIR } = require('../../config/constants');
+const { readWithChecksum } = require('../../utils/integrity');
 
 class JobHistoryManager {
   static getJobsDir() {
@@ -33,13 +34,16 @@ class JobHistoryManager {
 
       let rawAds = [];
       let dateFormatted = entry.name.replace('job-', '').replace(/T/, ' à ').replace(/-/g, ':').slice(0, 18);
+      let integrityWarning = null;
 
       if (fs.existsSync(jsonPath)) {
-        try {
-          rawAds = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
-        } catch (err) {
-          console.warn(`[JobHistory] JSON invalide pour ${entry.name} : ${err.message} — annonces ignorées.`);
+        const { data, valid, reason } = readWithChecksum(jsonPath);
+        if (!valid) {
+          console.warn(`[JobHistory] Intégrité compromise pour ${entry.name} : ${reason} — annonces ignorées.`);
+          integrityWarning = reason;
           rawAds = [];
+        } else {
+          rawAds = data || [];
         }
       } else {
         console.debug(`[JobHistory] ${entry.name} : pas d'annonces.json (résultats absents).`);
@@ -55,6 +59,7 @@ class JobHistoryManager {
         ads: enrichedAds,
         jobDir: jobPath,
         resultsDir,
+        integrityWarning,
         files: {
           json: fs.existsSync(jsonPath) ? jsonPath : null,
           csv: fs.existsSync(csvPath) ? csvPath : null,

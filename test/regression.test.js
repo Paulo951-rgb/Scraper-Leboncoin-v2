@@ -252,6 +252,86 @@ assert(!/Le Widget Flottant n'est pas encore disponible/.test(appCode2), 'app.js
 assert(/sendWidgetProgress\(\{ percent, status \}\)/.test(appCode2), 'app.js: relays progress to widget');
 assert(/sendWidgetStatus\(\{ state, message \}\)/.test(appCode2), 'app.js: relays status to widget');
 
+// --- 6. Nouvelles features (v1.2) ---
+console.log('\n[6/6] Nouvelles features : intégrité, rate-limiter, logs, Ollama, secrets, jobs-auto, sandbox');
+const { writeWithChecksum, readWithChecksum, verify, computeHash, checksumPath } = require('../src/main/utils/integrity');
+const { AdaptiveRateLimiter } = require('../src/main/utils/rateLimiter');
+const { logger } = require('../src/main/utils/logger');
+const { checkOllamaHealth, checkModelAvailable } = require('../src/main/services/ai/ollamaHealth');
+const { SecretStore } = require('../src/main/utils/secretStore');
+
+// F2 : integrity
+const tmpDir = path.join(require('os').tmpdir(), `lbc-test-integrity-${Date.now()}`);
+fs.mkdirSync(tmpDir, { recursive: true });
+const ij = path.join(tmpDir, 'a.json');
+writeWithChecksum(ij, { x: 1 });
+assert(fs.existsSync(ij) && fs.existsSync(checksumPath(ij)), 'integrity: écrit .json + .sha256');
+assert(readWithChecksum(ij).valid === true && readWithChecksum(ij).data.x === 1, 'integrity: lecture valide');
+fs.writeFileSync(ij, '{"x":99}');
+assert(readWithChecksum(ij).valid === false, 'integrity: détecte la corruption');
+assert(computeHash('abc') === computeHash('abc'), 'integrity: computeHash déterministe');
+
+// F1 : rate limiter (tests async après le bloc sync ci-dessous)
+
+// F6 : logger
+assert(typeof logger.info === 'function' && typeof logger.setRetention === 'function', 'logger: API présente');
+logger.setRetention(3);
+
+// F7 : ollamaHealth (fonctions présentes)
+assert(typeof checkOllamaHealth === 'function' && typeof checkModelAvailable === 'function', 'ollamaHealth: fonctions exportées');
+
+// F4 : secretStore round-trip
+SecretStore.set('lbc-test-secret', 'val123');
+assert(SecretStore.get('lbc-test-secret') === 'val123', 'secretStore: chiffrement/déchiffrement round-trip');
+assert(SecretStore.list().includes('lbc-test-secret'), 'secretStore: list() contient la clé');
+SecretStore.remove('lbc-test-secret');
+assert(SecretStore.get('lbc-test-secret') === null, 'secretStore: remove() supprime');
+assert(typeof SecretStore.isUsingOsKeychain() === 'boolean', 'secretStore: isUsingOsKeychain() retourne booléen');
+
+// F8 : storageCleaner.cleanOldJobs
+assert(typeof StorageCleaner.cleanOldJobs === 'function', 'StorageCleaner.cleanOldJobs présent');
+assert(StorageCleaner.cleanOldJobs(0) === 0, 'cleanOldJobs(0) désactivé → 0');
+
+// F5 : sandbox renderer durcie
+const mainCode3 = fs.readFileSync(path.join(base, 'main.js'), 'utf8');
+assert(/sandbox:\s*true/.test(mainCode3), 'main.js: sandbox:true activé sur mainWindow');
+assert(/widgetPreload\.js/.test(mainCode3), 'main.js: widget utilise widgetPreload.js');
+assert(existsSync(path.join(base, 'widgetPreload.js')), 'widgetPreload.js present');
+const widgetHtml = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/widget.html'), 'utf8');
+assert(/window\.widgetApi/.test(widgetHtml), 'widget.html: utilise window.widgetApi (pas require)');
+assert(!/require\('electron'\)/.test(widgetHtml), 'widget.html: plus de require(electron) direct');
+const preloadCode2 = fs.readFileSync(path.join(base, 'preload.js'), 'utf8');
+assert(/checkOllamaHealth/.test(preloadCode2), 'preload.js: expose checkOllamaHealth');
+assert(/checkNetwork/.test(preloadCode2), 'preload.js: expose checkNetwork');
+assert(/getSecret|setSecret|hasSecret|removeSecret/.test(preloadCode2), 'preload.js: expose secret IPC');
+
+// F3 : mode hors-ligne
+assert(/offlineBadge/.test(appCode2), 'app.js: offlineBadge référencé');
+assert(/isOffline/.test(appCode2), 'app.js: isOffline state tracked');
+assert(/checkNetwork/.test(appCode2), 'app.js: appelle checkNetwork');
+assert(existsSync(path.join(base, 'utils/integrity.js')), 'utils/integrity.js present');
+assert(existsSync(path.join(base, 'utils/rateLimiter.js')), 'utils/rateLimiter.js present');
+assert(existsSync(path.join(base, 'utils/logger.js')), 'utils/logger.js present');
+assert(existsSync(path.join(base, 'utils/secretStore.js')), 'utils/secretStore.js present');
+assert(existsSync(path.join(base, 'services/ai/ollamaHealth.js')), 'services/ai/ollamaHealth.js present');
+
+// Settings nouveaux champs
+const settingsCode = fs.readFileSync(path.join(base, 'core/settings.js'), 'utf8');
+assert(/logRetentionDays/.test(settingsCode), 'settings: logRetentionDays');
+assert(/autoCleanJobsDays/.test(settingsCode), 'settings: autoCleanJobsDays');
+
+// IPC nouveaux handlers
+assert(/ollama:health/.test(ipcCode), 'ipcHandlers: ollama:health handler');
+assert(/network:check/.test(ipcCode), 'ipcHandlers: network:check handler');
+assert(/secret:get|secret:set/.test(ipcCode), 'ipcHandlers: secret handlers');
+
+// UI paramètres
+const htmlCode = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/index.html'), 'utf8');
+assert(/cfgAutoCleanJobs/.test(htmlCode), 'index.html: cfgAutoCleanJobs checkbox');
+assert(/cfgAutoCleanJobsDays/.test(htmlCode), 'index.html: cfgAutoCleanJobsDays input');
+assert(/cfgLogRetention/.test(htmlCode), 'index.html: cfgLogRetention input');
+assert(/badge-offline/.test(htmlCode), 'index.html: badge-offline CSS class');
+
 console.log(`\n=== RÉSULTAT : ${pass} réussis, ${fail} échoués ===`);
 process.exit(fail > 0 ? 1 : 0);
 }

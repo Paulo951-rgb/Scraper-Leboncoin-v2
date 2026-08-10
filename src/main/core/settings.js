@@ -15,6 +15,8 @@ const SETTINGS_DEFAULTS = Object.freeze({
   pageDelayMs: 1000,        // délai entre les pages de recherche
   headless: true,           // navigateur invisible (sauf CAPTCHA)
   aiConcurrency: 5,         // nb d'annonces analysées en parallèle par l'IA
+  logRetentionDays: 7,      // rétention des logs rotatifs (jours)
+  autoCleanJobsDays: 0,     // 0 = désactivé ; sinon nb de jours avant suppression auto des jobs
 });
 
 function loadSettings() {

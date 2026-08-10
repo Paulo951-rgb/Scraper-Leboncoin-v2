@@ -42,6 +42,14 @@ contextBridge.exposeInMainWorld('api', {
   getConfig: () => ipcRenderer.invoke('config:get'),
   saveConfig: (patch) => ipcRenderer.invoke('config:save', patch),
 
+  checkOllamaHealth: (opts) => ipcRenderer.invoke('ollama:health', opts),
+  checkNetwork: () => ipcRenderer.invoke('network:check'),
+
+  getSecret: (key) => ipcRenderer.invoke('secret:get', key),
+  setSecret: (key, value) => ipcRenderer.invoke('secret:set', { key, value }),
+  hasSecret: (key) => ipcRenderer.invoke('secret:has', key),
+  removeSecret: (key) => ipcRenderer.invoke('secret:remove', key),
+
   toggleWidget: () => ipcRenderer.send('widget:toggle'),
   sendWidgetProgress: (data) => ipcRenderer.send('widget:progress', data),
   sendWidgetStatus: (data) => ipcRenderer.send('widget:status', data),

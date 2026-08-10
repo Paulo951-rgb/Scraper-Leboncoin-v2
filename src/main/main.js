@@ -13,6 +13,9 @@ process.on('unhandledRejection', (reason) => {
 const path = require('path');
 const { app, BrowserWindow, ipcMain } = require('electron');
 
+const { logger } = require('./utils/logger');
+logger.info('--- DÉMARRAGE ELECTRON ---');
+
 let setupIpcHandlers;
 try {
   ({ setupIpcHandlers } = require('./core/ipcHandlers'));
@@ -40,8 +43,10 @@ function createWidgetWindow() {
     transparent: false,
     title: 'Widget Scraper',
     webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false,
+      preload: path.join(__dirname, 'widgetPreload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
     },
   });
 
@@ -91,6 +96,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
     },
   });
 
