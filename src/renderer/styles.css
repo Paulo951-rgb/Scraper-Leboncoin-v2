@@ -403,15 +403,26 @@ input:focus, select:focus { border-color: var(--primary-color); }
 .tag-deal-high { background-color: rgba(245, 158, 11, 0.2); color: #f59e0b; border: 1px solid #f59e0b; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; white-space: nowrap; }
 .tag-deal-superhigh { background-color: rgba(244, 63, 94, 0.2); color: var(--red-risk); border: 1px solid var(--red-risk); padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; font-weight: bold; white-space: nowrap; }
 
-.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 15px; }
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 15px; }
 .stat-card { background-color: var(--bg-color); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px; text-align: center; }
+.stat-card-accent { position: relative; overflow: hidden; border: none; padding: 14px 12px 12px; color: #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.18); display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.stat-card-accent .stat-icon { font-size: 1.5rem; line-height: 1; margin-bottom: 2px; }
+.stat-card-accent .stat-title { color: rgba(255,255,255,0.85); font-size: 0.72rem; letter-spacing: 0.02em; text-transform: uppercase; margin-bottom: 2px; }
+.stat-card-accent .stat-value { font-size: 1.5rem; font-weight: 800; color: #fff; line-height: 1.1; }
+.stat-card-accent .stat-sub { font-size: 0.68rem; color: rgba(255,255,255,0.7); margin-top: 2px; }
+.stat-card-blue { background: linear-gradient(135deg, #2563eb, #38bdf8); }
+.stat-card-green { background: linear-gradient(135deg, #16a34a, #22c55e); }
+.stat-card-violet { background: linear-gradient(135deg, #7c3aed, #a855f7); }
+.stat-card-amber { background: linear-gradient(135deg, #d97706, #f59e0b); }
+.stat-card-crimson { background: linear-gradient(135deg, #dc2626, #ef4444); }
+.stat-card-teal { background: linear-gradient(135deg, #0d9488, #2dd4bf); }
 .stat-title { font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 4px; }
 .stat-value { font-size: 1.25rem; font-weight: bold; color: var(--text-color); }
 .text-green { color: var(--green-deal) !important; }
 .text-red { color: var(--red-risk) !important; }
 
 .charts-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 15px; }
-.chart-box { background-color: var(--bg-color); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px; height: 220px; }
+.chart-box { background-color: var(--bg-color); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px; height: 240px; }
 
 .file-tags { display: flex; gap: 4px; }
 .file-tag { background-color: var(--border-color); color: var(--text-color); padding: 2px 5px; border-radius: 3px; font-size: 0.7rem; cursor: pointer; }
