@@ -518,7 +518,6 @@ startBtn.addEventListener('click', () => {
     pages: document.getElementById('pages').value,
     limit: document.getElementById('limit').value,
     noDesc: document.getElementById('noDesc').checked,
-    csv: document.getElementById('csv').checked,
     autoAiMarket: autoAiMarket.checked,
     analyzeImages: analyzeImages.checked,
     proxyUrl: proxyUrl.value.trim() || undefined,
@@ -546,6 +545,7 @@ stopBtn.addEventListener('click', () => {
 triggerMarketBtn.addEventListener('click', async () => {
   const jobId = sessionSelect.value;
   triggerMarketBtn.disabled = true;
+  progressBar.style.width = '0%';
   statusText.textContent = 'Analyse de marché IA (recherche Internet + estimation)...';
 
   try {
@@ -641,7 +641,8 @@ function renderHistoryTable(jobs) {
         <div class="file-tags">
           ${j.files.xlsx ? `<span class="file-tag tag-xlsx" onclick="openFile('${escapePath(j.files.xlsx)}')">XLSX</span>` : ''}
           ${j.files.json ? `<span class="file-tag" onclick="openFile('${escapePath(j.files.json)}')">JSON</span>` : ''}
-          ${j.files.csv ? `<span class="file-tag" onclick="openFile('${escapePath(j.files.csv)}')">CSV</span>` : ''}
+
+          ${j.files.resumes ? `<span class="file-tag" onclick="openFile('${escapePath(j.files.resumes)}')">RÉSUMÉS IA</span>` : ''}
           ${j.files.txt ? `<span class="file-tag" onclick="openFile('${escapePath(j.files.txt)}')">TXT</span>` : ''}
         </div>
       </td>
@@ -685,6 +686,10 @@ if (filterPriceMin) filterPriceMin.addEventListener('input', () => { saveExplore
 if (filterPriceMax) filterPriceMax.addEventListener('input', () => { saveExplorerFilters(); renderExplorerAds(); });
 if (filterTagSelect) filterTagSelect.addEventListener('change', () => { saveExplorerFilters(); renderExplorerAds(); });
 if (sortSelect) sortSelect.addEventListener('change', () => { saveExplorerFilters(); renderExplorerAds(); });
+
+// Changement de session : rafraîchit immédiatement tout l'explorateur (sans
+// avoir à manipuler un autre filtre pour déclencher la mise à jour).
+if (sessionSelect) sessionSelect.addEventListener('change', () => { renderExplorerAds(); });
 
 // Sauvegarde / restauration des filtres entre les sessions
 function saveExplorerFilters() {

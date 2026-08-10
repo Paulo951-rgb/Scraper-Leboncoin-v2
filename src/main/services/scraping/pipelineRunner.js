@@ -18,7 +18,7 @@ class PipelineRunner extends EventEmitter {
 
   run(options) {
     return new Promise((resolve, reject) => {
-      const { harPath, outDir, noDesc = false, csv = true, limit, fresh = false, speed, headless = true } = options;
+      const { harPath, outDir, noDesc = false, limit, fresh = false, speed, headless = true } = options;
 
       if (!harPath) return reject(new Error('harPath est requis pour exécuter le pipeline.'));
       if (!outDir) return reject(new Error('outDir est requis pour exécuter le pipeline.'));
@@ -32,7 +32,6 @@ class PipelineRunner extends EventEmitter {
       if (speed) remainingArgs.push('--speed', speed); 
 
       if (noDesc) remainingArgs.push('--no-desc');
-      if (csv) remainingArgs.push('--csv');
       if (fresh) remainingArgs.push('--fresh');
       if (limit) remainingArgs.push('--limit', String(limit));
 
@@ -42,7 +41,7 @@ class PipelineRunner extends EventEmitter {
       });
       this.emit('log', { level: 'debug', message: `[pipelineRunner] Script : ${scriptPath}` });
       this.emit('log', { level: 'debug', message: `[pipelineRunner] Args : ${remainingArgs.join(' ')}` });
-      this.emit('log', { level: 'debug', message: `[pipelineRunner] Options : noDesc=${noDesc} | csv=${csv} | limit=${limit ?? '(aucun)'} | fresh=${fresh} | cwd=${process.cwd()}` });
+      this.emit('log', { level: 'debug', message: `[pipelineRunner] Options : noDesc=${noDesc}  limit=${limit ?? '(aucun)'} | fresh=${fresh} | cwd=${process.cwd()}` });
 
       this.isCancelled = false;
       const t0Fork = Date.now();

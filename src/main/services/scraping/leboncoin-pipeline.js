@@ -44,9 +44,6 @@ function parseArgs(argv) {
       case '--headless':
         opts.headless = true;
         break;
-      case '--csv':
-        opts.csv = true;
-        break;
       case '--no-desc':
         opts.noDesc = true;
         break;
@@ -231,11 +228,26 @@ function firstNonNull(...vals) {
 }
 
 /**
+ * Normalise une valeur de shipping/delivery qui peut apparaître sous plusieurs
+ * formes selon la version de l'API Leboncoin : booléen direct, objet {value:bool},
+ * string "true"/"false", ou nombre 0/1.
+ * @returns {boolean|null} true=livraison, false=main propre, null=inconnu
+ */
+function _normalizeBool(val) {
+  if (val === true || val === 'true' || val === 1 || val === '1') return true;
+  if (val === false || val === 'false' || val === 0 || val === '0') return false;
+  if (val && typeof val === 'object' && 'value' in val) return _normalizeBool(val.value);
+  if (val && typeof val === 'object' && 'shipping' in val) return _normalizeBool(val.shipping);
+  return null;
+}
+
+/**
  * Extraction défensive du mode de remise et des options de livraison.
  * Leboncoin expose le shipping de plusieurs façons selon le contexte
- * (recherche vs page détail) :
+ * (recherche vs page détail) et selon la version de l'API :
  *   - has_option.shipping / options.shipping / has_shipping (bool livraison)
  *   - delivery.shipping / delivery_option (livraison Chronopost/Mondial Relay)
+ *   - shipping_option.shipping / shippingOptions (variantes récentes)
  *
  * On retourne un objet structuré :
  *   { shipping: bool|null,          // true = livraison possible, false = main propre
@@ -244,18 +256,23 @@ function firstNonNull(...vals) {
  *     deliveryLabel: string|null } // libellé humain si dispo
  */
 function extractDeliveryInfo(raw) {
-  const shipping = firstDefined(
+  const shippingVal = firstDefined(
     raw.has_option?.shipping,
     raw.options?.shipping,
     raw.has_shipping,
     raw.shipping,
     raw.delivery?.shipping,
+    raw.shipping_option?.shipping,
+    raw.shippingOptions,
     null
   );
+  const shipping = _normalizeBool(shippingVal);
+
   const deliveryOption = firstDefined(
     raw.delivery?.delivery_option,
     raw.delivery_option,
     raw.delivery?.option,
+    raw.shipping_option?.delivery_option,
     null
   );
 
@@ -271,6 +288,8 @@ function extractDeliveryInfo(raw) {
     deliveryOption,
     raw.delivery?.carrier,
     raw.delivery?.label,
+    raw.shipping_option?.carrier,
+    raw.shipping_option?.label,
     null
   );
 
@@ -351,6 +370,20 @@ function normalizeAd(raw) {
   const delivery = extractDeliveryInfo(raw);
   const { sellerRating, sellerRatingCount } = extractSellerRating(raw);
 
+  // Vendeur : Leboncoin expose owner.name (recherche+détail), mais aussi
+  // seller.name / store.name dans certaines variantes récentes.
+  const sellerName = firstDefined(
+    raw.owner?.name,
+    raw.owner?.store_name,
+    raw.seller?.name,
+    raw.store?.name,
+    raw.owner_name,
+    null
+  );
+  const isPro = (raw.owner?.type === 'pro' || raw.owner?.type === 'professional'
+    || raw.seller?.type === 'pro' || raw.store?.is_pro === true
+    || (raw.owner?.siren != null && raw.owner.siren !== ''));
+
   return {
     id: id != null ? String(id) : null,
     title: title || null,
@@ -365,8 +398,8 @@ function normalizeAd(raw) {
     handDelivery: delivery.handDelivery,
     deliveryMode: delivery.deliveryMode,
     deliveryLabel: delivery.deliveryLabel,
-    seller: firstDefined(raw.owner?.name, raw.owner_name),
-    isPro: raw.owner?.type === 'pro',
+    seller: sellerName,
+    isPro,
     sellerRating,
     sellerRatingCount,
     category: extractCategory(raw),
@@ -734,27 +767,10 @@ function toReadableBlock(ad, index) {
 function writeOutputsFactory(outDir, opts) {
   const jsonPath = path.join(outDir, 'annonces.json');
   const txtPath = path.join(outDir, 'annonces.txt');
-  const csvPath = path.join(outDir, 'annonces.csv');
 
   return function writeOutputs(ads) {
     writeWithChecksum(jsonPath, ads, null, 2);
     atomicWriteFileSync(txtPath, ads.map(toReadableBlock).join('\n'));
-    if (opts.csv) {
-      const headers = ['id', 'title', 'price', 'category', 'city', 'seller', 'isPro', 'sellerRating', 'sellerRatingCount', 'deliveryMode', 'shipping', 'handDelivery', 'deliveryLabel', 'date', 'url', 'main_image', 'images', 'description'];
-      const rows = [headers.join(',')];
-      for (const a of ads) {
-        const line = headers.map((h) => {
-          let val;
-          if (h === 'images' && Array.isArray(a.images)) val = a.images.join(' ');
-          else if (h === 'sellerRating') val = a.sellerRating != null ? String(a.sellerRating) : '';
-          else if (h === 'sellerRatingCount') val = a.sellerRatingCount != null ? String(a.sellerRatingCount) : '';
-          else val = (a[h] != null ? a[h] : '').toString();
-          return `"${String(val).replace(/"/g, '""')}"`;
-        }).join(',');
-        rows.push(line);
-      }
-      atomicWriteFileSync(csvPath, rows.join('\n'));
-    }
   };
 }
 
@@ -789,7 +805,7 @@ async function main() {
   };
 
   logger.info(`=== Pipeline Leboncoin (Vitesse: ${opts.speed || 'fast'} — ${preset.mode}, batchSize=${preset.batchSize}) ===`);
-  logger.debug(`[main] Options : harPath=${opts.harPath} | outDir=${opts.outDir} | headless=${opts.headless} | csv=${opts.csv} | noDesc=${opts.noDesc} | limit=${opts.limit ?? '(aucun)'} | fresh=${opts.fresh} | speed=${opts.speed || 'fast'} | batchSize=${opts.batchSize} | minDelay=${opts.minDelayMs} | maxDelay=${opts.maxDelayMs}`);
+  logger.debug(`[main] Options : harPath=${opts.harPath} | outDir=${opts.outDir} | headless=${opts.headless}  noDesc=${opts.noDesc} | limit=${opts.limit ?? '(aucun)'} | fresh=${opts.fresh} | speed=${opts.speed || 'fast'} | batchSize=${opts.batchSize} | minDelay=${opts.minDelayMs} | maxDelay=${opts.maxDelayMs}`);
 
   const writeOutputs = writeOutputsFactory(opts.outDir, opts);
   const jsonPath = path.join(opts.outDir, 'annonces.json');

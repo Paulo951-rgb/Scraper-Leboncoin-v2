@@ -144,7 +144,7 @@ const har = {
 fs.writeFileSync(harPath, JSON.stringify(har));
 
 await new Promise((resolve) => {
-  const child = fork(path.join(__dirname, '..', 'src/main/services/scraping/leboncoin-pipeline.js'), [harPath, '--out', tmpOut, '--headless', '--no-desc', '--csv'], { stdio: ['pipe', 'pipe', 'pipe', 'ipc'] });
+  const child = fork(path.join(__dirname, '..', 'src/main/services/scraping/leboncoin-pipeline.js'), [harPath, '--out', tmpOut, '--headless', '--no-desc'], { stdio: ['pipe', 'pipe', 'pipe', 'ipc'] });
   let stdout = '';
   child.stdout.on('data', (d) => { stdout += d.toString(); });
   child.on('close', (code) => {
@@ -160,14 +160,6 @@ await new Promise((resolve) => {
     assert(ads[0].sellerRatingCount === 27, 'pipeline extracts sellerRatingCount from owner.nb_ratings');
     assert(ads[0].deliveryMode === 'main_propre', 'pipeline derives deliveryMode=main_propre from shipping=false');
     assert(ads[0].handDelivery === true, 'pipeline derives handDelivery=true when shipping=false');
-    // Mode de remise enrichi via l'export CSV (présence des nouveaux en-têtes)
-    if (fs.existsSync(path.join(tmpOut, 'annonces.csv'))) {
-      const csv = fs.readFileSync(path.join(tmpOut, 'annonces.csv'), 'utf8');
-      const headerLine = csv.split('\n')[0];
-      assert(headerLine.includes('category'), 'CSV export inclut la colonne category');
-      assert(headerLine.includes('sellerRating'), 'CSV export inclut la colonne sellerRating');
-      assert(headerLine.includes('deliveryMode'), 'CSV export inclut la colonne deliveryMode');
-    }
     fs.rmSync(tmpOut, { recursive: true, force: true });
     resolve();
   });

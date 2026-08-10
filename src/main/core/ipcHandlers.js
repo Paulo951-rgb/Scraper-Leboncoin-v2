@@ -12,13 +12,34 @@ const { ExcelExporter } = require('../infrastructure/excelExporter');
 const { AdAnalyzer } = require('../services/ai/adAnalyzer');
 const { MarketValueAnalyzer } = require('../services/ai/marketValueAnalyzer');
 const { PromptGenerator } = require('../services/ai/promptGenerator');
-const { checkOllamaHealth } = require('../services/ai/ollamaHealth');
+const { checkOllamaHealth, checkModelAvailable } = require('../services/ai/ollamaHealth');
 const { Notifier } = require('../infrastructure/notifications');
 const { JOBS_DIR, BASE_OUT_DIR } = require('../config/constants');
 const { redact, summarizeAds, formatBytes, describeError } = require('../utils/diagnostics');
 const { writeWithChecksum } = require('../utils/integrity');
 const { loadSettings, saveSettings } = require('./settings');
 const { listSearchProviders } = require('../services/ai/search/searchProviderRegistry');
+
+/**
+ * Génère un fichier résumé compact (JSON) destiné à être transmis à une autre IA
+ * pour analyse externe. Contient uniquement : numéro, titre, URL, prix, résumé IA.
+ * Exclut volontairement la description complète, les photos, la date et les autres
+ * infos inutiles — pour garder le fichier léger.
+ */
+function writeSummaryFile(ads, summaryPath) {
+  try {
+    const summary = ads.map((a, i) => ({
+      numero: i + 1,
+      titre: a.title || null,
+      url: a.url || null,
+      prix: a.price != null ? a.price : null,
+      resume_ia: (a.adAnalysis && a.adAnalysis.summary) || null,
+    }));
+    fs.writeFileSync(summaryPath, JSON.stringify(summary, null, 2), 'utf8');
+  } catch (err) {
+    console.warn('[writeSummaryFile] Écriture du résumé impossible :', err.message);
+  }
+}
 
 function setupIpcHandlers(getMainWindow) {
   let activeCapturer = null;
@@ -56,7 +77,7 @@ function setupIpcHandlers(getMainWindow) {
     }
     isRunning = true;
 
-    const { searchUrl, pages = 1, noDesc = false, csv = true, autoAiMarket = true, analyzeImages = false, limit, aiConfig, proxyUrl } = config;
+    const { searchUrl, pages = 1, noDesc = false, autoAiMarket = true, analyzeImages = false, limit, aiConfig, proxyUrl } = config;
     // Note : analyzeImages est conservé pour rétro-compatibilité UI mais n'a plus
     // d'effet séparé — l'IA Analyse (adAnalyzer) combine déjà texte + vision en
     // un seul appel quand des photos sont disponibles et qu'un modèle vision est configuré.
@@ -67,7 +88,7 @@ function setupIpcHandlers(getMainWindow) {
     const harPath = path.join(jobDir, 'capture.har');
     const resultsDir = path.join(jobDir, 'results');
 
-    sendLog({ level: 'debug', message: `[job:start] Config reçue — searchUrl=${searchUrl} | pages=${pages} | noDesc=${noDesc} | csv=${csv} | autoAiMarket=${autoAiMarket} | analyzeImages=${analyzeImages} | limit=${limit ?? '(aucun)'} | proxy=${proxyUrl || 'aucun'} | aiConfig.provider=${aiConfig?.provider || '?'} | aiConfig.apiKey=${redact(aiConfig?.apiKey)}` });
+    sendLog({ level: 'debug', message: `[job:start] Config reçue — searchUrl=${searchUrl} | pages=${pages} | noDesc=${noDesc}  autoAiMarket=${autoAiMarket} | analyzeImages=${analyzeImages} | limit=${limit ?? '(aucun)'} | proxy=${proxyUrl || 'aucun'} | aiConfig.provider=${aiConfig?.provider || '?'} | aiConfig.apiKey=${redact(aiConfig?.apiKey)}` });
     sendLog({ level: 'debug', message: `[job:start] Dossiers — jobDir=${jobDir} | harPath=${harPath} | resultsDir=${resultsDir}` });
 
     let stoppedEarly = false;
@@ -124,7 +145,6 @@ function setupIpcHandlers(getMainWindow) {
         harPath,
         outDir: resultsDir,
         noDesc,
-        csv,
         limit: limit ? parseInt(limit, 10) : undefined,
         speed: userSettings.scrapeSpeed || 'fast',
         headless: userSettings.headless !== false,
@@ -184,6 +204,7 @@ function setupIpcHandlers(getMainWindow) {
           sendLog({ level: 'debug', message: `[job:start] Phase IA Analyse terminée en ${aiElapsed}s.` });
 
           writeWithChecksum(jsonPath, ads, null, 2);
+          writeSummaryFile(ads, path.join(path.dirname(jsonPath), 'resumes-ia.json'));
         } else {
           sendLog({ level: 'debug', message: '[job:start] IA Analyse ignorée (autoAiMarket=false).' });
         }
@@ -284,16 +305,66 @@ function setupIpcHandlers(getMainWindow) {
     sendStatus({ state: 'processing', message: 'Analyse de marché (recherche Internet + estimation)...' });
     sendLog({ level: 'info', message: `🌐 Lancement IA Marché (${targetAds.length} annonces, moteur ${sConfig.provider}, parallèle x${reanalyzeSettings.aiConcurrency || 3})...` });
 
+    // 🩺 Health-checks préalables : Ollama (IA synthèse) + moteur de recherche.
+    // Sans Ollama, toutes les annonces tombent en fallback instantané — on le
+    // détecte AVANT pour donner un message clair au lieu d'un "0/N réussi" muet.
+    if (marketAiConfig.provider === 'ollama' || !marketAiConfig.provider) {
+      const { checkModelAvailable } = require('../services/ai/ollamaHealth');
+      const ollamaUrl = marketAiConfig.ollamaUrl || 'http://127.0.0.1:11434';
+      const modelName = marketAiConfig.textModel || 'llama3';
+      sendLog({ level: 'debug', message: `[IA Marché] Health-check Ollama (${ollamaUrl}, modèle ${modelName})...` });
+      const health = await checkModelAvailable(ollamaUrl, modelName);
+      if (!health.ok) {
+        sendLog({ level: 'warn', message: `🩺 ${health.message} — l'estimation de valeur va échouer pour chaque annonce.` });
+      } else {
+        sendLog({ level: 'debug', message: `🩺 ${health.message}` });
+      }
+    }
+    try {
+      const { getSearchProvider } = require('../services/ai/search/searchProviderRegistry');
+      const engine = getSearchProvider(sConfig);
+      const sh = await engine.checkHealth();
+      if (!sh.ok) sendLog({ level: 'warn', message: `🔍 Moteur de recherche : ${sh.message}` });
+      else sendLog({ level: 'debug', message: `🔍 Moteur de recherche : ${sh.message}` });
+    } catch (err) {
+      sendLog({ level: 'warn', message: `🔍 Moteur de recherche injoignable : ${err.message}` });
+    }
+
     const t0 = Date.now();
+    let searchOk = 0;
+    let aiOk = 0;
     targetAds = await MarketValueAnalyzer.analyzeMarketBatch(targetAds, marketAiConfig, sConfig, {
       concurrency: reanalyzeSettings.aiConcurrency || 3,
-      onProgress: (prog) => sendProgress({ percent: prog.percent, status: prog.status }),
+      onProgress: (prog) => {
+        sendProgress({ percent: prog.percent, status: prog.status });
+        if (prog.stageCounts) { searchOk = prog.stageCounts.searchOk || searchOk; aiOk = prog.stageCounts.aiOk || aiOk; }
+      },
     });
     const elapsed = Math.round((Date.now() - t0) / 1000);
     const estimated = targetAds.filter((a) => a.marketAnalysis && !a.marketAnalysis._fallback).length;
-    sendLog({ level: 'info', message: `✅ IA Marché terminée en ${elapsed}s (${estimated}/${targetAds.length} estimations réussies).` });
+    // Diagnostic détaillé : répartition des causes d'échec.
+    const failReasons = {};
+    for (const a of targetAds) {
+      const ma = a.marketAnalysis;
+      if (!ma || ma._fallback) {
+        const reason = (ma && ma._error) || 'inconnu';
+        // Catégorisation grossière pour un message lisible
+        const cat = /moteur de recherche/i.test(reason) ? 'moteur de recherche (DDG)'
+          : /IA indisponible/i.test(reason) ? 'IA (Ollama down)'
+          : /JSON/i.test(reason) ? 'réponse IA non interprétable'
+          : reason;
+        failReasons[cat] = (failReasons[cat] || 0) + 1;
+      }
+    }
+    if (estimated < targetAds.length) {
+      const breakdown = Object.entries(failReasons).map(([k, v]) => `${v}× ${k}`).join(', ');
+      sendLog({ level: 'warn', message: `⚠️ IA Marché terminée en ${elapsed}s — ${estimated}/${targetAds.length} réussies. Échecs : ${breakdown || 'inconnu'}.` });
+    } else {
+      sendLog({ level: 'info', message: `✅ IA Marché terminée en ${elapsed}s (${estimated}/${targetAds.length} estimations réussies).` });
+    }
 
     writeWithChecksum(targetJob.files.json, ads, null, 2);
+    writeSummaryFile(ads, path.join(path.dirname(targetJob.files.json), 'resumes-ia.json'));
     if (targetJob.files.xlsx) {
       await ExcelExporter.exportToXlsx(ads, targetJob.files.xlsx);
     }
@@ -341,11 +412,31 @@ function setupIpcHandlers(getMainWindow) {
     const url = ollamaUrl || 'http://127.0.0.1:11434';
     const model = ollamaModel || 'llama3';
     sendStatus({ state: 'processing', message: `Génération du prompt par l'IA (${model})…` });
-    const prompt = await PromptGenerator.generate(
-      { domain, objective, customHints, vars, ollamaUrl: url, textModel: model, priceRange, topN, rankings },
-      (prog) => sendProgress({ percent: prog.percent, status: prog.status })
-    );
-    return { prompt };
+
+    // Health-check Ollama : vérifier serveur + modèle, éviter une attente de 180s.
+    const health = await checkModelAvailable(url, model);
+    if (!health.ok || health.available === false) {
+      const isModelMissing = health.ok === true || (health.models && health.models.length > 0 && health.available === false);
+      const msg = isModelMissing
+        ? `Ollama n'a pas le modèle « ${model} » installé. Modèles disponibles : ${health.models.join(', ') || '(aucun)'}. Lancez « ollama pull ${model} ».`
+        : `Ollama est injoignable sur ${url}. ${health.message} Démarrez Ollama (ollama serve).`;
+      sendLog({ level: 'warn', message: `⚠️ ${msg}` });
+      sendStatus({ state: 'error', message: msg });
+      return { prompt: null, error: msg };
+    }
+
+    try {
+      const prompt = await PromptGenerator.generate(
+        { domain, objective, customHints, vars, ollamaUrl: url, textModel: model, priceRange, topN, rankings },
+        (prog) => sendProgress({ percent: prog.percent, status: prog.status })
+      );
+      return { prompt };
+    } catch (err) {
+      const msg = `Échec génération prompt : ${err.message}`;
+      sendLog({ level: 'error', message: `❌ ${msg}` });
+      sendStatus({ state: 'error', message: msg });
+      return { prompt: null, error: msg };
+    }
   });
 
   // Liste les modèles Ollama installés localement (pour le select du module
