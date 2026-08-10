@@ -16,6 +16,7 @@ const { GlobalAnalyzer } = require('../services/ai/globalAnalyzer');
 const { Notifier } = require('../infrastructure/notifications');
 const { JOBS_DIR, BASE_OUT_DIR } = require('../config/constants');
 const { redact, summarizeAds, formatBytes, describeError } = require('../utils/diagnostics');
+const { writeWithChecksum } = require('../utils/integrity');
 const { loadSettings, saveSettings } = require('./settings');
 
 function setupIpcHandlers(mainWindow) {
@@ -29,8 +30,16 @@ function setupIpcHandlers(mainWindow) {
   });
 
   const settings = loadSettings();
+
+  const { logger } = require('../utils/logger');
+  logger.setRetention(settings.logRetentionDays || 7);
+
   setTimeout(() => {
     StorageCleaner.cleanOldHars(settings.autoCleanHarDays || 7);
+    if (settings.autoCleanJobsDays && settings.autoCleanJobsDays > 0) {
+      const purged = StorageCleaner.cleanOldJobs(settings.autoCleanJobsDays);
+      if (purged > 0) logger.info(`[startup] ${purged} job(s) ancien(s) supprimé(s) (>${settings.autoCleanJobsDays}j).`);
+    }
   }, 3000);
 
   const sendLog = (data) => mainWindow.webContents.send('log', data);
@@ -127,6 +136,20 @@ function setupIpcHandlers(mainWindow) {
 
         // 🧠 ANALYSE IA CONDITIONNELLE (Seulement si coche activée)
         if (autoAiMarket) {
+          // 🩺 Health-check Ollama avant l'analyse (si provider ollama)
+          if (aiConfig?.provider === 'ollama') {
+            const { checkModelAvailable } = require('../services/ai/ollamaHealth');
+            const ollamaUrl = aiConfig.ollamaUrl || 'http://127.0.0.1:11434';
+            const modelName = aiConfig.model || 'llama3';
+            sendLog({ level: 'debug', message: `[IA] Health-check Ollama (${ollamaUrl}, modèle ${modelName})...` });
+            const health = await checkModelAvailable(ollamaUrl, modelName);
+            if (!health.ok) {
+              sendLog({ level: 'warn', message: `🩺 ${health.message} — l'analyse IA va échouer pour chaque annonce (fallback automatique appliqué).` });
+            } else {
+              sendLog({ level: 'debug', message: `🩺 ${health.message}` });
+            }
+          }
+
           sendStatus({ state: 'processing', message: 'Analyse du marché IA multi-sources...' });
           sendLog({ level: 'info', message: `🧠 Lancement de l'Analyse de Marché IA Multi-Sources (${ads.length} annonces, parallèle x${aiConfig.concurrency || 5})...` });
 
@@ -142,7 +165,7 @@ function setupIpcHandlers(mainWindow) {
           sendLog({ level: 'info', message: `✅ Analyse IA terminée en ${aiElapsed}s (${ads.length} annonces).` });
           sendLog({ level: 'debug', message: `[job:start] Phase analyse IA terminée en ${aiElapsed}s.` });
 
-          fs.writeFileSync(jsonPath, JSON.stringify(ads, null, 2));
+          writeWithChecksum(jsonPath, ads, null, 2);
         } else {
           sendLog({ level: 'debug', message: '[job:start] Analyse IA ignorée (autoAiMarket=false).' });
         }
@@ -174,7 +197,7 @@ function setupIpcHandlers(mainWindow) {
             }
             const visionElapsed = Math.round((Date.now() - t0Vision) / 1000);
             sendLog({ level: 'info', message: `✅ Analyse visuelle terminée en ${visionElapsed}s (${analyzedCount}/${ads.length} analyses).` });
-            fs.writeFileSync(jsonPath, JSON.stringify(ads, null, 2));
+            writeWithChecksum(jsonPath, ads, null, 2);
           } catch (err) {
             activeImageAnalyzer = null;
             sendLog({ level: 'warn', message: `[Vision] Analyse visuelle échouée : ${describeError(err)} — le scraping continue sans analyse d'images.` });
@@ -300,6 +323,51 @@ function setupIpcHandlers(mainWindow) {
 
   ipcMain.handle('config:save', async (event, patch) => {
     return saveSettings(patch);
+  });
+
+  // 🩺 Health-check Ollama (appelable depuis le renderer pour afficher le statut)
+  ipcMain.handle('ollama:health', async (event, { ollamaUrl, model } = {}) => {
+    const { checkModelAvailable } = require('../services/ai/ollamaHealth');
+    const url = ollamaUrl || 'http://127.0.0.1:11434';
+    const modelName = model || 'llama3';
+    return await checkModelAvailable(url, modelName);
+  });
+
+  // 🔐 Secrets chiffrés (clés API stockées via safeStorage, pas en clair)
+  ipcMain.handle('secret:get', async (event, key) => {
+    const { SecretStore } = require('../utils/secretStore');
+    return SecretStore.get(key);
+  });
+  ipcMain.handle('secret:set', async (event, { key, value }) => {
+    const { SecretStore } = require('../utils/secretStore');
+    SecretStore.set(key, value);
+    return true;
+  });
+  ipcMain.handle('secret:has', async (event, key) => {
+    const { SecretStore } = require('../utils/secretStore');
+    return SecretStore.get(key) != null;
+  });
+  ipcMain.handle('secret:remove', async (event, key) => {
+    const { SecretStore } = require('../utils/secretStore');
+    SecretStore.remove(key);
+    return true;
+  });
+
+  // 🌐 Test de connectivité réseau (pour le mode hors-ligne)
+  ipcMain.handle('network:check', async () => {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 4000);
+      const res = await fetch('https://www.leboncoin.fr', {
+        method: 'HEAD',
+        signal: controller.signal,
+        redirect: 'manual',
+      });
+      clearTimeout(timer);
+      return { online: true, status: res.status };
+    } catch {
+      return { online: false };
+    }
   });
 
   ipcMain.handle('scheduler:add', async (event, task) => {

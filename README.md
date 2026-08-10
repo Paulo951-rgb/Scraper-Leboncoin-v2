@@ -70,6 +70,14 @@ L'application est pensée pour un usage **semi-automatisé** : l'utilisateur peu
 - 📦 **Extraction livraison** — l'info "remise en main propre / livraison" est extraite depuis les pages individuelles d'annonces (Leboncoin ne la fournit pas dans les résultats de recherche).
 - 🖼️ **Analyse d'images par IA Vision** — les 3 premières photos de chaque annonce sont analysées (type de photo, état visible, défauts, authenticité). Affine le scoring et détecte les photos constructeur vs réelles. Optionnel (case à cocher).
 - 🧹 **Nettoyage automatique** des anciens fichiers `.har` (configurable, par défaut 7 jours) pour limiter l'usage disque.
+- ⏳ **Rate limiting adaptatif** — le pipeline ralentit dynamiquement (backoff exponentiel) si Leboncoin répond lentement ou bloque (403/429), et accélère après une série de succès rapides.
+- 🔒 **Validation d'intégrité** — checksum SHA-256 des `annonces.json` (fichier `.sha256` associé) pour détecter toute corruption de disque.
+- 📶 **Mode hors-ligne** — un badge signale la perte de connexion ; le scraping est désactivé mais l'historique des jobs reste consultable.
+- 🔐 **Chiffrement des clés API** — les clés Gemini/OpenAI sont stockées chiffrées via `safeStorage` (trousseau OS), plus en clair dans le localStorage.
+- 🧱 **Sandbox renderer durcie** — `contextIsolation` + `sandbox:true` + preload strict sur toutes les fenêtres (y compris le widget flottant).
+- 📜 **Logs rotatifs** — un fichier de log par jour (`output/logs/scraper-YYYY-MM-DD.log`) avec rétention configurable, en plus de la console.
+- 🩺 **Health-check Ollama** — avant l'analyse IA locale, l'app vérifie que le serveur Ollama est démarré et que le modèle demandé est chargé.
+- 🗑️ **Suppression auto des jobs** (optionnel, décochée par défaut) — supprime automatiquement les dossiers de jobs plus anciens qu'une durée choisie par l'utilisateur.
 
 ---
 
@@ -122,11 +130,12 @@ Le fichier `src/main/services/scraping/leboncoin-pipeline.js` est un **script CL
 leboncoin-scraper-app/
 ├── package.json                          # Métadonnées, dépendances, script "start"
 ├── test/
-│   └── regression.test.js                # Suite de non-régression (109 assertions)
+│   └── regression.test.js                # Suite de non-régression (146 assertions)
 └── src/
     ├── main/                             # Processus principal Electron (Node.js)
     │   ├── main.js                       # Point d'entrée : cycle de vie app + fenêtre principale + fenêtre widget
     │   ├── preload.js                    # Pont sécurisé (contextBridge) Main ↔ Renderer
+    │   ├── widgetPreload.js              # Preload dédié au widget (sandbox strict)
     │   ├── core/                         # Cœur applicatif (orchestration)
     │   │   ├── ipcHandlers.js            # Routage IPC uniquement (délègue aux services)
     │   │   └── settings.js               # Persistance des paramètres utilisateur
@@ -137,24 +146,31 @@ leboncoin-scraper-app/
     │   │   ├── scraping/                 # Couche de scraping
     │   │   │   ├── harCapturer.js        # Capture du trafic réseau via Playwright/Chromium
     │   │   │   ├── pipelineRunner.js     # Lance leboncoin-pipeline.js en sous-processus (fork)
-    │   │   │   └── leboncoin-pipeline.js # Script CLI : HAR → JSON/CSV/TXT + enrichissement
+    │   │   │   └── leboncoin-pipeline.js # Script CLI : HAR → JSON/CSV/TXT + enrichissement (rate limiting adaptatif)
     │   │   ├── ai/                       # Couche d'analyse IA
     │   │   │   ├── marketAnalyzer.js     # Analyse IA par annonce (Ollama / OpenAI)
-    │   │   │   └── globalAnalyzer.js     # Analyse globale du dataset (Google Gemini)
+    │   │   │   ├── globalAnalyzer.js     # Analyse globale du dataset (Google Gemini)
+    │   │   │   ├── imageAnalyzer.js      # Analyse d'images par IA Vision (LLaVA / Gemini Vision)
+    │   │   │   ├── aiCache.js            # Cache IA (namespace par prefix)
+    │   │   │   └── ollamaHealth.js       # Health-check Ollama (dispo + modèle chargé)
     │   │   ├── analysis/                 # Couche d'analyse statistique
     │   │   │   └── dealFinder.js         # Détection bonnes affaires / annonces à risque
     │   │   ├── jobs/                     # Gestion des jobs
-    │   │   │   ├── jobHistory.js         # Listing, lecture, suppression des jobs passés
+    │   │   │   ├── jobHistory.js         # Listing, lecture, suppression des jobs passés (validation intégrité)
     │   │   │   └── jobScheduler.js       # Planification de scrapings récurrents
     │   │   └── maintenance/              # Maintenance
-    │   │       └── storageCleaner.js     # Nettoyage des anciens fichiers .har
+    │   │       └── storageCleaner.js     # Nettoyage des anciens .har + suppression auto des jobs
     │   ├── infrastructure/               # Intégrations externes / OS
     │   │   ├── excelExporter.js          # Génération du fichier .xlsx stylisé (exceljs)
     │   │   ├── fileManager.js            # Ouverture de fichiers/dossiers (explorateur système)
     │   │   └── notifications.js          # Notifications système (Electron Notification)
     │   └── utils/                        # Utilitaires transverses
     │       ├── helpers.js                # sleep, randomDelay, écriture atomique, formatDuration...
-    │       └── diagnostics.js            # Helpers de log/diagnostic (redact, formatBytes…)
+    │       ├── diagnostics.js            # Helpers de log/diagnostic (redact, formatBytes…)
+    │       ├── integrity.js              # Checksum SHA-256 pour validation d'intégrité des JSON
+    │       ├── rateLimiter.js            # Rate limiting adaptatif (backoff exponentiel)
+    │       ├── logger.js                 # Logger avec rotation quotidienne + rétention
+    │       └── secretStore.js            # Stockage chiffré des clés API (safeStorage OS)
     └── renderer/                         # Interface utilisateur (front-end, sandboxé)
         ├── index.html                    # Structure de l'UI (onglets, modales, formulaires)
         ├── widget.html                   # Widget flottant always-on-top (progression temps réel)
@@ -451,13 +467,14 @@ Pour chaque job de scraping (`output/jobs/job-<timestamp>/`) :
 
 ## 🧪 Tests de non-régression
 
-Le projet inclut une suite de tests dans `test/regression.test.js` (script Node.js autonome, sans framework externe) couvrant **109 assertions** réparties en 5 sections :
+Le projet inclut une suite de tests dans `test/regression.test.js` (script Node.js autonome, sans framework externe) couvrant **146 assertions** réparties en 6 sections :
 
 1. **`utils/diagnostics.js`** (~26 tests) : helpers de log (`redact`, `formatBytes`, `summarizeAds`, `countBy`, `describeError`...).
 2. **Modules principaux** (~14 tests) : exports et logique de `MarketAnalyzer`, `GlobalAnalyzer`, `JobSchedulerManager`, `DealFinder`, `StorageCleaner`, `FileManager`, `Notifier`, `settings`, `RISK_KEYWORDS`.
 3. **Pipeline via `fork`** (~6 tests) : crée un faux HAR, lance le vrai pipeline en sous-processus, vérifie l'extraction (exit code 0, annonces extraites, normalisation `shipping`/`city`/`isPro`).
 4. **Corrections PR #3** (~16 tests) : vérifie par lecture du code source que les fixes précédents sont présents (`mapInstance`, `escapeHtml`, `openExternal`, scheduler trigger, etc.).
 5. **Architecture restructurée** (~47 tests) : vérifie la structure en couches (fichiers au bon endroit, anciens dossiers supprimés, `Notifier`/`settings`/`RISK_KEYWORDS` extraits, contrat IPC 17 canaux, widget flottant implémenté).
+6. **Nouvelles features v1.2** (~37 tests) : intégrité (checksum SHA-256), rate limiting adaptatif (backoff), logs rotatifs, health-check Ollama, secretStore chiffré, suppression auto des jobs, sandbox renderer durcie, mode hors-ligne, nouveaux settings/IPC/UI.
 
 ### Exécuter les tests
 
@@ -465,7 +482,7 @@ Le projet inclut une suite de tests dans `test/regression.test.js` (script Node.
 node test/regression.test.js
 ```
 
-Résultat attendu : `=== RÉSULTAT : 109 réussis, 0 échoués ===`
+Résultat attendu : `=== RÉSULTAT : 146 réussis, 0 échoués ===`
 
 > Le test installe des **stubs** pour `electron`, `playwright` et `exceljs` (lignes 13-29) afin de pouvoir `require()` les modules en Node pur, sans lancer Electron ni Chromium.
 

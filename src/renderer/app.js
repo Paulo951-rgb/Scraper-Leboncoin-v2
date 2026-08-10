@@ -64,8 +64,11 @@ const kpiTotalProfit = document.getElementById('kpiTotalProfit');
 const kpiOverviewText = document.getElementById('kpiOverviewText');
 const rankingCardsBox = document.getElementById('rankingCardsBox');
 
-geminiApiKey.value = localStorage.getItem('gemini-api-key') || '';
-geminiApiKey.addEventListener('change', (e) => localStorage.setItem('gemini-api-key', e.target.value));
+geminiApiKey.value = ''; // chargé asynchrone depuis le SecretStore chiffré
+(async () => {
+  try { geminiApiKey.value = await window.api.getSecret('gemini-api-key') || ''; } catch {}
+})();
+geminiApiKey.addEventListener('change', (e) => window.api.setSecret('gemini-api-key', e.target.value));
 
 globalPresetSelect.addEventListener('change', (e) => {
   if (e.target.value === 'CUSTOM') customInstructionGroup.classList.remove('hidden');
@@ -144,6 +147,37 @@ const statusText = document.getElementById('statusText');
 const etaText = document.getElementById('etaText');
 const progressBar = document.getElementById('progressBar');
 const logsConsole = document.getElementById('logsConsole');
+
+// 📶 Mode hors-ligne : détection de connectivité + badge dans l'en-tête.
+// L'utilisateur peut consulter les jobs déjà scrapés (lecture disque) mais ne
+// peut pas lancer un nouveau scraping ni une analyse IA en ligne.
+const offlineBadge = document.getElementById('offlineBadge');
+let isOffline = false;
+
+function setOfflineMode(offline) {
+  isOffline = offline;
+  if (offline) {
+    offlineBadge.classList.remove('hidden');
+    startBtn.title = 'Indisponible en mode hors-ligne.';
+  } else {
+    offlineBadge.classList.add('hidden');
+    startBtn.title = '';
+  }
+}
+
+async function refreshConnectivity() {
+  try {
+    const res = await window.api.checkNetwork();
+    setOfflineMode(!res.online);
+  } catch {
+    setOfflineMode(true);
+  }
+}
+
+window.addEventListener('online', () => setOfflineMode(false));
+window.addEventListener('offline', () => setOfflineMode(true));
+setInterval(refreshConnectivity, 60000); // refresh périodique
+refreshConnectivity(); // vérification initiale
 const clearLogsBtn = document.getElementById('clearLogsBtn');
 
 const historyTableBody = document.getElementById('historyTableBody');
@@ -193,8 +227,11 @@ const openAiKeyGroup = document.getElementById('openAiKeyGroup');
 aiModelName.value = localStorage.getItem('ai-model-name') || 'llama3';
 aiModelName.addEventListener('change', (e) => localStorage.setItem('ai-model-name', e.target.value));
 
-aiApiKey.value = localStorage.getItem('openai-key') || '';
-aiApiKey.addEventListener('change', (e) => localStorage.setItem('openai-key', e.target.value));
+aiApiKey.value = ''; // chargé asynchrone depuis le SecretStore chiffré
+(async () => {
+  try { aiApiKey.value = await window.api.getSecret('openai-key') || ''; } catch {}
+})();
+aiApiKey.addEventListener('change', (e) => window.api.setSecret('openai-key', e.target.value));
 
 aiProvider.addEventListener('change', (e) => {
   if (e.target.value === 'openai') openAiKeyGroup.classList.remove('hidden');
@@ -316,6 +353,9 @@ const cfgPageDelay = document.getElementById('cfgPageDelay');
 const cfgHeadless = document.getElementById('cfgHeadless');
 const cfgAiConcurrency = document.getElementById('cfgAiConcurrency');
 const cfgCleanHarDays = document.getElementById('cfgCleanHarDays');
+const cfgAutoCleanJobs = document.getElementById('cfgAutoCleanJobs');
+const cfgAutoCleanJobsDays = document.getElementById('cfgAutoCleanJobsDays');
+const cfgLogRetention = document.getElementById('cfgLogRetention');
 
 function applySettingsToUI(cfg) {
   cfgTheme.value = localStorage.getItem('app-theme') || cfg.theme || 'theme-dark';
@@ -324,7 +364,17 @@ function applySettingsToUI(cfg) {
   cfgHeadless.checked = cfg.headless !== false;
   cfgAiConcurrency.value = cfg.aiConcurrency ?? 5;
   cfgCleanHarDays.value = cfg.autoCleanHarDays || 7;
+  const jobsDays = cfg.autoCleanJobsDays || 0;
+  cfgAutoCleanJobs.checked = jobsDays > 0;
+  cfgAutoCleanJobsDays.value = jobsDays > 0 ? jobsDays : 30;
+  cfgAutoCleanJobsDays.disabled = !cfgAutoCleanJobs.checked;
+  cfgLogRetention.value = cfg.logRetentionDays || 7;
 }
+
+// Active/désactive le champ "jours" selon la checkbox
+cfgAutoCleanJobs.addEventListener('change', () => {
+  cfgAutoCleanJobsDays.disabled = !cfgAutoCleanJobs.checked;
+});
 
 openSettingsModalBtn.addEventListener('click', async () => {
   const cfg = await window.api.getConfig();
@@ -350,6 +400,8 @@ saveSettingsBtn.addEventListener('click', async () => {
     headless: cfgHeadless.checked,
     aiConcurrency: parseInt(cfgAiConcurrency.value, 10) || 5,
     autoCleanHarDays: parseInt(cfgCleanHarDays.value, 10) || 7,
+    autoCleanJobsDays: cfgAutoCleanJobs.checked ? (parseInt(cfgAutoCleanJobsDays.value, 10) || 30) : 0,
+    logRetentionDays: parseInt(cfgLogRetention.value, 10) || 7,
   });
   settingsModal.classList.add('hidden');
   alert('Paramètres enregistrés avec succès !');
@@ -365,8 +417,10 @@ resetSettingsBtn.addEventListener('click', async () => {
     headless: true,
     aiConcurrency: 5,
     autoCleanHarDays: 7,
+    autoCleanJobsDays: 0,
+    logRetentionDays: 7,
   });
-  applySettingsToUI({ scrapeSpeed: 'fast', pageDelayMs: 1000, headless: true, aiConcurrency: 5, autoCleanHarDays: 7 });
+  applySettingsToUI({ scrapeSpeed: 'fast', pageDelayMs: 1000, headless: true, aiConcurrency: 5, autoCleanHarDays: 7, autoCleanJobsDays: 0, logRetentionDays: 7 });
   alert('Paramètres réinitialisés.');
 });
 
@@ -431,6 +485,10 @@ if (viewMode === 'grid') viewGridBtn.click();
 
 // Start / Stop
 startBtn.addEventListener('click', () => {
+  if (isOffline) {
+    alert('📶 Mode hors-ligne actif. Vous pouvez consulter les jobs déjà scrapés dans l\'onglet Historique, mais le scraping nécessite une connexion à Leboncoin.');
+    return;
+  }
   const searchUrl = document.getElementById('searchUrl').value.trim();
   if (!searchUrl) {
     alert('Veuillez entrer une URL de recherche Leboncoin valide.');

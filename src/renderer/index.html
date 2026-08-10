@@ -32,6 +32,7 @@
         <h1>Leboncoin <span>Scraper Pro</span></h1>
       </div>
       <div class="header-right">
+        <span id="offlineBadge" class="badge badge-offline hidden" title="Mode hors-ligne — vous pouvez consulter les jobs déjà scrapés, mais le scraping est désactivé.">📶 Hors-ligne</span>
         <button id="toggleWidgetBtn" class="btn btn-secondary btn-small">🖥️ Widget Flottant</button>
         <button id="openSettingsModalBtn" class="btn btn-secondary btn-small">⚙️ Paramètres</button>
 
@@ -526,6 +527,22 @@
         <label for="cfgCleanHarDays" style="font-size:0.8rem; color:var(--text-muted); display:block; margin-bottom:5px;">Nettoyage auto des fichiers .har (jours) :</label>
         <input type="number" id="cfgCleanHarDays" value="7" min="1" max="365" style="width:100%;">
         <small style="color:var(--text-muted);">Les fichiers .har plus anciens que ce nombre de jours sont supprimés au démarrage.</small>
+      </div>
+
+      <div class="form-group text-left" style="margin-top:12px;">
+        <label style="font-size:0.85rem; display:flex; align-items:center; gap:8px; cursor:pointer; margin-bottom:5px;">
+          <input type="checkbox" id="cfgAutoCleanJobs">
+          <span>🗑️ Supprimer automatiquement les jobs anciens</span>
+        </label>
+        <label for="cfgAutoCleanJobsDays" style="font-size:0.8rem; color:var(--text-muted); display:block; margin-bottom:5px;">Âge maximum des jobs (jours) :</label>
+        <input type="number" id="cfgAutoCleanJobsDays" value="30" min="1" max="365" style="width:100%;" disabled>
+        <small style="color:var(--text-muted);">Si coché, les dossiers de jobs plus anciens que ce nombre de jours sont supprimés au démarrage (HAR + résultats inclus).</small>
+      </div>
+
+      <div class="form-group text-left" style="margin-top:12px;">
+        <label for="cfgLogRetention" style="font-size:0.8rem; color:var(--text-muted); display:block; margin-bottom:5px;">Rétention des logs (jours) :</label>
+        <input type="number" id="cfgLogRetention" value="7" min="1" max="365" style="width:100%;">
+        <small style="color:var(--text-muted);">Les fichiers de log plus anciens que ce nombre de jours sont purgés automatiquement (rotation quotidienne).</small>
       </div>
 
       <!-- SECTION : ACTIONS -->
