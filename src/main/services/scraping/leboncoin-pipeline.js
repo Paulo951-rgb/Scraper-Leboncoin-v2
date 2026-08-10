@@ -610,9 +610,13 @@ class DescriptionEnricher {
       return { ctx, p };
     };
 
-    let setup = await createStealthContext();
-    let context = setup.ctx;
-    let page = setup.p;
+    let setup;
+    let context;
+    let page;
+    try {
+      setup = await createStealthContext();
+      context = setup.ctx;
+      page = setup.p;
 
     let done = 0;
     let successCount = 0;
@@ -717,11 +721,16 @@ class DescriptionEnricher {
     }
 
     writeOutputs(ads);
-    await page.close().catch(() => {});
-    await context.close().catch(() => {});
-    await browser.close().catch(() => {});
     this.logger.info(`Session terminée : ${successCount}/${targets.length} récupérées.`);
     this.logger.debug(`[DescriptionEnricher] Bilan final : ${successCount} réussies | ${notFoundCount} sans description trouvée | ${blockedCount} bloquées (403/429) | ${httpErrorCount} autres erreurs HTTP/fetch | arrêt préventif : ${this.shouldStopAll ? 'OUI' : 'non'}.`);
+    } finally {
+      // Garanti la fermeture du navigateur/contexte/page même en cas d'erreur
+      // (ex. createStealthContext ou fetchBatchInPage lance) — sinon Chromium
+      // restait orphan (processus zombie) et la RAM/sockets fuyaient.
+      await page?.close().catch(() => {});
+      await context?.close().catch(() => {});
+      await browser.close().catch(() => {});
+    }
   }
 }
 

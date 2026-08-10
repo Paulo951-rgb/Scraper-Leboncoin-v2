@@ -46,10 +46,14 @@ class OllamaProvider extends AIProvider {
   async chatText(prompt, opts = {}) {
     const model = opts.model || this.defaultTextModel;
     const timeoutMs = opts.timeoutMs || this.defaultTimeoutMs;
+    // Le signal couvre TOUT le cycle : en-têtes + lecture du corps. On ne
+    // libère le timer qu'APRÈS res.json(), sinon Ollama peut accepter la
+    // requête puis ne jamais finir d'écrire le corps (modèle bloqué en
+    // chargement, génération infinie) → res.json() pendait indéfiniment,
+    // bloquant un worker du pool de concurrence jusqu'à figer l'analyse.
     const to = _withTimeout(timeoutMs);
-    let res;
     try {
-      res = await fetch(`${this.ollamaUrl}/api/generate`, {
+      const res = await fetch(`${this.ollamaUrl}/api/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -61,17 +65,22 @@ class OllamaProvider extends AIProvider {
         }),
         signal: to.signal,
       });
+      if (!res.ok) {
+        const detail = await res.text().catch(() => '');
+        throw new Error(`Ollama HTTP ${res.status}${detail ? ' : ' + detail.slice(0, 200) : ''}`);
+      }
+      const data = await res.json();
+      const text = data && (data.response || data.message || '');
+      if (!text) throw new Error('Réponse Ollama vide (pas de texte généré).');
+      return text.trim();
+    } catch (err) {
+      if (err && err.name === 'AbortError') {
+        throw new Error(`Ollama timeout (${timeoutMs}ms) — génération interrompue (modèle trop lent ou bloqué).`);
+      }
+      throw err;
     } finally {
       to.done();
     }
-    if (!res.ok) {
-      const detail = await res.text().catch(() => '');
-      throw new Error(`Ollama HTTP ${res.status}${detail ? ' : ' + detail.slice(0, 200) : ''}`);
-    }
-    const data = await res.json();
-    const text = data && (data.response || data.message || '');
-    if (!text) throw new Error('Réponse Ollama vide (pas de texte généré).');
-    return text.trim();
   }
 
   async chatVision(prompt, images, opts = {}) {
@@ -83,10 +92,11 @@ class OllamaProvider extends AIProvider {
     }
     const imagesPayload = images.map((img) => img.data);
 
+    // Même garde que chatText : le timeout doit couvrir la lecture du corps
+    // (les modèles vision sont lents, le corps peut mettre plusieurs minutes).
     const to = _withTimeout(timeoutMs);
-    let res;
     try {
-      res = await fetch(`${this.ollamaUrl}/api/generate`, {
+      const res = await fetch(`${this.ollamaUrl}/api/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -99,17 +109,22 @@ class OllamaProvider extends AIProvider {
         }),
         signal: to.signal,
       });
+      if (!res.ok) {
+        const detail = await res.text().catch(() => '');
+        throw new Error(`Ollama Vision HTTP ${res.status}${detail ? ' : ' + detail.slice(0, 200) : ''}`);
+      }
+      const data = await res.json();
+      const text = data && (data.response || data.message || '');
+      if (!text) throw new Error('Réponse Ollama Vision vide.');
+      return text.trim();
+    } catch (err) {
+      if (err && err.name === 'AbortError') {
+        throw new Error(`Ollama Vision timeout (${timeoutMs}ms) — génération interrompue.`);
+      }
+      throw err;
     } finally {
       to.done();
     }
-    if (!res.ok) {
-      const detail = await res.text().catch(() => '');
-      throw new Error(`Ollama Vision HTTP ${res.status}${detail ? ' : ' + detail.slice(0, 200) : ''}`);
-    }
-    const data = await res.json();
-    const text = data && (data.response || data.message || '');
-    if (!text) throw new Error('Réponse Ollama Vision vide.');
-    return text.trim();
   }
 }
 

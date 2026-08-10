@@ -141,7 +141,26 @@ ipcMain.on('aistudio:openLogin', (event, url) => {
 
   configureAiStudioSession();
 
-  const target = (typeof url === 'string' && url) || 'https://aistudio.google.com/';
+  // Validation de l'URL : cette fenêtre a contextIsolation DÉSACTIVÉ (pour le
+  // spoofing navigator). On ne peut donc y charger QUE des URL Google en https.
+  // Le `url` provient du webview IA Studio (getURL()), influencé par la
+  // navigation — sans ce filtrage, une URL arbitraire/file: pourrait être
+  // chargée dans une fenêtre aux settings relâchés. Tout ce qui n'est pas
+  // https *.google.com retombe sur la page AI Studio par défaut.
+  const AI_STUDIO_DEFAULT = 'https://aistudio.google.com/';
+  let target = AI_STUDIO_DEFAULT;
+  if (typeof url === 'string' && url) {
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol === 'https:' && (/^(?:[a-z0-9-]+\.)?google\.com$/i.test(parsed.hostname))) {
+        target = parsed.href;
+      } else {
+        console.warn(`[aistudio:openLogin] URL non autorisée (host/schéma), repli sur défaut : ${url}`);
+      }
+    } catch {
+      console.warn(`[aistudio:openLogin] URL invalide, repli sur défaut : ${url}`);
+    }
+  }
 
   aiStudioLoginWindow = new BrowserWindow({
     width: 1100,
@@ -223,7 +242,14 @@ app.whenReady().then(() => {
   // Enregistre les handlers IPC UNE SEULE FOIS (évite "second handler" au
   // recréation de fenêtre). Le getter permet de toujours cibler la fenêtre
   // courante même après recréation.
-  if (setupIpcHandlers) setupIpcHandlers(getMainWindow);
+  if (setupIpcHandlers) {
+    const { shutdown } = setupIpcHandlers(getMainWindow);
+    // Arrêt propre des jobs en cours à la fermeture (sinon le pipeline forké
+    // et son Chromium continuaient en arrière-plan, orphelins du main).
+    app.on('before-quit', () => {
+      try { shutdown(); } catch { /* best-effort */ }
+    });
+  }
   createWindow();
 }).catch((err) => {
   console.error('❌ Erreur app.whenReady :', err);

@@ -29,9 +29,9 @@ async function checkOllamaHealth(ollamaUrl, timeoutMs = DEFAULT_TIMEOUT_MS) {
     const timer = setTimeout(() => controller.abort(), timeoutMs);
 
     const res = await fetch(tagsUrl, { signal: controller.signal });
-    clearTimeout(timer);
 
     if (!res.ok) {
+      clearTimeout(timer);
       return {
         ok: false,
         message: `Ollama a répondu HTTP ${res.status} — le serveur est peut-être en cours de démarrage.`,
@@ -39,7 +39,14 @@ async function checkOllamaHealth(ollamaUrl, timeoutMs = DEFAULT_TIMEOUT_MS) {
       };
     }
 
-    const data = await res.json();
+    // Lecture du corps sous le même timeout (un /api/tags qui bloque le corps
+    // ne doit pas pendre indéfiniment).
+    let data;
+    try {
+      data = await res.json();
+    } finally {
+      clearTimeout(timer);
+    }
     const models = Array.isArray(data.models) ? data.models.map((m) => m.name || m.model).filter(Boolean) : [];
 
     if (models.length === 0) {
