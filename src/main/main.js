@@ -87,6 +87,52 @@ function sendToWidget(channel, data) {
 ipcMain.on('widget:progress', (event, data) => sendToWidget('widget:progress', data));
 ipcMain.on('widget:status', (event, data) => sendToWidget('widget:status', data));
 
+// Fenêtre de connexion Google dédiée pour AI Studio.
+// Le <webview> Electron est bloqué par Google pour la connexion OAuth
+// ("Ce navigateur ou cette application ne sont peut-être pas sécurisés").
+// On ouvre donc une vraie BrowserWindow, dans la MÊME partition persistante
+// que le <webview> ("persist:aistudio") : une fois connecté ici, la session/
+// cookies sont partagés avec le webview de l'onglet IA Studio.
+let aiStudioLoginWindow = null;
+
+ipcMain.on('aistudio:openLogin', (event, url) => {
+  if (aiStudioLoginWindow && !aiStudioLoginWindow.isDestroyed()) {
+    aiStudioLoginWindow.focus();
+    return;
+  }
+
+  const target = (typeof url === 'string' && url) || 'https://aistudio.google.com/';
+
+  aiStudioLoginWindow = new BrowserWindow({
+    width: 1100,
+    height: 800,
+    title: 'Connexion Google — AI Studio',
+    autoHideMenuBar: true,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      // Même partition que le <webview> de l'onglet IA Studio : partage des
+      // cookies de session Google une fois la connexion effectuée ici.
+      partition: 'persist:aistudio',
+      // User-Agent Chrome standard (sans le mot "Electron") pour que Google
+      // accepte la connexion OAuth dans cette vraie fenêtre.
+    },
+  });
+
+  // User-Agent Chrome réel : crucial pour que Google autorise la connexion.
+  aiStudioLoginWindow.webContents.setUserAgent(
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+  );
+
+  aiStudioLoginWindow.loadURL(target).catch((err) => {
+    console.error('❌ Impossible de charger la fenêtre de connexion AI Studio :', err);
+  });
+
+  aiStudioLoginWindow.on('closed', () => {
+    aiStudioLoginWindow = null;
+  });
+});
+
 function createWindow() {
   console.log('Création de la fenêtre Electron...');
 

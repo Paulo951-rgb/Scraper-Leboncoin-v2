@@ -186,6 +186,7 @@
               <h3>📥 Envoyer le fichier .json à AI Studio</h3>
               <p class="text-muted mb-15" style="line-height:1.5;">Pour analyser un fichier d'annonces, <strong>glissez-déposez-le directement dans la zone de chat de Google AI Studio</strong> (la fenêtre du navigateur à droite), comme dans un Chrome normal. Le fichier est envoyé à AI Studio, pas stocké par ce module.</p>
               <p class="text-muted font-small">💡 Le module ne sert qu'à préparer le <strong>prompt</strong> ci-dessous — copiez-le puis collez-le dans le chat AI Studio avec votre fichier.</p>
+              <p class="text-muted font-small">🔑 <strong>Première connexion :</strong> si AI Studio vous demande de vous connecter à Google et affiche « ce navigateur ne semble pas sécurisé », cliquez sur le bouton <strong>🔑 Se connecter</strong> dans la barre du navigateur (à droite). Une vraie fenêtre s'ouvre pour la connexion — la session est ensuite partagée avec l'onglet.</p>
             </div>
 
             <div class="card">
@@ -270,6 +271,7 @@
                 <button id="aistudioReloadBtn" class="btn btn-secondary btn-small" title="Recharger">🔄</button>
                 <button id="aistudioHomeBtn" class="btn btn-secondary btn-small" title="AI Studio">🏠</button>
                 <input type="text" id="aistudioUrlBar" class="browser-url" placeholder="https://aistudio.google.com/" readonly>
+                <button id="aistudioLoginBtn" class="btn btn-primary btn-small" title="Se connecter à Google (fenêtre dédiée — le webview est bloqué par Google pour la connexion)">🔑 Se connecter</button>
                 <button id="aistudioOpenExternalBtn" class="btn btn-secondary btn-small" title="Ouvrir dans le navigateur externe">↗</button>
               </div>
               <div class="browser-container">

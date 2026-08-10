@@ -209,6 +209,7 @@ const AiStudioModule = {
       'aistudioPromptOutput',
       'aistudioWebview', 'aistudioWebviewLoading',
       'aistudioBackBtn', 'aistudioFwdBtn', 'aistudioReloadBtn', 'aistudioHomeBtn',
+      'aistudioLoginBtn',
       'aistudioUrlBar', 'aistudioOpenExternalBtn',
     ];
     const e = {};
@@ -349,6 +350,20 @@ const AiStudioModule = {
     e.aistudioFwdBtn.addEventListener('click', () => { try { wv.goForward(); } catch (_) {} });
     e.aistudioReloadBtn.addEventListener('click', () => { try { wv.reload(); } catch (_) {} });
     e.aistudioHomeBtn.addEventListener('click', () => { try { wv.loadURL(AI_STUDIO_URL); } catch (_) {} });
+
+    // Le <webview> est bloqué par Google pour l'OAuth ("Ce navigateur ou cette
+    // application ne sont peut-être pas sécurisés"). On ouvre une vraie
+    // BrowserWindow (même partition persistante) pour se connecter ; la
+    // session est ensuite partagée avec le <webview>.
+    e.aistudioLoginBtn.addEventListener('click', () => {
+      const url = (wv && wv.getURL ? wv.getURL() : AI_STUDIO_URL) || AI_STUDIO_URL;
+      if (window.api && window.api.openAiStudioLogin) {
+        window.api.openAiStudioLogin(url);
+      } else if (window.api && window.api.openExternal) {
+        window.api.openExternal(url);
+      }
+    });
+
     e.aistudioOpenExternalBtn.addEventListener('click', () => {
       const url = (wv && wv.getURL ? wv.getURL() : AI_STUDIO_URL) || AI_STUDIO_URL;
       if (window.api && window.api.openExternal) window.api.openExternal(url);

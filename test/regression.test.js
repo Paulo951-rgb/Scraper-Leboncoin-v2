@@ -366,6 +366,14 @@ assert(/aistudio\.google\.com/.test(aistudioModCode), 'aiStudioModule: URL AI St
 assert(!/require\('electron'\)/.test(aistudioModCode), 'aiStudioModule: pas de require(electron) (renderer sandboxé)');
 assert(/aiStudioModule\.js/.test(htmlCode), 'index.html: inclut aiStudioModule.js');
 
+// F5 : fenêtre de connexion Google dédiée (le webview est bloqué par Google pour l'OAuth)
+assert(/aistudioLoginBtn/.test(htmlCode), 'index.html: bouton 🔑 Se connecter (ouverture fenêtre dédiée)');
+assert(/aistudio:openLogin/.test(mainCode4), 'main.js: handler IPC aistudio:openLogin');
+assert(/partition:\s*['"]persist:aistudio['"]/.test(mainCode4), 'main.js: partition persist:aistudio pour partager la session avec le webview');
+assert(/setUserAgent/.test(mainCode4), 'main.js: setUserAgent Chrome réel sur la fenêtre de connexion (anti-blocage Google)');
+const preloadCode3 = fs.readFileSync(path.join(base, 'preload.js'), 'utf8');
+assert(/openAiStudioLogin/.test(preloadCode3), 'preload.js: expose openAiStudioLogin');
+
 console.log(`\n=== RÉSULTAT : ${pass} réussis, ${fail} échoués ===`);
 process.exit(fail > 0 ? 1 : 0);
 }
