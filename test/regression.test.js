@@ -350,9 +350,7 @@ assert(/Top \{\{avoidN\}\}/.test(promptsCode), 'aiStudioPrompts: Top avoidN clas
 assert(/Acheter \/ Négocier \/ Surveiller \/ Éviter/.test(promptsCode), 'aiStudioPrompts: recommandations Acheter/Négocier/Surveiller/Éviter');
 assert(!/require\('electron'\)/.test(promptsCode), 'aiStudioPrompts: pas de require(electron) (chargé hors pipeline)');
 assert(/tab-ai-studio/.test(htmlCode), 'index.html: onglet tab-ai-studio présent');
-assert(/aistudioDropzone/.test(htmlCode), 'index.html: zone dropzone import');
-assert(/aistudioImportInfo/.test(htmlCode), 'index.html: panneau infos import');
-assert(/iiCount/.test(htmlCode), 'index.html: compteur annonces détectées');
+assert(/aistudioDropzone/.test(htmlCode) === false, 'index.html: dropzone d\'import supprimé (drop natif vers le chat AI Studio)');
 assert(/aistudioWebview/.test(htmlCode), 'index.html: webview navigateur intégré');
 assert(/aistudio\.google\.com/.test(htmlCode), 'index.html: URL AI Studio par défaut');
 assert(/aistudioPromptSelect/.test(htmlCode), 'index.html: select bibliothèque prompts');
@@ -362,8 +360,8 @@ assert(existsSync(path.join(__dirname, '..', 'src/renderer/aiStudioModule.js')),
 const aistudioModCode = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/aiStudioModule.js'), 'utf8');
 assert(/window\.aiStudioModule/.test(aistudioModCode), 'aiStudioModule: exposé sur window.aiStudioModule');
 assert(/renderPrompt/.test(aistudioModCode), 'aiStudioModule: renderPrompt présent (parité avec aiStudioPrompts)');
-assert(/handleFile/.test(aistudioModCode), 'aiStudioModule: handleFile (glisser-déposer + gros fichiers)');
-assert(/formatBytes/.test(aistudioModCode), 'aiStudioModule: formatBytes (taille fichier)');
+assert(!/handleFile/.test(aistudioModCode), 'aiStudioModule: handleFile supprimé (le drop va directement dans AI Studio)');
+assert(!/formatBytes/.test(aistudioModCode), 'aiStudioModule: formatBytes supprimé (plus d\'import local de fichier)');
 assert(/aistudio\.google\.com/.test(aistudioModCode), 'aiStudioModule: URL AI Studio par défaut');
 assert(!/require\('electron'\)/.test(aistudioModCode), 'aiStudioModule: pas de require(electron) (renderer sandboxé)');
 assert(/aiStudioModule\.js/.test(htmlCode), 'index.html: inclut aiStudioModule.js');
