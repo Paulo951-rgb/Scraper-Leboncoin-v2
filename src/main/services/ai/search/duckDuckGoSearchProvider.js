@@ -61,6 +61,25 @@ function parseDdgLite(html) {
   return results;
 }
 
+/**
+ * Détecte la page anti-bot (anomaly / captcha) que DuckDuckGo renvoie aux
+ * requêtes automatisées. DDG ne renvoie pas 403 dans ce cas : il répond
+ * HTTP 202 avec une page « anomaly-modal » et AUCUN résultat. Sans cette
+ * détection, l'erreur est trompeusement étiquetée « structure modifiée »
+ * alors que la vraie cause est un blocage anti-bot.
+ */
+function isAnomalyPage(html, status) {
+  if (status === 202) return true; // DDG sert 202 + anomaly aux bots
+  if (!html) return false;
+  const low = html.toLowerCase();
+  return low.includes('anomaly-modal') || low.includes('anomaly-modal__')
+    || (low.includes('captcha') && low.includes('puzzle'));
+}
+
+function _sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function stripTags(html) {
   return String(html || '')
     .replace(/<[^>]+>/g, ' ')
@@ -114,6 +133,30 @@ class DuckDuckGoSearchProvider extends SearchProvider {
       return { ok: false, results: [], message: 'Requête vide.' };
     }
 
+    // Retry avec backoff exponentiel : DDG rate-limite/anti-bot agressivement
+    // en concurrence. Un 403 ou un « fetch failed » transitoire peut réussir
+    // au 2e essai après une courte pause. On ne retire PAS sur une page
+    // anomaly (blocage anti-bot persistant — retirer ne ferait que délayer).
+    const MAX_ATTEMPTS = 3;
+    let lastResult = null;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      const r = await this._searchOnce(query, { limit, timeoutMs });
+
+      // Succès ou blocage définitif (anomaly / clé / structure) : on retourne.
+      if (r.ok) return r;
+      if (r.blocked) return { ok: false, results: [], message: r.message };
+
+      // Échec transitoire (403 / fetch failed / timeout) : retry avec backoff.
+      lastResult = r;
+      if (attempt < MAX_ATTEMPTS) {
+        const backoff = 800 * Math.pow(2, attempt - 1); // 800ms, 1600ms
+        await _sleep(backoff);
+      }
+    }
+    return { ok: false, results: [], message: lastResult ? lastResult.message : 'DuckDuckGo indisponible.' };
+  }
+
+  async _searchOnce(query, { limit, timeoutMs }) {
     const body = new URLSearchParams();
     body.set('q', query);
     body.set('kl', 'fr-fr');
@@ -139,29 +182,47 @@ class DuckDuckGoSearchProvider extends SearchProvider {
     } catch (err) {
       to.done();
       const reason = err.name === 'AbortError' ? `timeout (${timeoutMs}ms)` : err.message;
-      return { ok: false, results: [], message: `DuckDuckGo injoignable : ${reason}` };
+      // Échec transitoire (réseau) — retryable.
+      return { ok: false, blocked: false, message: `DuckDuckGo injoignable : ${reason}` };
     }
 
     if (!res.ok) {
       to.done();
-      return { ok: false, results: [], message: `DuckDuckGo HTTP ${res.status}` };
+      // 403 = rate-limiting transitoire → retryable. 429 idem.
+      // Autres (4xx/5xx) → on ne retire pas (probablement persistant).
+      const retryable = res.status === 403 || res.status === 429;
+      return {
+        ok: false,
+        blocked: !retryable,
+        message: `DuckDuckGo HTTP ${res.status}${retryable ? ' (rate-limité, retry…)' : ''}`,
+      };
     }
 
     try {
       const html = await res.text();
+      // Détection anti-bot : DDG répond 200/202 avec une page « anomaly » et
+      // AUCUN résultat. C'est un blocage persistant (IP marquée) — on ne retire
+      // pas, on renvoie un message clair orientant vers un moteur à clé.
+      if (isAnomalyPage(html, res.status)) {
+        return {
+          ok: false,
+          blocked: true,
+          message: 'DuckDuckGo a renvoyé une page anti-bot (captcha) — IP temporairement bloquée. Réduisez la concurrence IA Marché ou utilisez un moteur à clé API (Tavily) dans les réglages.',
+        };
+      }
       const all = parseDdgLite(html);
       if (all.length === 0) {
-        // HTML non reconnu (structure changée) ou 0 résultat.
-        return { ok: false, results: [], message: 'Aucun résultat parsé (structure DuckDuckGo modifiée ou 0 résultat).' };
+        // HTML non reconnu (structure changée) ou véritablement 0 résultat.
+        return { ok: false, blocked: true, message: 'Aucun résultat parsé (structure DuckDuckGo modifiée ou 0 résultat).' };
       }
       return { ok: true, results: all.slice(0, limit) };
     } catch (err) {
       const reason = err.name === 'AbortError' ? `timeout (${timeoutMs}ms)` : err.message;
-      return { ok: false, results: [], message: `Lecture réponse impossible : ${reason}` };
+      return { ok: false, blocked: false, message: `Lecture réponse impossible : ${reason}` };
     } finally {
       to.done();
     }
   }
 }
 
-module.exports = { DuckDuckGoSearchProvider };
+module.exports = { DuckDuckGoSearchProvider, isAnomalyPage, parseDdgLite };
