@@ -771,7 +771,7 @@ function saveExplorerFilters() {
       priceMin: filterPriceMin?.value || '',
       priceMax: filterPriceMax?.value || '',
       tag: filterTagSelect?.value || 'ALL',
-      sort: sortSelect?.value || 'date-desc',
+      sort: sortSelect?.value || 'DEFAULT',
     }));
   } catch { /* quota dépassé */ }
 }

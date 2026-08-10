@@ -321,6 +321,9 @@ class MarketValueAnalyzer {
 
     await Promise.all(Array.from({ length: Math.min(concurrency, total) }, () => worker()));
     onProgress({ done: total, total, percent: 100, status: `Analyse marché terminée (recherche OK: ${searchOk}, estimation OK: ${aiOk}).`, stageCounts: { searchOk, aiOk } });
+    // Flush disque du cache IA : les set() sont debouncés. On force l'écriture
+    // finale pour persister toutes les estimations de ce lot.
+    aiCache._flushSave();
     return ads;
   }
 }
