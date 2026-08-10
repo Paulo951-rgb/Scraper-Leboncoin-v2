@@ -43,7 +43,22 @@ function getSearchProvider(config = {}) {
 }
 
 function listSearchProviders() {
-  return [...registry.keys()];
+  // Retourne des objets {id, label, keyless} pour que le renderer puisse
+  // peupler le <select> sans connaître l'implémentation concrète.
+  const list = [];
+  for (const [id, factory] of registry.entries()) {
+    try {
+      const instance = factory({});
+      list.push({
+        id,
+        label: (instance && instance.name) || id,
+        keyless: !(instance && instance.requiresApiKey && instance.requiresApiKey()),
+      });
+    } catch {
+      list.push({ id, label: id, keyless: true });
+    }
+  }
+  return list;
 }
 
 // Enregistrement du moteur par défaut (sans clé).

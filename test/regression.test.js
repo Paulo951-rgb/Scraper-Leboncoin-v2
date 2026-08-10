@@ -88,6 +88,21 @@ assert(typeof FileManager.openFolder === 'function', 'FileManager.openFolder');
 assert(typeof getAIProvider === 'function', 'getAIProvider (registry IA)');
 assert(typeof getSearchProvider === 'function', 'getSearchProvider (registry recherche)');
 assert(Array.isArray(listSearchProviders()) && listSearchProviders().length > 0, 'listSearchProviders retourne au moins DuckDuckGo');
+(function () {
+  const providers = listSearchProviders();
+  const ddg = providers.find((p) => p && p.id === 'duckduckgo');
+  assert(ddg && typeof ddg.label === 'string' && typeof ddg.keyless === 'boolean', 'listSearchProviders retourne {id,label,keyless} (format UI)');
+  assert(ddg.keyless === true, 'DuckDuckGo déclaré keyless (sans clé API)');
+})();
+
+// JobHistory.deleteJob : validation anti path-traversal (rejette les IDs malformés)
+(function () {
+  const { JobHistoryManager } = require('../src/main/services/jobs/jobHistory');
+  assert(JobHistoryManager.deleteJob('../../../etc') === false, 'deleteJob rejette un path-traversal (..)');
+  assert(JobHistoryManager.deleteJob('') === false, 'deleteJob rejette un ID vide');
+  assert(JobHistoryManager.deleteJob('normal-name') === false, 'deleteJob rejette un ID sans préfixe job-');
+  assert(JobHistoryManager.deleteJob('job-../../etc') === false, 'deleteJob rejette job- avec ..');
+})();
 
 // AdStats : statistiques sans scoring (remplace DealFinder)
 const ads = [

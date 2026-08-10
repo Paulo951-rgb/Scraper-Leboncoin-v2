@@ -8,7 +8,20 @@
 const path = require('path');
 const fs = require('fs');
 
-const CACHE_PATH = path.join(__dirname, '..', '..', 'config', 'ai-cache.json');
+let _cachePath = null;
+function getCachePath() {
+  if (_cachePath) return _cachePath;
+  let base;
+  try {
+    const { app } = require('electron');
+    base = app.getPath('userData');
+  } catch {
+    // Hors Electron (tests) : dossier local.
+    base = path.join(process.cwd(), 'output');
+  }
+  _cachePath = path.join(base, 'ai-cache.json');
+  return _cachePath;
+}
 // Plafond d'entrées pour éviter une croissance infinie du cache sur disque
 // (au-delà, on évite les entrées les plus anciennes par cachedAt).
 const MAX_ENTRIES = 5000;
@@ -18,8 +31,8 @@ let _cache = null;
 function _load() {
   if (_cache) return _cache;
   try {
-    if (fs.existsSync(CACHE_PATH)) {
-      _cache = JSON.parse(fs.readFileSync(CACHE_PATH, 'utf8'));
+    if (fs.existsSync(getCachePath())) {
+      _cache = JSON.parse(fs.readFileSync(getCachePath(), 'utf8'));
     } else {
       _cache = {};
     }
@@ -31,8 +44,8 @@ function _load() {
 
 function _save() {
   try {
-    fs.mkdirSync(path.dirname(CACHE_PATH), { recursive: true });
-    fs.writeFileSync(CACHE_PATH, JSON.stringify(_cache, null, 2), 'utf8');
+    fs.mkdirSync(path.dirname(getCachePath()), { recursive: true });
+    fs.writeFileSync(getCachePath(), JSON.stringify(_cache, null, 2), 'utf8');
   } catch (err) {
     console.warn('[AiCache] Sauvegarde impossible :', err.message);
   }
@@ -78,7 +91,7 @@ function stats() {
 
 function clear() {
   _cache = {};
-  try { fs.unlinkSync(CACHE_PATH); } catch { /* n'existe pas */ }
+  try { fs.unlinkSync(getCachePath()); } catch { /* n'existe pas */ }
 }
 
 module.exports = { get, set, stats, clear };

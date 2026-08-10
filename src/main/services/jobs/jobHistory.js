@@ -82,8 +82,23 @@ class JobHistoryManager {
   }
 
   static deleteJob(jobId) {
+    // Validation anti path-traversal : un renderer compromis pourrait passer un
+    // jobId contenant '..' ou des séparateurs pour supprimer un dossier arbitraire.
+    // On n'autorise que les noms au format job-<timestamp> (alphanum + -).
+    if (!jobId || typeof jobId !== 'string' || !/^job-[a-zA-Z0-9-]+$/.test(jobId) || jobId.includes('..')) {
+      console.warn(`[JobHistory] ID de job invalide (rejeté) : ${jobId}`);
+      return false;
+    }
     const jobsDir = this.getJobsDir();
     const jobPath = path.join(jobsDir, jobId);
+
+    // Double-check : le chemin résolu doit bien rester dans JOBS_DIR.
+    const resolved = path.resolve(jobPath);
+    const baseResolved = path.resolve(jobsDir);
+    if (resolved !== baseResolved && !resolved.startsWith(baseResolved + path.sep)) {
+      console.warn(`[JobHistory] Chemin hors JOBS_DIR rejeté : ${resolved}`);
+      return false;
+    }
 
     if (fs.existsSync(jobPath)) {
       fs.rmSync(jobPath, { recursive: true, force: true });
