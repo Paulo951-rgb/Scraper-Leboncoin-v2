@@ -332,6 +332,42 @@ assert(/cfgAutoCleanJobsDays/.test(htmlCode), 'index.html: cfgAutoCleanJobsDays 
 assert(/cfgLogRetention/.test(htmlCode), 'index.html: cfgLogRetention input');
 assert(/badge-offline/.test(htmlCode), 'index.html: badge-offline CSS class');
 
+// F4 : Module Navigateur IA Studio
+console.log('\n[7/7] Module Navigateur IA Studio');
+const mainCode4 = fs.readFileSync(path.join(base, 'main.js'), 'utf8');
+assert(/webviewTag:\s*true/.test(mainCode4), 'main.js: webviewTag activé pour le navigateur intégré');
+assert(existsSync(path.join(base, 'config/aiStudioPrompts.js')), 'config/aiStudioPrompts.js present');
+const promptsCode = fs.readFileSync(path.join(base, 'config/aiStudioPrompts.js'), 'utf8');
+assert(/DOMAINS/.test(promptsCode), 'aiStudioPrompts: DOMAINS définis');
+assert(/PROMPTS/.test(promptsCode), 'aiStudioPrompts: PROMPTS définis');
+assert(/renderPrompt/.test(promptsCode), 'aiStudioPrompts: renderPrompt exposé');
+assert(/\{\{searchContext\}\}/.test(promptsCode), 'aiStudioPrompts: variable {{searchContext}}');
+assert(/\{\{productFamily\}\}/.test(promptsCode), 'aiStudioPrompts: variable {{productFamily}}');
+assert(/\{\{topN\}\}/.test(promptsCode), 'aiStudioPrompts: variable {{topN}}');
+assert(/Top \{\{flipN\}\}/.test(promptsCode), 'aiStudioPrompts: Top flipN classement');
+assert(/Top \{\{nuggetN\}\}/.test(promptsCode), 'aiStudioPrompts: Top nuggetN classement');
+assert(/Top \{\{avoidN\}\}/.test(promptsCode), 'aiStudioPrompts: Top avoidN classement');
+assert(/Acheter \/ Négocier \/ Surveiller \/ Éviter/.test(promptsCode), 'aiStudioPrompts: recommandations Acheter/Négocier/Surveiller/Éviter');
+assert(!/require\('electron'\)/.test(promptsCode), 'aiStudioPrompts: pas de require(electron) (chargé hors pipeline)');
+assert(/tab-ai-studio/.test(htmlCode), 'index.html: onglet tab-ai-studio présent');
+assert(/aistudioDropzone/.test(htmlCode), 'index.html: zone dropzone import');
+assert(/aistudioImportInfo/.test(htmlCode), 'index.html: panneau infos import');
+assert(/iiCount/.test(htmlCode), 'index.html: compteur annonces détectées');
+assert(/aistudioWebview/.test(htmlCode), 'index.html: webview navigateur intégré');
+assert(/aistudio\.google\.com/.test(htmlCode), 'index.html: URL AI Studio par défaut');
+assert(/aistudioPromptSelect/.test(htmlCode), 'index.html: select bibliothèque prompts');
+assert(/aistudioGenerateBtn/.test(htmlCode), 'index.html: bouton génération prompt');
+assert(/Comment utiliser ce module/.test(htmlCode), 'index.html: panneau explicatif');
+assert(existsSync(path.join(__dirname, '..', 'src/renderer/aiStudioModule.js')), 'renderer/aiStudioModule.js present');
+const aistudioModCode = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/aiStudioModule.js'), 'utf8');
+assert(/window\.aiStudioModule/.test(aistudioModCode), 'aiStudioModule: exposé sur window.aiStudioModule');
+assert(/renderPrompt/.test(aistudioModCode), 'aiStudioModule: renderPrompt présent (parité avec aiStudioPrompts)');
+assert(/handleFile/.test(aistudioModCode), 'aiStudioModule: handleFile (glisser-déposer + gros fichiers)');
+assert(/formatBytes/.test(aistudioModCode), 'aiStudioModule: formatBytes (taille fichier)');
+assert(/aistudio\.google\.com/.test(aistudioModCode), 'aiStudioModule: URL AI Studio par défaut');
+assert(!/require\('electron'\)/.test(aistudioModCode), 'aiStudioModule: pas de require(electron) (renderer sandboxé)');
+assert(/aiStudioModule\.js/.test(htmlCode), 'index.html: inclut aiStudioModule.js');
+
 console.log(`\n=== RÉSULTAT : ${pass} réussis, ${fail} échoués ===`);
 process.exit(fail > 0 ? 1 : 0);
 }
