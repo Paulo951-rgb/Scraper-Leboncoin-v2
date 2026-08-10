@@ -27,9 +27,9 @@ class JobHistoryManager {
       const jobPath = path.join(jobsDir, entry.name);
       const resultsDir = path.join(jobPath, 'results');
       const jsonPath = path.join(resultsDir, 'annonces.json');
-      const csvPath = path.join(resultsDir, 'annonces.csv');
       const xlsxPath = path.join(resultsDir, 'annonces.xlsx');
       const txtPath = path.join(resultsDir, 'annonces.txt');
+      const resumesPath = path.join(resultsDir, 'resumes-ia.json');
       const rapportPath = path.join(resultsDir, 'rapport.txt');
 
       let rawAds = [];
@@ -62,9 +62,9 @@ class JobHistoryManager {
         integrityWarning,
         files: {
           json: fs.existsSync(jsonPath) ? jsonPath : null,
-          csv: fs.existsSync(csvPath) ? csvPath : null,
           xlsx: fs.existsSync(xlsxPath) ? xlsxPath : null,
           txt: fs.existsSync(txtPath) ? txtPath : null,
+          resumes: fs.existsSync(resumesPath) ? resumesPath : null,
           rapport: fs.existsSync(rapportPath) ? rapportPath : null,
         },
       });

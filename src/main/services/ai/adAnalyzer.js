@@ -93,7 +93,9 @@ ${jsonSpec}`;
 /**
  * Télécharge une image et la convertit en base64. Timeout propre.
  */
-async function downloadImageAsBase64(url, timeoutMs = 15000) {
+async function downloadImageAsBase64(url, timeoutMs = 8000) {
+  // Timeout réduit à 8s (était 15s) : une image qui met >8s à télécharger est
+  // généralement morte ou bloquée ; on n'attend pas et on tombe sur texte-seul.
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let res;

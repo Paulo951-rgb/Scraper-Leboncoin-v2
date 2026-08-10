@@ -262,6 +262,8 @@ class MarketValueAnalyzer {
     const onProgress = opts.onProgress || (() => {});
     const total = ads.length;
     let done = 0;
+    let searchOk = 0;
+    let aiOk = 0;
 
     const queue = [...ads];
     const worker = async () => {
@@ -270,16 +272,23 @@ class MarketValueAnalyzer {
         if (!ad) break;
         try {
           ad.marketAnalysis = await MarketValueAnalyzer.analyzeMarket(ad, aiConfig, searchConfig);
+          if (ad.marketAnalysis && !ad.marketAnalysis._fallback) aiOk++;
+          if (ad.marketAnalysis && Array.isArray(ad.marketAnalysis.sources) && ad.marketAnalysis.sources.length > 0) searchOk++;
         } catch (err) {
           ad.marketAnalysis = fallbackMarket(ad, err.message, []);
         }
         done++;
-        onProgress({ done, total, percent: Math.round((done / total) * 100), status: `Marché ${done}/${total}` });
+        onProgress({
+          done, total,
+          percent: Math.round((done / total) * 100),
+          status: `Marché ${done}/${total} (recherche OK: ${searchOk}, estimation OK: ${aiOk})`,
+          stageCounts: { searchOk, aiOk },
+        });
       }
     };
 
     await Promise.all(Array.from({ length: Math.min(concurrency, total) }, () => worker()));
-    onProgress({ done: total, total, percent: 100, status: 'Analyse marché terminée.' });
+    onProgress({ done: total, total, percent: 100, status: `Analyse marché terminée (recherche OK: ${searchOk}, estimation OK: ${aiOk}).`, stageCounts: { searchOk, aiOk } });
     return ads;
   }
 }

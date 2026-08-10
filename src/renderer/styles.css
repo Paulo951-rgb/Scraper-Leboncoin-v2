@@ -460,7 +460,8 @@ input:focus, select:focus { border-color: var(--primary-color); }
 .modal-card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 10px; padding: 20px; width: 400px; text-align: center; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
 .modal-large { width: 750px; max-width: 90vw; max-height: 90vh; text-align: left; overflow-y: auto; }
 .modal-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 10px; margin-bottom: 15px; }
-.btn-close { background: none; border: none; color: var(--text-color); font-size: 1.5rem; cursor: pointer; }
+.btn-close { background: none; border: none; color: var(--text-color); font-size: 1.5rem; cursor: pointer; flex-shrink: 0; transform: none; }
+.modal-header { flex-wrap: nowrap; }
 
 .modal-body-grid { display: grid; grid-template-columns: 300px 1fr; gap: 20px; }
 .gallery-container { display: flex; flex-direction: column; gap: 10px; }
@@ -602,7 +603,7 @@ input:focus, select:focus { border-color: var(--primary-color); }
 .btn:active { transform: scale(0.97); }
 .btn:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
 .tab-btn:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
-.btn-close:hover { color: var(--primary-color); transform: rotate(90deg); transition: transform 0.18s ease, color 0.18s ease; }
+.btn-close:hover { color: var(--primary-color); transition: color 0.18s ease; }
 .stat-card { transition: transform 0.15s ease, box-shadow 0.15s ease; }
 .stat-card:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(0,0,0,0.28); }
 .modal-overlay { opacity: 1; transition: opacity 0.18s ease; }

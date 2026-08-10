@@ -173,6 +173,7 @@ const AiStudioModule = {
         topN,
         rankings,
       });
+      if (res && res.error) throw new Error(res.error);
       const prompt = (res && res.prompt) || '';
       if (!prompt) throw new Error('Réponse vide.');
       this.el.aistudioPromptOutput.value = prompt;

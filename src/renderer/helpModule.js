@@ -22,7 +22,7 @@ const FAQ_DATA = [
           <li>récupérer des dizaines, voire des centaines d'annonces en quelques minutes ;</li>
           <li>estimer si chaque annonce est une <strong>bonne affaire</strong>, un prix correct ou <strong>trop cher</strong> grâce à une IA locale ;</li>
           <li>visualiser le marché (prix moyen, médian, distribution, carte géographique) ;</li>
-          <li>comparer les annonces et exporter les résultats (Excel, JSON, CSV, TXT).</li>
+          <li>comparer les annonces et exporter les résultats (Excel, JSON, TXT).</li>
         </ul>`
   },
   {
@@ -140,7 +140,7 @@ const FAQ_DATA = [
     a: `<p>Dans le <strong>dossier de sortie</strong> du logiciel (bouton « Dossier principal » dans l'onglet Historique). Chaque job crée un sous-dossier horodaté contenant :</p>
         <ul>
           <li><code>annonces.xlsx</code> (Excel stylisé) ;</li>
-          <li><code>annonces.json</code>, <code>annonces.csv</code>, <code>annonces.txt</code> ;</li>
+          <li><code>annonces.json</code>, <code>annonces.txt</code>, <code>resumes-ia.json</code> (résumés IA compacts) ;</li>
           <li>les fichiers <code>.har</code> (capture réseau, nettoyés automatiquement après quelques jours).</li>
         </ul>`
   },
@@ -235,7 +235,7 @@ const HELP_SECTIONS = [
     body: `<p>Chaque job est stocké dans le <strong>dossier de sortie</strong> (bouton « Dossier principal » dans l'onglet Historique).</p>
       <ul>
         <li><strong>Excel (.xlsx)</strong> — stylisé, filtres auto, mise en forme conditionnelle.</li>
-        <li><strong>JSON / CSV / TXT</strong> — formats lisibles pour réutilisation.</li>
+        <li><strong>JSON / TXT</strong> — formats lisibles pour réutilisation.</li>
         <li>Les fichiers <code>.har</code> sont nettoyés automatiquement (Paramètres → rétention).</li>
       </ul>
       <p>L'onglet <strong>📁 Historique Jobs</strong> liste tous les scrapings passés, avec accès aux fichiers et suppression.</p>`
