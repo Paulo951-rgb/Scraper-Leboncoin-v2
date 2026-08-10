@@ -296,20 +296,53 @@ const AiStudioModule = {
     const wv = e.aistudioWebview;
     const loading = e.aistudioWebviewLoading;
 
+    // User-Agent Chrome réel (sans le mot "Electron") : AI Studio détecte
+    // l'UA Electron et peut rendre en mode dégradé/blanchi. On spoofe un
+    // Chrome standard pour qu'AI Studio s'affiche normalement.
+    const CHROME_UA =
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+    let uaForced = false;
+    const forceUA = () => {
+      if (uaForced) return;
+      try { wv.setUserAgent(CHROME_UA); uaForced = true; } catch (_) {}
+    };
+
     const updateUrl = (url) => {
       if (url) e.aistudioUrlBar.value = url;
     };
 
-    if (wv) {
-      if (wv.addEventListener) {
-        wv.addEventListener('did-start-loading', () => loading.classList.remove('hidden'));
-        wv.addEventListener('did-stop-loading', () => {
-          loading.classList.add('hidden');
-          updateUrl(wv.getURL ? wv.getURL() : null);
-        });
-        wv.addEventListener('did-navigate', (ev) => updateUrl(ev && ev.url));
-        wv.addEventListener('did-navigate-in-page', (ev) => updateUrl(ev && ev.url));
-      }
+    if (wv && wv.addEventListener) {
+      // Masquer l'indicateur après un délai de sécurité même si
+      // did-stop-loading ne se déclenche pas (SPA AI Studio = chargement
+      // en continu). On ne JAMAIS masquer avec un overlay blanc.
+      let hideTimer = null;
+      const scheduleHide = () => {
+        if (hideTimer) clearTimeout(hideTimer);
+        hideTimer = setTimeout(() => loading.classList.add('hidden'), 2500);
+      };
+
+      wv.addEventListener('did-start-loading', () => {
+        forceUA();
+        loading.classList.remove('hidden');
+        scheduleHide();
+      });
+      wv.addEventListener('did-stop-loading', () => {
+        loading.classList.add('hidden');
+        updateUrl(wv.getURL ? wv.getURL() : null);
+      });
+      wv.addEventListener('did-finish-load', () => { loading.classList.add('hidden'); scheduleHide(); });
+      wv.addEventListener('did-navigate', (ev) => { forceUA(); updateUrl(ev && ev.url); scheduleHide(); });
+      wv.addEventListener('did-navigate-in-page', (ev) => { updateUrl(ev && ev.url); scheduleHide(); });
+      wv.addEventListener('did-fail-load', (ev) => {
+        loading.classList.add('hidden');
+        if (ev && ev.errorCode && ev.errorCode !== -3) {
+          console.warn('[AI Studio] chargement échoué :', ev.errorCode, ev.errorDescription);
+        }
+      });
+      wv.addEventListener('dom-ready', () => { forceUA(); scheduleHide(); });
+
+      // Tentative immédiate (au cas où dom-ready serait déjà passé).
+      forceUA();
     }
 
     e.aistudioBackBtn.addEventListener('click', () => { try { wv.goBack(); } catch (_) {} });
