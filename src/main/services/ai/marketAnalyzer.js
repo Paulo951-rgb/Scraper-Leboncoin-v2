@@ -48,17 +48,17 @@ class MarketAnalyzer {
       // Séparation cache miss / cache hit
       const toAnalyze = [];
       const cachedResults = [];
-      for (const ad of batch) {
-        const idx = i + batch.indexOf(ad);
+      batch.forEach((ad, j) => {
+        const idx = i + j;
         if (useCache && ad.id) {
           const cached = aiCache.get(ad.id);
           if (cached) {
             cachedResults.push({ idx, ad, specs: cached.specs });
-            continue;
+            return;
           }
         }
         toAnalyze.push({ idx, ad });
-      }
+      });
 
       if (cachedResults.length > 0) {
         log(`Batch IA ${Math.floor(i / concurrency) + 1} : ${cachedResults.length} cache hit(s), ${toAnalyze.length} à analyser`, 'debug');
@@ -125,55 +125,66 @@ JSON attendu:
     let aiData = null;
     const t0Ai = Date.now();
 
+    // Timeout : sans ça, un serveur IA injoignable pouvait bloquer l'analyse
+    // d'une annonce indéfiniment (fetch natif n'a pas d'option timeout).
+    const mkTimeout = (ms = 60000) => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), ms);
+      return { signal: controller.signal, done: () => clearTimeout(timer) };
+    };
+
     try {
       if (provider === 'openai' && apiKey) {
-        const res = await fetch('https://api.openai.com/v1/chat/completions', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-          body: JSON.stringify({
-            model: model || 'gpt-4o-mini',
-            messages: [{ role: 'user', content: prompt }],
-            response_format: { type: 'json_object' },
-            temperature: 0.2,
-          }),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          aiData = JSON.parse(data.choices[0].message.content);
-          console.log(`[MarketAnalyzer] IA OpenAI OK en ${formatMs(Date.now() - t0Ai)} — produit identifié : "${(aiData.identifiedProduct || '').slice(0, 40)}".`);
-        } else {
-          const warnMsg = `⚠️ IA OpenAI injoignable (HTTP ${res.status}) — données par défaut appliquées.`;
-          console.warn(warnMsg);
-        }
+        const to = mkTimeout(60000);
+        try {
+          const res = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+            body: JSON.stringify({
+              model: model || 'gpt-4o-mini',
+              messages: [{ role: 'user', content: prompt }],
+              response_format: { type: 'json_object' },
+              temperature: 0.2,
+            }),
+            signal: to.signal,
+          });
+          if (res.ok) {
+            const data = await res.json();
+            aiData = JSON.parse(data.choices[0].message.content);
+            console.log(`[MarketAnalyzer] IA OpenAI OK en ${formatMs(Date.now() - t0Ai)} — produit identifié : "${(aiData.identifiedProduct || '').slice(0, 40)}".`);
+          } else {
+            console.warn(`⚠️ IA OpenAI injoignable (HTTP ${res.status}) — données par défaut appliquées.`);
+          }
+        } finally { to.done(); }
       } else if (provider === 'openai' && !apiKey) {
-        const warnMsg = `⚠️ Provider OpenAI sélectionné mais clé API manquante — données par défaut appliquées.`;
-        console.warn(warnMsg);
+        console.warn(`⚠️ Provider OpenAI sélectionné mais clé API manquante — données par défaut appliquées.`);
       } else if (provider === 'ollama') {
-        const res = await fetch(`${ollamaUrl}/api/generate`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            model: model || 'llama3',
-            prompt,
-            format: 'json',
-            stream: false,
-          }),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          aiData = JSON.parse(data.response);
-          console.log(`[MarketAnalyzer] IA Ollama OK en ${formatMs(Date.now() - t0Ai)} — produit identifié : "${(aiData.identifiedProduct || '').slice(0, 40)}".`);
-        } else {
-          const warnMsg = `⚠️ IA Ollama injoignable (HTTP ${res.status} sur ${ollamaUrl}) — données par défaut appliquées.`;
-          console.warn(warnMsg);
-        }
+        const to = mkTimeout(120000);
+        try {
+          const res = await fetch(`${ollamaUrl}/api/generate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              model: model || 'llama3',
+              prompt,
+              format: 'json',
+              stream: false,
+            }),
+            signal: to.signal,
+          });
+          if (res.ok) {
+            const data = await res.json();
+            aiData = JSON.parse(data.response);
+            console.log(`[MarketAnalyzer] IA Ollama OK en ${formatMs(Date.now() - t0Ai)} — produit identifié : "${(aiData.identifiedProduct || '').slice(0, 40)}".`);
+          } else {
+            console.warn(`⚠️ IA Ollama injoignable (HTTP ${res.status} sur ${ollamaUrl}) — données par défaut appliquées.`);
+          }
+        } finally { to.done(); }
       } else {
-        const warnMsg = `⚠️ Provider IA inconnu "${provider}" — données par défaut appliquées.`;
-        console.warn(warnMsg);
+        console.warn(`⚠️ Provider IA inconnu "${provider}" — données par défaut appliquées.`);
       }
     } catch (err) {
-      const warnMsg = `⚠️ IA injoignable (${provider}) : ${err.message} — données par défaut appliquées.`;
-      console.warn(warnMsg);
+      console.warn(`⚠️ IA injoignable (${provider}) : ${err.message} — données par défaut appliquées.`);
     }
 
     // 🟢 SÉCURITÉ : Si l'IA échoue, l'annonce est étiquetée comme vague à confiance FAIBLE

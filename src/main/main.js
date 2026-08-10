@@ -27,6 +27,11 @@ try {
 let mainWindow;
 let widgetWindow = null;
 
+// Getter de la fenêtre principale (pour ipcHandlers) : renvoie null si fermée.
+function getMainWindow() {
+  return mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+}
+
 function createWidgetWindow() {
   if (widgetWindow && !widgetWindow.isDestroyed()) {
     widgetWindow.focus();
@@ -107,17 +112,33 @@ function createWindow() {
     console.error('❌ Impossible de charger index.html :', err);
   });
 
-  if (setupIpcHandlers) {
-    setupIpcHandlers(mainWindow);
-  }
-
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
 }
 
+// Single-instance lock : empêche plusieurs instances concurrentes (qui se
+// battraient pour la session globale et les fichiers de job).
+const gotSingleLock = app.requestSingleInstanceLock();
+if (!gotSingleLock) {
+  console.log('Une autre instance est déjà en cours — fermeture.');
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    // L'utilisateur a relancé l'app : focus sur la fenêtre existante.
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+}
+
 app.whenReady().then(() => {
   console.log('✅ Electron app ready !');
+  // Enregistre les handlers IPC UNE SEULE FOIS (évite "second handler" au
+  // recréation de fenêtre). Le getter permet de toujours cibler la fenêtre
+  // courante même après recréation.
+  if (setupIpcHandlers) setupIpcHandlers(getMainWindow);
   createWindow();
 }).catch((err) => {
   console.error('❌ Erreur app.whenReady :', err);
@@ -126,4 +147,10 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   console.log('Toutes les fenêtres sont fermées.');
   if (process.platform !== 'darwin') app.quit();
+});
+
+// macOS : recrée une fenêtre quand on clique sur l'icône du dock et qu'aucune
+// fenêtre n'est ouverte (comportement attendu sur Mac).
+app.on('activate', () => {
+  if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });

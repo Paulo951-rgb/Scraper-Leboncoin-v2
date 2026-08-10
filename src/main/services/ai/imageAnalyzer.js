@@ -144,13 +144,21 @@ class ImageAnalyzer {
   }
 
   async _fetchImageAsBase64(url) {
-    const res = await fetch(url, { timeout: 15000 });
-    if (!res.ok) throw new Error(`Image HTTP ${res.status}`);
-    const buf = await res.arrayBuffer();
-    return {
-      data: Buffer.from(buf).toString('base64'),
-      mimeType: res.headers.get('content-type') || 'image/jpeg',
-    };
+    // AbortController : Node.js fetch ne supporte pas l'option `timeout`.
+    // Sans ça, une image inaccessible pouvait bloquer le worker indéfiniment.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
+    try {
+      const res = await fetch(url, { signal: controller.signal });
+      if (!res.ok) throw new Error(`Image HTTP ${res.status}`);
+      const buf = await res.arrayBuffer();
+      return {
+        data: Buffer.from(buf).toString('base64'),
+        mimeType: res.headers.get('content-type') || 'image/jpeg',
+      };
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   async _callOllamaVision(images, ad) {
@@ -166,11 +174,19 @@ class ImageAnalyzer {
       format: 'json',
     };
 
-    const res = await fetch(`${this.ollamaUrl}/api/generate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 120000);
+    let res;
+    try {
+      res = await fetch(`${this.ollamaUrl}/api/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
 
     if (!res.ok) {
       const detail = await res.text().catch(() => '');

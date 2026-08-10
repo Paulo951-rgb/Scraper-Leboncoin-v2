@@ -288,7 +288,9 @@ class HarCapturer extends EventEmitter {
         }
 
         if (pageNum < maxPages) {
-          await sleep(this.minPageDelayMs + Math.random() * 1000);
+          const minDelay = this.minPageDelayMs;
+          const maxDelay = Math.max(this.maxPageDelayMs, minDelay);
+          await sleep(minDelay + Math.random() * (maxDelay - minDelay));
         }
       }
 
