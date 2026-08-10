@@ -289,6 +289,10 @@ class AdAnalyzer {
 
     await Promise.all(Array.from({ length: Math.min(concurrency, total) }, () => worker()));
     onProgress({ done: total, total, percent: 100, status: 'Analyse terminée.' });
+    // Flush disque du cache IA : les set() sont debouncés pour éviter de
+    // bloquer l'event-loop pendant le batch. On force l'écriture finale pour
+    // que toutes les entrées de ce lot soient persistées avant de rendre la main.
+    aiCache._flushSave();
     return ads;
   }
 }

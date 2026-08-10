@@ -27,6 +27,41 @@ function getCachePath() {
 const MAX_ENTRIES = 5000;
 
 let _cache = null;
+let _saveTimer = null;
+const SAVE_DEBOUNCE_MS = 1000;
+
+function _saveNow() {
+  if (!_cache) return; // rien à écrire si jamais chargé
+  try {
+    fs.mkdirSync(path.dirname(getCachePath()), { recursive: true });
+    fs.writeFileSync(getCachePath(), JSON.stringify(_cache, null, 2), 'utf8');
+  } catch (err) {
+    console.warn('[AiCache] Sauvegarde impossible :', err.message);
+  }
+}
+
+function _flushSave() {
+  if (_saveTimer) {
+    clearTimeout(_saveTimer);
+    _saveTimer = null;
+  }
+  _saveNow();
+}
+
+// Sauvegarde debouncée : pendant une analyse par lots (concurrency xN), chaque
+// annonce complétée déclenche un set(). Écrire tout le cache (jusqu'à 5000
+// entrées) en synchrone à chaque set bloquerait l'event-loop principal et
+// ferait saccader la progression IPC. On coalesce les écritures : un seul flush
+// disque au plus SAVE_DEBOUNCE_MS après la dernière écriture. En cas de crash,
+// on perd au pire la dernière seconde de mises en cache (cache = optimisation
+// régénérable, pas une donnée critique).
+function _scheduleSave() {
+  if (_saveTimer) return;
+  _saveTimer = setTimeout(() => {
+    _saveTimer = null;
+    _saveNow();
+  }, SAVE_DEBOUNCE_MS);
+}
 
 function _load() {
   if (_cache) return _cache;
@@ -40,15 +75,6 @@ function _load() {
     _cache = {};
   }
   return _cache;
-}
-
-function _save() {
-  try {
-    fs.mkdirSync(path.dirname(getCachePath()), { recursive: true });
-    fs.writeFileSync(getCachePath(), JSON.stringify(_cache, null, 2), 'utf8');
-  } catch (err) {
-    console.warn('[AiCache] Sauvegarde impossible :', err.message);
-  }
 }
 
 function _key(listId, prefix) {
@@ -74,7 +100,7 @@ function set(listId, specs, prefix) {
     cachedAt: Date.now(),
   };
   _evictIfNeeded(cache);
-  _save();
+  _scheduleSave();
 }
 
 // Éviction des entrées les plus anciennes si le cache dépasse le plafond.
@@ -95,8 +121,9 @@ function stats() {
 }
 
 function clear() {
+  _flushSave(); // écrit toute écriture pendante avant de vider
   _cache = {};
   try { fs.unlinkSync(getCachePath()); } catch { /* n'existe pas */ }
 }
 
-module.exports = { get, set, stats, clear };
+module.exports = { get, set, stats, clear, _flushSave };
