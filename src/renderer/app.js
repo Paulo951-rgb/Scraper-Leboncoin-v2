@@ -206,12 +206,53 @@ function renderPresets() {
     .join('');
 }
 
+// Capture l'intégralité de la configuration de recherche (URL + pages + limite
+// + options IA + proxy) afin qu'un preset soit réellement un restauration
+// « 1-clic » de la recherche, et pas seulement URL + pages.
+function collectSearchConfig() {
+  return {
+    searchUrl: document.getElementById('searchUrl').value.trim(),
+    pages: document.getElementById('pages').value,
+    limit: document.getElementById('limit').value,
+    noDesc: document.getElementById('noDesc').checked,
+    autoAiMarket: autoAiMarket.checked,
+    proxyUrl: proxyUrl.value.trim(),
+    aiProvider: aiProvider.value,
+    aiModelName: aiModelName.value.trim() || 'llama3',
+    aiVisionModel: localStorage.getItem('ai-vision-model') || 'llava',
+  };
+}
+
+// Applique une configuration de recherche sauvegardée dans le formulaire.
+// Les champs manquants (presets anciens) retombent sur les valeurs actuelles.
+function applySearchConfig(cfg) {
+  if (!cfg) return;
+  if (cfg.searchUrl) document.getElementById('searchUrl').value = cfg.searchUrl;
+  if (cfg.pages != null) document.getElementById('pages').value = cfg.pages;
+  if (cfg.limit != null) document.getElementById('limit').value = cfg.limit;
+  if (cfg.noDesc != null) document.getElementById('noDesc').checked = cfg.noDesc;
+  if (cfg.autoAiMarket != null) autoAiMarket.checked = cfg.autoAiMarket;
+  if (cfg.proxyUrl != null) {
+    proxyUrl.value = cfg.proxyUrl;
+    localStorage.setItem('proxy-url', cfg.proxyUrl);
+  }
+  if (cfg.aiProvider) aiProvider.value = cfg.aiProvider;
+  if (cfg.aiModelName != null) {
+    aiModelName.value = cfg.aiModelName;
+    localStorage.setItem('ai-model-name', cfg.aiModelName);
+  }
+  if (cfg.aiVisionModel != null) {
+    if (aiVisionModelEl) aiVisionModelEl.value = cfg.aiVisionModel;
+    localStorage.setItem('ai-vision-model', cfg.aiVisionModel);
+  }
+}
+
 savePresetBtn.addEventListener('click', () => {
-  const url = document.getElementById('searchUrl').value.trim();
-  if (!url) return alert('Veuillez entrer une URL de recherche.');
+  const cfg = collectSearchConfig();
+  if (!cfg.searchUrl) return alert('Veuillez entrer une URL de recherche.');
   const name = prompt('Nom du modèle de recherche :', 'Ma Recherche');
   if (name) {
-    presets.push({ name, url, pages: document.getElementById('pages').value });
+    presets.push({ name, ...cfg });
     localStorage.setItem('search-presets', JSON.stringify(presets));
     renderPresets();
   }
@@ -219,10 +260,7 @@ savePresetBtn.addEventListener('click', () => {
 
 window.loadPreset = (i) => {
   const p = presets[i];
-  if (p) {
-    document.getElementById('searchUrl').value = p.url;
-    document.getElementById('pages').value = p.pages || 2;
-  }
+  if (p) applySearchConfig({ searchUrl: p.url || p.searchUrl, pages: p.pages, ...p });
 };
 
 window.deletePreset = (i) => {
@@ -266,7 +304,7 @@ openCompareModalBtn.addEventListener('click', () => {
       const sign = ma.deltaEur > 0 ? '+' : '';
       return `
       <div class="compare-col">
-        <img src="${a.images?.[0] || 'https://via.placeholder.com/200'}" style="width:100%; height:140px; object-fit:cover; border-radius:6px;">
+        <img src="${a.images?.[0] || noPhotoUrl()}" style="width:100%; height:140px; object-fit:cover; border-radius:6px;">
         <strong>${escapeHtml(identifiedName(a))}</strong>
         <div style="font-size:1.2rem; font-weight:bold; color:var(--primary-color);">${a.price} €</div>
         <div style="font-size:0.8rem; color:var(--text-muted);">Valeur marché : ${ma.realValue != null ? ma.realValue + ' €' : '-'}</div>
@@ -822,7 +860,7 @@ function renderExplorerAds() {
         const badgeHtml = renderMarketBadge(ma);
 
         const isStarred = starredAds.has(String(a.id));
-        const thumbUrl = Array.isArray(a.images) && a.images.length > 0 ? a.images[0] : 'https://via.placeholder.com/250x160?text=Pas+de+photo';
+        const thumbUrl = Array.isArray(a.images) && a.images.length > 0 ? a.images[0] : noPhotoUrl();
 
         return `
         <div class="ad-card">
@@ -982,7 +1020,7 @@ window.openAdDetail = (adId) => {
   }
 
   // Photos & Carrousel
-  const images = Array.isArray(targetAd.images) && targetAd.images.length > 0 ? targetAd.images : ['https://via.placeholder.com/400x250?text=Pas+de+photo'];
+  const images = Array.isArray(targetAd.images) && targetAd.images.length > 0 ? targetAd.images : [noPhotoUrl()];
   mainGalleryImg.src = images[0];
 
   galleryThumbnails.innerHTML = images
@@ -1250,7 +1288,10 @@ function renderCharts(ads) {
       datasets: [{
         data: [partCount, proCount],
         backgroundColor: ['#38bdf8', '#8b5cf6'],
-        borderColor: 'var(--bg-card, #1e293b)',
+        // Chart.js dessine sur un canvas : les variables CSS ne sont pas
+        // résolues et rendent la bordure invisible/noire. On lit la valeur
+        // réellement calculée par le navigateur via getComputedStyle.
+        borderColor: getComputedStyle(document.body).getPropertyValue('--card-bg').trim() || '#1e293b',
         borderWidth: 3,
         hoverOffset: 8,
       }],
@@ -1318,6 +1359,14 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 }
+
+// Placeholder d'image 100% local (data-URI SVG) — évite toute dépendance réseau
+// (via.placeholder.com) lorsqu'une annonce n'a pas de photo ou en mode hors-ligne.
+const PLACEHOLDER_SVG = (label) =>
+  `data:image/svg+xml;utf8,${encodeURIComponent(
+    `<svg xmlns='http://www.w3.org/2000/svg' width='400' height='250'><rect width='100%' height='100%' fill='#1e293b'/><text x='50%' y='50%' fill='#64748b' font-family='sans-serif' font-size='18' text-anchor='middle' dominant-baseline='middle'>${label || 'Pas de photo'}</text></svg>`
+  )}`;
+const noPhotoUrl = () => PLACEHOLDER_SVG('Pas de photo');
 
 function escapePath(pathStr) {
   if (!pathStr) return '';
