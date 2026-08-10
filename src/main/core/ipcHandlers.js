@@ -14,6 +14,7 @@ const { ImageAnalyzer } = require('../services/ai/imageAnalyzer');
 const { JobSchedulerManager } = require('../services/jobs/jobScheduler');
 const { GlobalAnalyzer } = require('../services/ai/globalAnalyzer');
 const { PromptGenerator } = require('../services/ai/promptGenerator');
+const { checkOllamaHealth } = require('../services/ai/ollamaHealth');
 const { Notifier } = require('../infrastructure/notifications');
 const { JOBS_DIR, BASE_OUT_DIR } = require('../config/constants');
 const { redact, summarizeAds, formatBytes, describeError } = require('../utils/diagnostics');
@@ -333,17 +334,31 @@ function setupIpcHandlers(getMainWindow) {
     return loadSettings();
   });
 
-  // Génération de prompt personnalisé via Gemini (module AI Studio).
-  // Remplace les prompts statiques pré-enregistrés : Gemini produit un prompt
-  // détaillé adapté au domaine + objectif + variables de l'utilisateur.
-  ipcMain.handle('prompt:generate', async (event, { domain, objective, customHints, vars, geminiApiKey, geminiModel }) => {
-    if (!geminiApiKey) throw new Error('Clé API Gemini manquante (nécessaire pour générer le prompt).');
-    sendStatus({ state: 'processing', message: 'Génération du prompt par Gemini…' });
+  // Génération de prompt personnalisé via Ollama LOCAL (module AI Studio).
+  // Aucune IA sur le web, aucune clé API : tout passe par le serveur Ollama
+  // local. L'utilisateur peut aussi vérifier qu'Ollama est démarré et lister
+  // les modèles installés.
+  ipcMain.handle('prompt:generate', async (event, { domain, objective, customHints, vars, ollamaUrl, ollamaModel }) => {
+    const url = ollamaUrl || 'http://127.0.0.1:11434';
+    const model = ollamaModel || 'llama3';
+    sendStatus({ state: 'processing', message: `Génération du prompt par Ollama (${model})…` });
     const prompt = await PromptGenerator.generate(
-      { domain, objective, customHints, vars, geminiApiKey, geminiModel: geminiModel || 'gemini-2.0-flash' },
+      { domain, objective, customHints, vars, ollamaUrl: url, ollamaModel: model },
       (prog) => sendProgress({ percent: prog.percent, status: prog.status })
     );
     return { prompt };
+  });
+
+  // Liste les modèles Ollama installés localement (pour le select du module
+  // AI Studio). Réutilise le health-check existant.
+  ipcMain.handle('ollama:models', async (event, { ollamaUrl } = {}) => {
+    const url = ollamaUrl || 'http://127.0.0.1:11434';
+    try {
+      const health = await checkOllamaHealth(url, 5000);
+      return { ok: health.ok, message: health.message, models: health.models || [] };
+    } catch (err) {
+      return { ok: false, message: 'Ollama injoignable : ' + (err.message || err), models: [] };
+    }
   });
 
   ipcMain.handle('config:save', async (event, patch) => {
