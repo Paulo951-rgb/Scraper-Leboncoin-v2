@@ -1,22 +1,26 @@
 'use strict';
 
 /**
- * PromptGenerator — génère des prompts d'analyse personnalisés via Gemini,
- * au lieu d'utiliser des prompts statiques pré-enregistrés.
+ * PromptGenerator — génère des prompts d'analyse personnalisés via une IA
+ * LOCALE (Ollama), au lieu d'une IA sur le web.
  *
- * Réutilise le même endpoint Gemini que GlobalAnalyzer (et la même logique
- * de fetch / retry) mais avec une mission différente : produire un prompt
- * détaillé adapté au domaine et à l'objectif de l'utilisateur.
+ * Aucune clé API, aucune requête vers internet : tout passe par le serveur
+ * Ollama local (http://127.0.0.1:11434 par défaut). Réutilise la même logique
+ * de fetch / timeout (AbortController) que marketAnalyzer.
+ *
+ * Mission : produire un prompt d'analyse détaillé adapté au domaine et à
+ * l'objectif de l'utilisateur. Ce prompt est ensuite collé dans Google AI
+ * Studio avec le fichier d'annonces.
  */
 
-const { truncate, formatBytes, formatMs, redact } = require('../../utils/diagnostics');
-const { sleep } = require('../../utils/helpers');
+const { truncate, formatMs } = require('../../utils/diagnostics');
 
-const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models';
+const DEFAULT_OLLAMA_URL = 'http://127.0.0.1:11434';
+const DEFAULT_MODEL = 'llama3';
 
-// Méta-instructions : ce que l'IA doit PRODUIRE (un prompt, pas une analyse).
-// On lui fournit contexte + variables, il génère le prompt final à coller
-// dans AI Studio avec le fichier d'annonces.
+// Méta-instructions : ce que l'IA locale doit PRODUIRE (un prompt, pas une
+// analyse). On lui fournit contexte + variables, il génère le prompt final
+// à coller dans AI Studio avec le fichier d'annonces.
 const META_SYSTEM = `Tu es un ingénieur de prompts expert en analyse d'annonces Leboncoin pour l'achat-revente.
 On te donne un contexte (domaine, recherche, variables) et tu dois générer un PROMPT complet, détaillé et prêt à coller dans Google AI Studio.
 
@@ -35,8 +39,8 @@ Voici le contexte fourni par l'utilisateur :`;
 
 class PromptGenerator {
   /**
-   * Génère un prompt d'analyse personnalisé via Gemini.
-   * @param {Object} input { domain, objective, customHints, vars, geminiApiKey, geminiModel }
+   * Génère un prompt d'analyse personnalisé via Ollama (local).
+   * @param {Object} input { domain, objective, customHints, vars, ollamaUrl, ollamaModel }
    * @param {Function} onProgress callback optionnel {percent,status}
    * @returns {Promise<string>} le prompt généré (texte)
    */
@@ -46,11 +50,12 @@ class PromptGenerator {
       objective = 'Trouve les meilleures affaires et opportunités d\'achat-revente.',
       customHints = '',
       vars = {},
-      geminiApiKey,
-      geminiModel = 'gemini-2.0-flash',
+      ollamaUrl = DEFAULT_OLLAMA_URL,
+      ollamaModel = DEFAULT_MODEL,
     } = input;
 
-    if (!geminiApiKey) throw new Error('Clé API Gemini manquante (nécessaire pour générer le prompt).');
+    if (!ollamaUrl) throw new Error('URL Ollama manquante.');
+    if (!ollamaModel) throw new Error('Modèle Ollama manquant.');
 
     if (onProgress) onProgress({ percent: 10, status: 'Construction du contexte…' });
 
@@ -70,14 +75,14 @@ Génère maintenant le prompt complet à coller dans AI Studio.`;
 
 ${userContext}`;
 
-    console.log(`[PromptGenerator] Génération — domain=${domain} | model=${geminiModel} | apiKey=${redact(geminiApiKey)} | prompt=${formatBytes(Buffer.byteLength(metaPrompt, 'utf8'))}`);
+    console.log(`[PromptGenerator] Génération locale Ollama — domain=${domain} | model=${ollamaModel} | url=${ollamaUrl} | prompt=${truncate(metaPrompt, 80)}`);
 
-    if (onProgress) onProgress({ percent: 30, status: 'Appel à Gemini…' });
+    if (onProgress) onProgress({ percent: 30, status: `Appel à Ollama (${ollamaModel})…` });
 
     let raw;
     const t0 = Date.now();
     try {
-      raw = await this._callGeminiWithRetry(metaPrompt, geminiApiKey, geminiModel, onProgress);
+      raw = await this._callOllama(metaPrompt, ollamaUrl, ollamaModel, onProgress);
     } catch (err) {
       console.error(`[PromptGenerator] Échec génération après ${formatMs(Date.now() - t0)} : ${err.message}`);
       throw err;
@@ -86,42 +91,24 @@ ${userContext}`;
 
     if (onProgress) onProgress({ percent: 100, status: 'Prompt généré.' });
 
-    // Nettoyage : retirer d'éventuels délimiteurs markdown (```...```)
-    return raw.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim();
+    return raw.trim();
   }
 
-  static async _callGeminiWithRetry(prompt, apiKey, model, onProgress, maxRetries = 3) {
-    let lastErr;
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        return await this._callGemini(prompt, apiKey, model);
-      } catch (err) {
-        lastErr = err;
-        const isRetryable = err.message.includes('429') || err.message.includes('503');
-        if (!isRetryable || attempt >= maxRetries) throw err;
-        const retryMatch = err.message.match(/retry in ([\d.]+)s/i);
-        const waitSec = retryMatch ? Math.ceil(parseFloat(retryMatch[1])) : 15 * attempt;
-        const msg = `⏳ Quota Gemini (429). Nouvelle tentative ${attempt + 1}/${maxRetries} dans ${waitSec}s…`;
-        console.warn(`[PromptGenerator] ${msg}`);
-        if (onProgress) onProgress({ percent: 30, status: msg });
-        await sleep(waitSec * 1000);
-      }
-    }
-    throw lastErr;
-  }
-
-  static async _callGemini(prompt, apiKey, model) {
-    const url = `${GEMINI_ENDPOINT}/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  static async _callOllama(prompt, ollamaUrl, model, onProgress) {
+    const base = (ollamaUrl || DEFAULT_OLLAMA_URL).replace(/\/$/, '');
+    const url = `${base}/api/generate`;
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 90000);
+    // Ollama local peut être lent sur un gros prompt — timeout généreux (3 min).
+    const timer = setTimeout(() => controller.abort(), 180000);
     let res;
     try {
       res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 0.7 },
+          model: model || DEFAULT_MODEL,
+          prompt,
+          stream: false,
         }),
         signal: controller.signal,
       });
@@ -132,23 +119,21 @@ ${userContext}`;
     if (!res.ok) {
       let detail = '';
       try {
-        const errBody = await res.json();
-        detail = errBody?.error?.message || JSON.stringify(errBody);
-      } catch {
         detail = await res.text().catch(() => '');
+      } catch (_) {}
+      console.error(`[PromptGenerator] Ollama HTTP ${res.status} : ${truncate(detail, 200)}`);
+      if (res.status === 404) {
+        throw new Error(`Ollama a répondu 404 — le modèle « ${model} » n'est pas installé. Lancez : ollama pull ${model}`);
       }
-      console.error(`[PromptGenerator] Gemini HTTP ${res.status} : ${truncate(detail, 200)}`);
-      if (res.status === 429) throw new Error(`Quota Gemini dépassé (429). ${detail.slice(0, 300)}`);
-      if (res.status === 400) throw new Error(`Requête Gemini invalide (400) : ${truncate(detail, 200)}. Vérifiez le modèle (${model}).`);
-      if (res.status === 401 || res.status === 403) throw new Error(`Clé API Gemini invalide (${res.status}).`);
-      throw new Error(`Erreur Gemini (HTTP ${res.status}) : ${truncate(detail, 200)}`);
+      throw new Error(`Ollama a répondu HTTP ${res.status}. Vérifiez que le serveur Ollama est démarré.`);
     }
 
     const data = await res.json();
-    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) throw new Error('Réponse Gemini vide (pas de texte généré).');
+    const text = data && (data.response || data.message || '');
+    if (!text) throw new Error('Réponse Ollama vide (pas de texte généré).');
     return text.trim();
   }
 }
 
 module.exports = { PromptGenerator };
+

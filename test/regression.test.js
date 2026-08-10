@@ -337,15 +337,15 @@ console.log('\n[7/7] Module Navigateur IA Studio');
 const mainCode4 = fs.readFileSync(path.join(base, 'main.js'), 'utf8');
 assert(/webviewTag:\s*true/.test(mainCode4), 'main.js: webviewTag activé pour le navigateur intégré');
 
-// Générateur de prompt IA (remplace les prompts statiques pré-enregistrés)
+// Générateur de prompt IA locale (Ollama, remplace les prompts statiques)
 assert(existsSync(path.join(base, 'services/ai/promptGenerator.js')), 'services/ai/promptGenerator.js present');
 const promptGenCode = fs.readFileSync(path.join(base, 'services/ai/promptGenerator.js'), 'utf8');
 assert(/class PromptGenerator/.test(promptGenCode), 'promptGenerator: classe PromptGenerator');
-assert(/GEMINI_ENDPOINT/.test(promptGenCode), 'promptGenerator: réutilise l\'endpoint Gemini');
-assert(/_callGemini/.test(promptGenCode), 'promptGenerator: méthode _callGemini (fetch + AbortController)');
+assert(/_callOllama/.test(promptGenCode), 'promptGenerator: méthode _callOllama (appel local)');
+assert(/\/api\/generate/.test(promptGenCode), 'promptGenerator: endpoint Ollama /api/generate');
 assert(/AbortController/.test(promptGenCode), 'promptGenerator: AbortController (timeout fetch)');
-assert(/429/.test(promptGenCode), 'promptGenerator: gestion quota 429');
-assert(/onProgress/.test(promptGenCode), 'promptGenerator: callback de progression');
+assert(/stream:\s*false/.test(promptGenCode), 'promptGenerator: stream:false (réponse complète)');
+assert(!/generativelanguage\.googleapis\.com/.test(promptGenCode), 'promptGenerator: aucun appel vers Gemini (IA locale uniquement)');
 assert(!/require\('electron'\)/.test(promptGenCode), 'promptGenerator: pas de require(electron) (réutilisable hors app)');
 
 assert(/tab-ai-studio/.test(htmlCode), 'index.html: onglet tab-ai-studio présent');
@@ -354,14 +354,18 @@ assert(/aistudio\.google\.com/.test(htmlCode), 'index.html: URL AI Studio par d�
 assert(/aistudioOpenJobsBtn/.test(htmlCode), 'index.html: bouton ouvrir dossier des jobs');
 assert(/aistudioObjective/.test(htmlCode), 'index.html: champ objectif d\'analyse');
 assert(/aistudioCustomHints/.test(htmlCode), 'index.html: champ consignes supplémentaires');
-assert(/aistudioGeminiModel/.test(htmlCode), 'index.html: select modèle Gemini');
-assert(/aistudioGenerateBtn/.test(htmlCode), 'index.html: bouton génération prompt par IA');
+assert(/aistudioOllamaUrl/.test(htmlCode), 'index.html: champ URL serveur Ollama');
+assert(/aistudioOllamaModel/.test(htmlCode), 'index.html: select modèle Ollama');
+assert(/aistudioOllamaTestBtn/.test(htmlCode), 'index.html: bouton tester Ollama (lister modèles)');
+assert(/aistudioGenerateBtn/.test(htmlCode), 'index.html: bouton génération prompt par IA locale');
 assert(/Comment utiliser ce module/.test(htmlCode), 'index.html: panneau explicatif');
 assert(existsSync(path.join(__dirname, '..', 'src/renderer/aiStudioModule.js')), 'renderer/aiStudioModule.js present');
 const aistudioModCode = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/aiStudioModule.js'), 'utf8');
 assert(/window\.aiStudioModule/.test(aistudioModCode), 'aiStudioModule: exposé sur window.aiStudioModule');
-assert(/generatePrompt/.test(aistudioModCode), 'aiStudioModule: generatePrompt appelle l\'IA via IPC');
+assert(/generatePrompt/.test(aistudioModCode), 'aiStudioModule: generatePrompt appelle l\'IA locale via IPC');
 assert(/window\.api\.generatePrompt/.test(aistudioModCode), 'aiStudioModule: appel IPC prompt:generate');
+assert(/testOllama/.test(aistudioModCode), 'aiStudioModule: testOllama (vérifie la connexion + liste les modèles)');
+assert(/listOllamaModels/.test(aistudioModCode), 'aiStudioModule: appel IPC ollama:models');
 assert(!/MASTER_PROMPT/.test(aistudioModCode), 'aiStudioModule: prompts statiques supprimés');
 assert(!/renderPrompt/.test(aistudioModCode), 'aiStudioModule: renderPrompt supprimé (génération IA)');
 assert(/aistudioOpenJobsBtn/.test(aistudioModCode), 'aiStudioModule: bouton ouvrir jobs branché');
@@ -369,10 +373,13 @@ assert(/aistudio\.google\.com/.test(aistudioModCode), 'aiStudioModule: URL AI St
 assert(!/require\('electron'\)/.test(aistudioModCode), 'aiStudioModule: pas de require(electron) (renderer sandboxé)');
 assert(/aiStudioModule\.js/.test(htmlCode), 'index.html: inclut aiStudioModule.js');
 
-// IPC prompt:generate exposé
-assert(/prompt:generate/.test(fs.readFileSync(path.join(base, 'core/ipcHandlers.js'), 'utf8')), 'ipcHandlers: handler prompt:generate');
+// IPC prompt:generate + ollama:models exposés
+const ipcHandlersCode = fs.readFileSync(path.join(base, 'core/ipcHandlers.js'), 'utf8');
+assert(/prompt:generate/.test(ipcHandlersCode), 'ipcHandlers: handler prompt:generate (Ollama local)');
+assert(/ollama:models/.test(ipcHandlersCode), 'ipcHandlers: handler ollama:models (liste modèles installés)');
 const preloadCodeFull = fs.readFileSync(path.join(base, 'preload.js'), 'utf8');
 assert(/generatePrompt/.test(preloadCodeFull), 'preload.js: expose generatePrompt');
+assert(/listOllamaModels/.test(preloadCodeFull), 'preload.js: expose listOllamaModels');
 
 // F5 : fenêtre de connexion Google dédiée (le webview est bloqué par Google pour l'OAuth)
 assert(/aistudioLoginBtn/.test(htmlCode), 'index.html: bouton 🔑 Se connecter (ouverture fenêtre dédiée)');

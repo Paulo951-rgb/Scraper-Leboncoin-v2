@@ -30,7 +30,7 @@ const AiStudioModule = {
   init() {
     const els = [
       'aistudioDomainSelect', 'aistudioObjective', 'aistudioCustomHints',
-      'aistudioGeminiModel',
+      'aistudioOllamaUrl', 'aistudioOllamaModel', 'aistudioOllamaTestBtn', 'aistudioOllamaStatus',
       'aistudioGenerateBtn', 'aistudioCopyBtn', 'aistudioGenStatus',
       'aistudioPromptOutput',
       'aistudioOpenJobsBtn',
@@ -89,11 +89,47 @@ const AiStudioModule = {
     e.aistudioDomainSelect.addEventListener('change', (ev) => this.applyDomainDefaults(ev.target.value));
     e.aistudioOpenJobsBtn.addEventListener('click', () => {
       if (window.api && window.api.openFolder) {
-        window.api.openFolder(null); // null = BASE_OUT_DIR/jobs (handler par défaut)
+        window.api.openFolder(null);
       }
     });
     e.aistudioGenerateBtn.addEventListener('click', () => this.generatePrompt());
     e.aistudioCopyBtn.addEventListener('click', () => this.copyPrompt());
+    e.aistudioOllamaTestBtn.addEventListener('click', () => this.testOllama());
+  },
+
+  setOllamaStatus(msg, isError, ok) {
+    const el = this.el.aistudioOllamaStatus;
+    if (!el) return;
+    el.textContent = msg || '';
+    el.style.color = isError ? '#e57373' : (ok ? '#7ec97e' : '');
+  },
+
+  async testOllama() {
+    const url = (this.el.aistudioOllamaUrl.value || '').trim() || 'http://127.0.0.1:11434';
+    const sel = this.el.aistudioOllamaModel;
+    const btn = this.el.aistudioOllamaTestBtn;
+    const orig = btn.textContent;
+    btn.disabled = true; btn.textContent = '⏳';
+    this.setOllamaStatus('Connexion à Ollama…');
+    try {
+      const res = await window.api.listOllamaModels({ ollamaUrl: url });
+      if (res && res.ok && res.models && res.models.length) {
+        // Remplit le select avec les modèles réellement installés.
+        sel.innerHTML = '';
+        for (const m of res.models) {
+          const o = document.createElement('option');
+          o.value = m; o.textContent = m;
+          sel.appendChild(o);
+        }
+        this.setOllamaStatus(`✅ Ollama OK — ${res.models.length} modèle(s) : ${res.models.join(', ')}`, false, true);
+      } else {
+        this.setOllamaStatus(`❌ ${(res && res.message) || 'Aucun modèle installé.'} Lancez « ollama pull llama3 » et démarrez Ollama.`, true);
+      }
+    } catch (err) {
+      this.setOllamaStatus('❌ Ollama injoignable : ' + (err && err.message ? err.message : err), true);
+    } finally {
+      btn.disabled = false; btn.textContent = orig;
+    }
   },
 
   async generatePrompt() {
@@ -103,24 +139,14 @@ const AiStudioModule = {
       || 'Trouve les meilleures affaires et opportunités d\'achat-revente, classe par score et marge nette, détecte les arnaques.';
     const customHints = (this.el.aistudioCustomHints.value || '').trim();
     const vars = this.collectVars();
-    const geminiModel = this.el.aistudioGeminiModel.value || 'gemini-2.0-flash';
-
-    // Clé API Gemini : on la récupère depuis le store (config), via IPC.
-    let geminiApiKey = '';
-    try {
-      const settings = window.api && window.api.getConfig ? await window.api.getConfig() : null;
-      geminiApiKey = (settings && settings.geminiApiKey) || '';
-    } catch (_) {}
-    if (!geminiApiKey) {
-      this.setGenStatus('❌ Aucune clé API Gemini configurée. Ajoutez-la dans les Paramètres.', true);
-      return;
-    }
+    const ollamaUrl = (this.el.aistudioOllamaUrl.value || '').trim() || 'http://127.0.0.1:11434';
+    const ollamaModel = this.el.aistudioOllamaModel.value || 'llama3';
 
     const btn = this.el.aistudioGenerateBtn;
     const orig = btn.textContent;
     btn.disabled = true;
     btn.textContent = '⏳ Génération…';
-    this.setGenStatus('Appel à Gemini…');
+    this.setGenStatus('Appel à Ollama (' + ollamaModel + ')…');
 
     try {
       const res = await window.api.generatePrompt({
@@ -128,13 +154,13 @@ const AiStudioModule = {
         objective,
         customHints,
         vars,
-        geminiApiKey,
-        geminiModel,
+        ollamaUrl,
+        ollamaModel,
       });
       const prompt = (res && res.prompt) || '';
       if (!prompt) throw new Error('Réponse vide.');
       this.el.aistudioPromptOutput.value = prompt;
-      this.setGenStatus('✅ Prompt généré par ' + geminiModel + '.');
+      this.setGenStatus('✅ Prompt généré par ' + ollamaModel + ' (local).');
     } catch (err) {
       console.error('[AI Studio] génération échouée :', err);
       this.setGenStatus('❌ ' + (err && err.message ? err.message : err), true);
