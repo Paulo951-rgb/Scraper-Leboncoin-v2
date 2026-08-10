@@ -6,11 +6,10 @@
  * Logique renderer isolée du reste de app.js pour garder le module indépendant
  * et lisible. Exposé sur window.aiStudioModule, initialisé au chargement.
  *
- * Note : les prompts/domaines sont intégrés ici (et pas importés depuis
- * src/main/config/aiStudioPrompts.js) car le renderer est sandboxé et ne peut
- * pas require de modules hors preload. Les deux définitions sont volontairement
- * dupliquées : si vous modifiez l'une, modifiez l'autre (un test vérifie la
- * cohérence du renderer côté prompts).
+ * Le module ne contient PLUS de prompts statiques : la génération de prompt
+ * est déléguée à Gemini via l'IPC 'prompt:generate' (service promptGenerator).
+ * Le renderer se contente de collecter le contexte (domaine, objectif,
+ * variables) et d'appeler l'IA, puis d'afficher / copier le prompt généré.
  */
 
 const AI_STUDIO_URL = 'https://aistudio.google.com/';
@@ -23,190 +22,18 @@ const DOMAINS = [
   { id: 'custom', label: '✏️ Personnalisé', defaults: { searchContext: 'produits', productFamily: 'produits', component: 'produit', capacity: '—', capacity2: '—', dealThreshold: '—', topN: 50, flipN: 20, compN: 20, nuggetN: 20, avoidN: 10 } },
 ];
 
-const MASTER_PROMPT = `Rôle :
-
-Tu es un expert en {{productFamily}}, achat-revente et analyse d'annonces d'occasion sur Le Bon Coin.
-
-Je te fournis un fichier contenant plusieurs centaines/milliers d'annonces issues d'une recherche « {{searchContext}} ». Les annonces peuvent contenir des {{productFamily}}, des produits liés, des composants, des accessoires, des lots, des machines incomplètes, etc.
-
-## Mission
-
-Analyse 100 % des annonces, sans en oublier et sans te limiter aux annonces qui correspondent exactement à la recherche initiale.
-
-Pour chaque annonce, identifie au mieux :
-- le type de produit ;
-- sa catégorie ;
-- ses caractéristiques ;
-- son prix ;
-- sa valeur réelle estimée ;
-- son intérêt potentiel.
-
-Ne rejette pas automatiquement une annonce simplement parce qu'elle ne correspond pas à la recherche initiale.
-
-## Recherche des meilleures opportunités
-
-Cherche notamment :
-- les meilleurs rapports performances/prix ;
-- les meilleurs rapports qualité/prix ;
-- les meilleures affaires pour l'achat-revente ;
-- les produits fortement sous-évalués ;
-- les annonces dont la valeur réelle semble largement supérieure au prix demandé ;
-- les produits rares ou particulièrement intéressants ;
-- les annonces présentant une marge potentielle importante.
-
-Exemple type de pépite : un {{component}} {{capacity2}} à {{dealThreshold}} qui représente une très bonne affaire.
-
-## Opportunités indirectes
-
-Analyse également les annonces qui peuvent être intéressantes même si le produit complet n'est pas intéressant.
-
-Par exemple :
-- un produit intéressant uniquement pour son écran ;
-- une machine intéressante pour un de ses composants ;
-- un produit intéressant pour son processeur / sa mémoire ;
-- un stockage intéressant à récupérer ;
-- une alimentation intéressante ;
-- de la mémoire intéressante ;
-- des composants vendables séparément ;
-- une machine en panne mais réparable ;
-- une machine incomplète mais dont les composants restants ont une forte valeur ;
-- un lot dont la valeur des composants dépasse le prix du lot.
-
-## Pour chaque annonce intéressante
-
-Indique si possible :
-- catégorie ;
-- prix demandé ;
-- valeur réelle estimée ;
-- score global /100 ;
-- rapport qualité/prix ;
-- potentiel d'achat-revente ;
-- composants intéressants ;
-- estimation de la valeur des composants récupérables ;
-- points forts ;
-- points faibles ;
-- risques éventuels ;
-- recommandation : Acheter / Négocier / Surveiller / Éviter.
-
-## Détection des risques
-
-Repère notamment :
-- prix anormalement bas ;
-- description incohérente ;
-- caractéristiques contradictoires ;
-- informations importantes manquantes ;
-- matériel potentiellement défectueux ;
-- photos ou description suspectes ;
-- éléments pouvant indiquer un risque d'arnaque.
-
-Attribue un niveau de risque : Faible / Moyen / Élevé.
-
-Ne considère jamais automatiquement une annonce comme une arnaque sans éléments suffisants : indique plutôt « suspicion » et explique pourquoi.
-
-## Classements finaux
-
-À la fin de l'analyse, crée :
-
-### Top {{topN}} — Meilleures affaires
-Toutes catégories confondues.
-
-### Top {{flipN}} — Achat-revente
-Les annonces présentant le meilleur potentiel de marge.
-
-### Top {{compN}} — Récupération de composants
-Les annonces intéressantes principalement pour leurs composants.
-
-### Top {{nuggetN}} — Pépite sous-évaluée
-Les annonces où la différence entre le prix demandé et la valeur estimée est particulièrement intéressante.
-
-### Top {{avoidN}} — À éviter
-Les annonces présentant le moins bon rapport intérêt/prix ou les risques les plus importants.
-
-Pour chaque classement, explique brièvement pourquoi l'annonce est intéressante ou non.
-
-## Objectif final
-
-L'objectif n'est pas simplement de trouver les annonces qui correspondent à la recherche initiale.
-
-L'objectif est de fouiller l'intégralité du fichier pour trouver les véritables pépites cachées : produits sous-évalués, excellents rapports valeur/prix, opportunités d'achat-revente, composants récupérables et annonces inhabituelles pouvant générer une bonne marge.
-
-Ne te contente donc pas de rechercher des mots-clés : analyse le contenu et la valeur réelle de chaque annonce.`;
-
-const PROMPTS = [
-  { id: 'master', label: '🎯 Analyse complète (Top + achat-revente + composants + pépites)', template: MASTER_PROMPT },
-  { id: 'top-deals', label: '🏆 Top des meilleures affaires', template: `Tu es un expert en {{productFamily}} et achat-revente sur Le Bon Coin.
-
-Je te fournis un fichier d'annonces de recherche « {{searchContext}} ».
-
-Analyse 100 % des annonces et établis un Top {{topN}} des meilleures affaires toutes catégories confondues (rapport qualité/prix, valeur réelle supérieure au prix demandé, produits rares).
-
-Pour chacune : catégorie, prix demandé, valeur réelle estimée, score /100, points forts, points faibles, recommandation (Acheter / Négocier / Surveiller / Éviter) et justification courte.
-
-Ne rejette pas une annonce sous prétexte qu'elle ne correspond pas exactement à la recherche initiale : cherche les pépites cachées dans tout le fichier.` },
-  { id: 'resell-flip', label: '💸 Achat-revente / Flip (marge nette)', template: `Tu es un expert en achat-revente de {{productFamily}} sur Le Bon Coin.
-
-Je te fournis un fichier d'annonces de recherche « {{searchContext}} ».
-
-Analyse 100 % des annonces et établis un Top {{flipN}} des annonces présentant le meilleur potentiel de marge nette à la revente.
-
-Pour chacune : prix demandé, valeur de revente estimée, marge potentielle (€ et %), composants/produit pouvant être revendus séparément, risque (Faible/Moyen/Élevé), recommandation et justification courte.
-
-Inclus les opportunités indirectes (lot dont les composants valent plus que le prix du lot, machine démontable, etc.).` },
-  { id: 'components', label: '🔧 Récupération de composants', template: `Tu es un expert en {{productFamily}} et valorisation de composants récupérables sur Le Bon Coin.
-
-Je te fournis un fichier d'annonces de recherche « {{searchContext}} ».
-
-Analyse 100 % des annonces et établis un Top {{compN}} des annonces intéressantes principalement pour leurs composants récupérables.
-
-Pour chacune : composants intéressants ({{component}}, mémoire, stockage, alimentation, écran, etc.), estimation de la valeur des composants récupérables, prix demandé, marge potentielle si revente pièce par pièce, risque et recommandation.
-
-Inclus les machines incomplètes, en panne mais réparables, et les lots dont la valeur des composants dépasse le prix du lot.` },
-  { id: 'undervalued', label: '💎 Pépites sous-évaluées', template: `Tu es un expert en {{productFamily}} sur Le Bon Coin.
-
-Je te fournis un fichier d'annonces de recherche « {{searchContext}} ».
-
-Analyse 100 % des annonces et établis un Top {{nuggetN}} des annonces les plus sous-évaluées (valeur réelle estimée largement supérieure au prix demandé).
-
-Exemple type : un {{component}} {{capacity2}} à {{dealThreshold}} qui représente une très bonne affaire.
-
-Pour chacune : catégorie, prix demandé, valeur réelle estimée, écart (€ et %), justification de la sous-évaluation, risque (Faible/Moyen/Élevé) et recommandation.` },
-  { id: 'risk-detection', label: "🚨 Détection d'arnaques & risques", template: `Tu es un expert en détection d'arnaques sur Le Bon Coin pour le domaine {{productFamily}}.
-
-Je te fournis un fichier d'annonces de recherche « {{searchContext}} ».
-
-Analyse 100 % des annonces et repère les annonces présentant des risques :
-- prix anormalement bas ;
-- description incohérente ;
-- caractéristiques contradictoires ;
-- informations importantes manquantes ;
-- matériel potentiellement défectueux ;
-- photos ou description suspectes ;
-- éléments pouvant indiquer une arnaque.
-
-Attribue un niveau de risque : Faible / Moyen / Élevé.
-
-Ne considère jamais automatiquement une annonce comme une arnaque sans éléments suffisants : indique plutôt « suspicion » et explique pourquoi.
-
-Établis un Top {{avoidN}} des annonces à éviter (le moins bon rapport intérêt/prix ou les risques les plus importants), avec justification.` },
-];
-
 const VAR_FIELDS = ['searchContext', 'productFamily', 'component', 'capacity', 'capacity2', 'dealThreshold', 'topN', 'flipN', 'compN', 'nuggetN', 'avoidN'];
-
-function renderPrompt(template, vars) {
-  return template.replace(/\{\{(\w+)\}\}/g, (m, key) => {
-    const v = vars && vars[key];
-    return v !== undefined && v !== null && v !== '' ? String(v) : m;
-  });
-}
 
 const $ = (id) => document.getElementById(id);
 
 const AiStudioModule = {
   init() {
     const els = [
-      'aistudioDomainSelect', 'aistudioPromptSelect',
-      'aistudioGenerateBtn', 'aistudioCopyBtn',
+      'aistudioDomainSelect', 'aistudioObjective', 'aistudioCustomHints',
+      'aistudioGeminiModel',
+      'aistudioGenerateBtn', 'aistudioCopyBtn', 'aistudioGenStatus',
       'aistudioPromptOutput',
+      'aistudioOpenJobsBtn',
       'aistudioWebview', 'aistudioWebviewLoading',
       'aistudioBackBtn', 'aistudioFwdBtn', 'aistudioReloadBtn', 'aistudioHomeBtn',
       'aistudioLoginBtn',
@@ -219,9 +46,8 @@ const AiStudioModule = {
 
     this.el = e;
     this.populateDomainSelect();
-    this.populatePromptSelect();
     this.applyDomainDefaults(DOMAINS[0].id);
-    this.bindPrompts(e);
+    this.bindActions(e);
     this.bindBrowser(e);
   },
 
@@ -231,16 +57,6 @@ const AiStudioModule = {
     for (const d of DOMAINS) {
       const o = document.createElement('option');
       o.value = d.id; o.textContent = d.label;
-      sel.appendChild(o);
-    }
-  },
-
-  populatePromptSelect() {
-    const sel = this.el.aistudioPromptSelect;
-    sel.innerHTML = '';
-    for (const p of PROMPTS) {
-      const o = document.createElement('option');
-      o.value = p.id; o.textContent = p.label;
       sel.appendChild(o);
     }
   },
@@ -262,24 +78,75 @@ const AiStudioModule = {
     return vars;
   },
 
-  bindPrompts(e) {
+  setGenStatus(msg, isError) {
+    const el = this.el.aistudioGenStatus;
+    if (!el) return;
+    el.textContent = msg || '';
+    el.style.color = isError ? '#e57373' : '';
+  },
+
+  bindActions(e) {
     e.aistudioDomainSelect.addEventListener('change', (ev) => this.applyDomainDefaults(ev.target.value));
+    e.aistudioOpenJobsBtn.addEventListener('click', () => {
+      if (window.api && window.api.openFolder) {
+        window.api.openFolder(null); // null = BASE_OUT_DIR/jobs (handler par défaut)
+      }
+    });
     e.aistudioGenerateBtn.addEventListener('click', () => this.generatePrompt());
     e.aistudioCopyBtn.addEventListener('click', () => this.copyPrompt());
   },
 
-  generatePrompt() {
-    const promptId = this.el.aistudioPromptSelect.value;
-    const prompt = PROMPTS.find((p) => p.id === promptId) || PROMPTS[0];
+  async generatePrompt() {
+    const domainSel = this.el.aistudioDomainSelect;
+    const domainObj = DOMAINS.find((d) => d.id === domainSel.value) || DOMAINS[0];
+    const objective = (this.el.aistudioObjective.value || '').trim()
+      || 'Trouve les meilleures affaires et opportunités d\'achat-revente, classe par score et marge nette, détecte les arnaques.';
+    const customHints = (this.el.aistudioCustomHints.value || '').trim();
     const vars = this.collectVars();
-    const rendered = renderPrompt(prompt.template, vars);
-    this.el.aistudioPromptOutput.value = rendered;
-    return rendered;
+    const geminiModel = this.el.aistudioGeminiModel.value || 'gemini-2.0-flash';
+
+    // Clé API Gemini : on la récupère depuis le store (config), via IPC.
+    let geminiApiKey = '';
+    try {
+      const settings = window.api && window.api.getConfig ? await window.api.getConfig() : null;
+      geminiApiKey = (settings && settings.geminiApiKey) || '';
+    } catch (_) {}
+    if (!geminiApiKey) {
+      this.setGenStatus('❌ Aucune clé API Gemini configurée. Ajoutez-la dans les Paramètres.', true);
+      return;
+    }
+
+    const btn = this.el.aistudioGenerateBtn;
+    const orig = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '⏳ Génération…';
+    this.setGenStatus('Appel à Gemini…');
+
+    try {
+      const res = await window.api.generatePrompt({
+        domain: domainObj.label,
+        objective,
+        customHints,
+        vars,
+        geminiApiKey,
+        geminiModel,
+      });
+      const prompt = (res && res.prompt) || '';
+      if (!prompt) throw new Error('Réponse vide.');
+      this.el.aistudioPromptOutput.value = prompt;
+      this.setGenStatus('✅ Prompt généré par ' + geminiModel + '.');
+    } catch (err) {
+      console.error('[AI Studio] génération échouée :', err);
+      this.setGenStatus('❌ ' + (err && err.message ? err.message : err), true);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = orig;
+    }
   },
 
   async copyPrompt() {
     let text = this.el.aistudioPromptOutput.value;
-    if (!text) text = this.generatePrompt();
+    if (!text) { this.setGenStatus('Générez d\'abord un prompt.', true); return; }
     try {
       await navigator.clipboard.writeText(text);
       const btn = this.el.aistudioCopyBtn;

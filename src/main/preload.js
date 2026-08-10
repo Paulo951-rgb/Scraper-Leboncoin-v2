@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('api', {
 
   analyzeMarket: (data) => ipcRenderer.invoke('market:analyze', data),
   analyzeGlobalDataset: (data) => ipcRenderer.invoke('globalai:analyze', data),
+  generatePrompt: (data) => ipcRenderer.invoke('prompt:generate', data),
 
   onSchedulerTrigger: (callback) => {
     ipcRenderer.removeAllListeners('scheduler:trigger');

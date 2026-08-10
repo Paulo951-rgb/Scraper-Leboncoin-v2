@@ -13,6 +13,7 @@ const { MarketAnalyzer } = require('../services/ai/marketAnalyzer');
 const { ImageAnalyzer } = require('../services/ai/imageAnalyzer');
 const { JobSchedulerManager } = require('../services/jobs/jobScheduler');
 const { GlobalAnalyzer } = require('../services/ai/globalAnalyzer');
+const { PromptGenerator } = require('../services/ai/promptGenerator');
 const { Notifier } = require('../infrastructure/notifications');
 const { JOBS_DIR, BASE_OUT_DIR } = require('../config/constants');
 const { redact, summarizeAds, formatBytes, describeError } = require('../utils/diagnostics');
@@ -330,6 +331,19 @@ function setupIpcHandlers(getMainWindow) {
 
   ipcMain.handle('config:get', async () => {
     return loadSettings();
+  });
+
+  // Génération de prompt personnalisé via Gemini (module AI Studio).
+  // Remplace les prompts statiques pré-enregistrés : Gemini produit un prompt
+  // détaillé adapté au domaine + objectif + variables de l'utilisateur.
+  ipcMain.handle('prompt:generate', async (event, { domain, objective, customHints, vars, geminiApiKey, geminiModel }) => {
+    if (!geminiApiKey) throw new Error('Clé API Gemini manquante (nécessaire pour générer le prompt).');
+    sendStatus({ state: 'processing', message: 'Génération du prompt par Gemini…' });
+    const prompt = await PromptGenerator.generate(
+      { domain, objective, customHints, vars, geminiApiKey, geminiModel: geminiModel || 'gemini-2.0-flash' },
+      (prog) => sendProgress({ percent: prog.percent, status: prog.status })
+    );
+    return { prompt };
   });
 
   ipcMain.handle('config:save', async (event, patch) => {
