@@ -157,17 +157,25 @@ Le topRanking doit contenir au maximum 20 entrées, triées de la meilleure à l
     console.log(`[GlobalAnalyzer] Appel Gemini : ${GEMINI_ENDPOINT}/${model}:generateContent?key=${redact(apiKey)}`);
 
     const t0Fetch = Date.now();
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature: 0.3,
-          response_mime_type: 'application/json',
-        },
-      }),
-    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 90000);
+    let res;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            temperature: 0.3,
+            response_mime_type: 'application/json',
+          },
+        }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
 
     if (!res.ok) {
       let detail = '';

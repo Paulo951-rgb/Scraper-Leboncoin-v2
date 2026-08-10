@@ -96,7 +96,7 @@ function countBy(items, fn) {
 }
 
 function describeError(err) {
-  if (!err) return '(pas derreur)';
+  if (!err) return "(pas d'erreur)";
   const parts = [err.message || '(sans message)'];
   if (err.code) parts.push(`code=${err.code}`);
   if (err.errno) parts.push(`errno=${err.errno}`);

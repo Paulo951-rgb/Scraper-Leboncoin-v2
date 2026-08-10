@@ -19,14 +19,22 @@ const { redact, summarizeAds, formatBytes, describeError } = require('../utils/d
 const { writeWithChecksum } = require('../utils/integrity');
 const { loadSettings, saveSettings } = require('./settings');
 
-function setupIpcHandlers(mainWindow) {
+function setupIpcHandlers(getMainWindow) {
   let activeCapturer = null;
   let activeRunner = null;
   let activeImageAnalyzer = null;
   let isRunning = false;
 
+  // Getter de fenêtre principale : renvoie null si détruite/fichermée,
+  // évitant les crashes "Cannot read properties of null" sur webContents.send.
+  const getWin = () => {
+    const w = typeof getMainWindow === 'function' ? getMainWindow() : getMainWindow;
+    return w && !w.isDestroyed() ? w : null;
+  };
+
   const scheduler = new JobSchedulerManager((config) => {
-    mainWindow.webContents.send('scheduler:trigger', config);
+    const w = getWin();
+    if (w) w.webContents.send('scheduler:trigger', config);
   });
 
   const settings = loadSettings();
@@ -42,9 +50,9 @@ function setupIpcHandlers(mainWindow) {
     }
   }, 3000);
 
-  const sendLog = (data) => mainWindow.webContents.send('log', data);
-  const sendProgress = (data) => mainWindow.webContents.send('progress', data);
-  const sendStatus = (status) => mainWindow.webContents.send('status', status);
+  const sendLog = (data) => { const w = getWin(); if (w) w.webContents.send('log', data); };
+  const sendProgress = (data) => { const w = getWin(); if (w) w.webContents.send('progress', data); };
+  const sendStatus = (status) => { const w = getWin(); if (w) w.webContents.send('status', status); };
 
   ipcMain.on('job:start', async (event, config) => {
     if (isRunning) {
@@ -247,6 +255,7 @@ function setupIpcHandlers(mainWindow) {
       isRunning = false;
       activeCapturer = null;
       activeRunner = null;
+      activeImageAnalyzer = null;
     }
   });
 
@@ -259,6 +268,7 @@ function setupIpcHandlers(mainWindow) {
   });
 
   ipcMain.handle('market:analyze', async (event, { jobId, aiConfig }) => {
+    if (isRunning) throw new Error('Un job de scraping est en cours — attendez la fin avant de réanalyser.');
     const jobs = JobHistoryManager.listAllJobs();
     const targetJob = jobs.find((j) => j.id === jobId);
 
@@ -277,7 +287,7 @@ function setupIpcHandlers(mainWindow) {
       sendProgress({ percent: prog.percent, status: prog.status });
     });
 
-    fs.writeFileSync(targetJob.files.json, JSON.stringify(ads, null, 2));
+    writeWithChecksum(targetJob.files.json, ads, null, 2);
     if (targetJob.files.xlsx) {
       await ExcelExporter.exportToXlsx(ads, targetJob.files.xlsx);
     }
@@ -286,6 +296,7 @@ function setupIpcHandlers(mainWindow) {
   });
 
   ipcMain.handle('globalai:analyze', async (event, { jobId, presetKey, customInstruction, geminiApiKey, geminiModel }) => {
+    if (isRunning) throw new Error('Un job de scraping est en cours — attendez la fin avant l\'analyse globale.');
     if (!geminiApiKey) throw new Error('Clé API Gemini manquante.');
 
     const jobs = JobHistoryManager.listAllJobs();
@@ -392,9 +403,19 @@ function setupIpcHandlers(mainWindow) {
     return JobHistoryManager.deleteJob(jobId);
   });
 
+  // Validation de chemin : n'autorise que les chemins dans BASE_OUT_DIR ou ses
+  // sous-dossiers (anti path-traversal depuis un renderer compromis).
+  function isPathAllowed(target) {
+    if (!target || typeof target !== 'string') return false;
+    const resolved = path.resolve(target);
+    const baseResolved = path.resolve(BASE_OUT_DIR);
+    return resolved === baseResolved || resolved.startsWith(baseResolved + path.sep);
+  }
+
   ipcMain.handle('file:openFolder', async (event, folderPath) => {
     try {
       const target = folderPath || BASE_OUT_DIR;
+      if (!isPathAllowed(target)) return { success: false, error: 'Chemin non autorisé.' };
       FileManager.openFolder(target);
       return { success: true };
     } catch (err) {
@@ -404,6 +425,7 @@ function setupIpcHandlers(mainWindow) {
 
   ipcMain.handle('file:openFile', async (event, filePath) => {
     try {
+      if (!isPathAllowed(filePath)) return { success: false, error: 'Chemin non autorisé.' };
       FileManager.openFile(filePath);
       return { success: true };
     } catch (err) {
@@ -414,6 +436,12 @@ function setupIpcHandlers(mainWindow) {
   ipcMain.handle('shell:openExternal', async (event, url) => {
     try {
       if (!url) return { success: false, error: 'URL vide' };
+      let parsed;
+      try { parsed = new URL(url); } catch { return { success: false, error: 'URL invalide' }; }
+      // N'autorise que http/https (bloque file://, javascript:, data:, etc.)
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return { success: false, error: `Schéma non autorisé : ${parsed.protocol}` };
+      }
       await shell.openExternal(url);
       return { success: true };
     } catch (err) {
