@@ -9,6 +9,9 @@ const path = require('path');
 const fs = require('fs');
 
 const CACHE_PATH = path.join(__dirname, '..', '..', 'config', 'ai-cache.json');
+// Plafond d'entrées pour éviter une croissance infinie du cache sur disque
+// (au-delà, on évite les entrées les plus anciennes par cachedAt).
+const MAX_ENTRIES = 5000;
 
 let _cache = null;
 
@@ -52,7 +55,20 @@ function set(listId, specs, prefix) {
     specs,
     cachedAt: Date.now(),
   };
+  _evictIfNeeded(cache);
   _save();
+}
+
+// Éviction des entrées les plus anciennes si le cache dépasse le plafond.
+function _evictIfNeeded(cache) {
+  const keys = Object.keys(cache);
+  if (keys.length <= MAX_ENTRIES) return;
+  // Trie par cachedAt croissant, supprime les (n - MAX) plus anciennes.
+  keys
+    .map((k) => [k, cache[k].cachedAt || 0])
+    .sort((a, b) => a[1] - b[1])
+    .slice(0, keys.length - MAX_ENTRIES)
+    .forEach(([k]) => { delete cache[k]; });
 }
 
 function stats() {

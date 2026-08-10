@@ -241,17 +241,22 @@ const autoAiMarket = document.getElementById('autoAiMarket');
 const analyzeImages = document.getElementById('analyzeImages');
 const aiProvider = document.getElementById('aiProvider');
 const aiModelName = document.getElementById('aiModelName');
-const aiApiKey = document.getElementById('aiApiKey');
-const openAiKeyGroup = document.getElementById('openAiKeyGroup');
+
+// OpenAI a été retiré de l'UI : il n'y a plus de champ clé API dans le scraper.
+// On expose un accesseur sûr (null-tolerant) pour ne pas casser les appels
+// existants (config scraping / analyse / scheduler) si l'élément vient à
+// disparaître — la clé vaut toujours '' (IA 100% locale via Ollama).
+const aiApiKeyEl = document.getElementById('aiApiKey');
+const getAiApiKey = () => (aiApiKeyEl && aiApiKeyEl.value ? aiApiKeyEl.value : '');
 
 aiModelName.value = localStorage.getItem('ai-model-name') || 'llama3';
 aiModelName.addEventListener('change', (e) => localStorage.setItem('ai-model-name', e.target.value));
 
-aiApiKey.value = ''; // OpenAI retiré : l'IA se fait en local via Ollama
-
-aiProvider.addEventListener('change', () => {
-  // Plus que Ollama local désormais ; handler conservé pour compat.
-});
+if (aiProvider) {
+  aiProvider.addEventListener('change', () => {
+    // Plus que Ollama local désormais ; handler conservé pour compat.
+  });
+}
 
 // Presets
 const presetsRow = document.getElementById('presetsRow');
@@ -523,7 +528,7 @@ startBtn.addEventListener('click', () => {
     aiConfig: {
       provider: aiProvider.value,
       model: aiModelName.value.trim() || 'llama3',
-      apiKey: aiApiKey.value,
+      apiKey: getAiApiKey(),
     },
   };
 
@@ -551,7 +556,7 @@ triggerMarketBtn.addEventListener('click', async () => {
       aiConfig: {
         provider: aiProvider.value,
         model: aiModelName.value.trim() || 'llama3',
-        apiKey: aiApiKey.value,
+        apiKey: getAiApiKey(),
       },
     });
 
@@ -1027,7 +1032,16 @@ async function geocodeCityGov(cityName, zipcode) {
       url = `https://geo.api.gouv.fr/communes?codePostal=${zipcode}&fields=centre&limit=1`;
     }
 
-    const res = await fetch(url);
+    // Timeout : sans AbortController, une API gouv injoignable pouvait bloquer
+    // indéfiniment le rendu de la carte (fetch natif n'a pas d'option timeout).
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+    let res;
+    try {
+      res = await fetch(url, { signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
     if (res.ok) {
       const data = await res.json();
       if (data && data[0] && data[0].centre) {
@@ -1292,7 +1306,7 @@ addSchedBtn.addEventListener('click', async () => {
     aiConfig: {
       provider: aiProvider.value,
       model: aiModelName.value.trim() || 'llama3',
-      apiKey: aiApiKey.value,
+      apiKey: getAiApiKey(),
     },
     proxyUrl: proxyUrl.value.trim() || undefined,
   };

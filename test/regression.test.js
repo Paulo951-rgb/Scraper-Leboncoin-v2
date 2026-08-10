@@ -299,6 +299,41 @@ assert(typeof SecretStore.isUsingOsKeychain() === 'boolean', 'secretStore: isUsi
 assert(typeof StorageCleaner.cleanOldJobs === 'function', 'StorageCleaner.cleanOldJobs présent');
 assert(StorageCleaner.cleanOldJobs(0) === 0, 'cleanOldJobs(0) désactivé → 0');
 
+// === AUDIT GLOBAL : 5 correctifs fiabilité ===
+console.log('\n[AUDIT] Correctifs de fiabilité');
+
+// FIX #1 : pas de référence à aiApiKey.value / openAiKeyGroup dans app.js
+// (causait un crash TypeError au chargement après le retrait d'OpenAI).
+assert(!/aiApiKey\.value/.test(appCode), 'app.js: plus de aiApiKey.value (accesseur sûr getAiApiKey)');
+assert(!/openAiKeyGroup/.test(appCode), 'app.js: openAiKeyGroup supprimé (champ OpenAI retiré)');
+assert(/getAiApiKey/.test(appCode), 'app.js: accesseur getAiApiKey() null-tolerant');
+
+// FIX #2 : le timer du scheduler persiste lastRun même pour les tâches restaurées
+const schedCode = fs.readFileSync(path.join(base, 'services/jobs/jobScheduler.js'), 'utf8');
+assert(/stored\.lastRun = Date\.now\(\);[\s\S]*this\._saveToDisk\(\);[\s\S]*this\.onTriggerJob/.test(schedCode), 'jobScheduler: _saveToDisk() appelé dans le timer avant onTriggerJob');
+assert(!/if \(!opts\.skipSave\) this\._saveToDisk\(\);\s*\n\s*this\.onTriggerJob/.test(schedCode), 'jobScheduler: plus de skipSave conditionnel avant onTriggerJob dans le timer');
+
+// FIX #3 : cleanOldJobs basé sur le timestamp du nom du dossier, pas le mtime
+const cleanerCode = fs.readFileSync(path.join(base, 'services/maintenance/storageCleaner.js'), 'utf8');
+assert(cleanerCode.includes('tsMatch = entry.name.match'), 'storageCleaner: parse le timestamp du nom de dossier');
+assert(cleanerCode.includes('Date.parse(iso)'), 'storageCleaner: calcule l\'âge depuis le timestamp du nom');
+assert(cleanerCode.includes('Fallback mtime'), 'storageCleaner: fallback mtime si timestamp illisible');
+
+// FIX #4 : geocodeCityGov a un timeout (AbortController)
+assert(/const controller = new AbortController\(\);[\s\S]{0,80}controller\.abort\(\), 10000/.test(appCode), 'app.js: geocodeCityGov timeout 10s (AbortController)');
+
+// FIX #5 : aiCache plafond + éviction
+const aiCacheCode = fs.readFileSync(path.join(base, 'services/ai/aiCache.js'), 'utf8');
+assert(/MAX_ENTRIES\s*=\s*5000/.test(aiCacheCode), 'aiCache: plafond MAX_ENTRIES=5000');
+assert(/_evictIfNeeded/.test(aiCacheCode), 'aiCache: éviction des plus anciennes (_evictIfNeeded)');
+// Test fonctionnel de l'éviction
+const aiCache = require(path.join(base, 'services/ai/aiCache'));
+aiCache.clear();
+for (let i = 0; i < 10; i++) aiCache.set(`evict-${i}`, { v: i });
+assert(aiCache.stats().entries === 10, 'aiCache: 10 entrées < plafond conservées');
+aiCache.clear();
+assert(aiCache.stats().entries === 0, 'aiCache: clear() vide le cache');
+
 // F5 : sandbox renderer durcie
 const mainCode3 = fs.readFileSync(path.join(base, 'main.js'), 'utf8');
 assert(/sandbox:\s*true/.test(mainCode3), 'main.js: sandbox:true activé sur mainWindow');

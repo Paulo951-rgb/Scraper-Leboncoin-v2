@@ -72,9 +72,24 @@ class StorageCleaner {
         if (!entry.isDirectory() || !entry.name.startsWith('job-')) continue;
         scannedCount++;
         const jobPath = path.join(jobsDir, entry.name);
-        const stats = fs.statSync(jobPath);
-        const ageDays = Math.floor((now - stats.mtimeMs) / (24 * 60 * 60 * 1000));
-        if (now - stats.mtimeMs > maxAgeMs) {
+
+        // Âge basé sur le timestamp ISO embarqué dans le nom du dossier
+        // (job-<ISO>) plutôt que sur le mtime : annonces.json est réécrit à
+        // chaque re-scraping/re-analyse, ce qui rafraîchit le mtime et
+        // empêchait à tort les vieux jobs d'être nettoyés.
+        const tsMatch = entry.name.match(/^job-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})/);
+        let referenceMs;
+        if (tsMatch) {
+          const iso = tsMatch[1].replace(/-(\d{2})-(\d{2})$/, ':$1:$2');
+          referenceMs = Date.parse(iso);
+        }
+        if (!Number.isFinite(referenceMs)) {
+          // Fallback mtime si le timestamp du nom est illisible
+          referenceMs = fs.statSync(jobPath).mtimeMs;
+        }
+
+        const ageDays = Math.floor((now - referenceMs) / (24 * 60 * 60 * 1000));
+        if (now - referenceMs > maxAgeMs) {
           fs.rmSync(jobPath, { recursive: true, force: true });
           deletedCount++;
           console.log(`[StorageCleaner] Job supprimé : ${entry.name} (${ageDays} jours, > ${maxDays}j).`);
