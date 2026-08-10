@@ -70,8 +70,6 @@ assert(diag.describeError({ code: 'ENOENT', message: 'x' }).includes('code=ENOEN
 // --- 2. Modules principaux ---
 console.log('\n[2/4] Modules principaux');
 const { MarketAnalyzer } = require('../src/main/services/ai/marketAnalyzer');
-const { GlobalAnalyzer } = require('../src/main/services/ai/globalAnalyzer');
-const { JobSchedulerManager } = require('../src/main/services/jobs/jobScheduler');
 const { DealFinder } = require('../src/main/services/analysis/dealFinder');
 const { StorageCleaner } = require('../src/main/services/maintenance/storageCleaner');
 const { FileManager } = require('../src/main/infrastructure/fileManager');
@@ -80,8 +78,6 @@ const { loadSettings, saveSettings } = require('../src/main/core/settings');
 const { RISK_KEYWORDS } = require('../src/main/config/risk-keywords');
 
 assert(typeof MarketAnalyzer.analyzeAds === 'function', 'MarketAnalyzer.analyzeAds');
-assert(typeof GlobalAnalyzer.analyze === 'function', 'GlobalAnalyzer.analyze');
-assert(typeof JobSchedulerManager === 'function', 'JobSchedulerManager constructor');
 assert(typeof DealFinder.analyze === 'function', 'DealFinder.analyze');
 assert(typeof StorageCleaner.cleanOldHars === 'function', 'StorageCleaner.cleanOldHars');
 assert(typeof FileManager.openFile === 'function', 'FileManager.openFile');
@@ -97,17 +93,6 @@ const { stats, enrichedAds } = DealFinder.analyze(ads);
 assert(stats && stats.totalAds === 3, 'DealFinder stats.totalAds');
 assert(enrichedAds.length === 3, 'DealFinder enrichedAds length');
 assert(enrichedAds[0].hasOwnProperty('dealTag'), 'DealFinder adds dealTag');
-
-// Scheduler propagation du proxyUrl + isScheduled
-const sched = new JobSchedulerManager(() => {});
-sched.addSchedule({ id: 't1', searchUrl: 'https://lbc.fr', pages: 2, intervalMinutes: 30, proxyUrl: 'http://p:8080', limit: 5, aiConfig: { provider: 'openai' } });
-assert(sched.scheduledTasks.size === 1, 'scheduler addSchedule');
-const stored = Array.from(sched.scheduledTasks.values())[0];
-const payload = sched._triggerPayload(stored);
-assert(payload.proxyUrl === 'http://p:8080', 'scheduler propagates proxyUrl in trigger payload');
-assert(payload.isScheduled === true, 'scheduler payload marked isScheduled');
-sched.removeSchedule('t1');
-assert(sched.scheduledTasks.size === 0, 'scheduler removeSchedule');
 
 // --- 3. Pipeline (fork) ---
 console.log('\n[3/4] Pipeline (leboncoin-pipeline.js)');
@@ -167,17 +152,22 @@ assert(/statMedPrice/.test(appCode), 'app.js: statMedPrice (prix médian)');
 assert(/statHandDelivery/.test(appCode), 'app.js: statHandDelivery (main propre)');
 assert(!/statGoodDeals/.test(appCode), 'app.js: statGoodDeals supprimé (stats bonnes affaires retirées)');
 assert(!/Répartition des Opportunités/.test(appCode), 'app.js: graphique Répartition des Opportunités supprimé');
-assert(/429|quota/i.test(appCode), 'app.js: gestion erreur 429 Gemini (analyse globale)');
-assert(/function\s+loadSchedulerPage\b/.test(appCode), 'app.js: loadSchedulerPage defined');
+assert(/429|quota/i.test(appCode), 'app.js: gestion erreur 429 (quota IA / scraping)');
 assert(!/let\s+priceChartInstance\b/.test(appCode), 'app.js: priceChartInstance dead var removed');
 assert(/if \(viewMode === 'table'\) viewGridBtn\.click\(\);\s*else viewTableBtn\.click\(\);/.test(appCode), 'app.js: Spacebar toggles table<->grid');
 assert(/replace\(\/&\/g, '&amp;'\)/.test(appCode) && /replace\(\/"\/g, '&quot;'\)/.test(appCode), 'app.js: escapeHtml escapes & " < >');
 assert(/window\.api\.openExternal\(urlStr\)/.test(appCode), 'app.js: openUrl uses openExternal');
 assert(/openFolder\(''\)/.test(appCode) && !/openFolder\('output'\)/.test(appCode), 'app.js: output button passes empty string');
-assert(/return !a\.shipping;/.test(appCode), 'app.js: main-propre filter uses boolean shipping');
+// « main propre » = livraison explicitement indisponible (shipping === false).
+// shipping=null (info non extraite) ne doit PAS être compté comme main propre.
+assert(/a\.shipping === false/.test(appCode), 'app.js: filtre main-propre utilise shipping === false (pas !a.shipping)');
+assert(!/return !a\.shipping;/.test(appCode), 'app.js: plus de !a.shipping (comptait null comme main propre)');
 assert(/MAX_LOG_LINES\s*=\s*1000/.test(appCode), 'app.js: log line cap (1000)');
-assert(/onSchedulerTrigger/.test(appCode), 'app.js: onSchedulerTrigger subscribed');
-assert(/window\.removeSchedule\s*=/.test(appCode), 'app.js: removeSchedule exposed');
+// Modules supprimés : Analyse Globale IA + Planificateur (scheduler)
+assert(!/loadSchedulerPage/.test(appCode), 'app.js: loadSchedulerPage supprimé (module Planificateur retiré)');
+assert(!/onSchedulerTrigger/.test(appCode), 'app.js: onSchedulerTrigger supprimé (module Planificateur retiré)');
+assert(!/window\.removeSchedule/.test(appCode), 'app.js: removeSchedule supprimé (module Planificateur retiré)');
+assert(!/analyzeGlobalDataset/.test(appCode), 'app.js: analyzeGlobalDataset supprimé (module Analyse Globale retiré)');
 assert(/openExternal:\s*\(urlStr\)\s*=>\s*ipcRenderer\.invoke\('shell:openExternal'/.test(preloadCode), 'preload.js: openExternal exposed');
 assert(/folderPath \|\| BASE_OUT_DIR/.test(ipcCode), 'ipcHandlers.js: openFolder defaults to BASE_OUT_DIR');
 assert(/shell:openExternal/.test(ipcCode), 'ipcHandlers.js: shell:openExternal handler present');
@@ -201,10 +191,8 @@ assert(existsSync(path.join(base, 'services/scraping/harCapturer.js')), 'service
 assert(existsSync(path.join(base, 'services/scraping/pipelineRunner.js')), 'services/scraping/pipelineRunner.js present');
 assert(existsSync(path.join(base, 'services/scraping/leboncoin-pipeline.js')), 'services/scraping/leboncoin-pipeline.js (déplacé du vendor/) present');
 assert(existsSync(path.join(base, 'services/ai/marketAnalyzer.js')), 'services/ai/marketAnalyzer.js present');
-assert(existsSync(path.join(base, 'services/ai/globalAnalyzer.js')), 'services/ai/globalAnalyzer.js present');
 assert(existsSync(path.join(base, 'services/analysis/dealFinder.js')), 'services/analysis/dealFinder.js present');
 assert(existsSync(path.join(base, 'services/jobs/jobHistory.js')), 'services/jobs/jobHistory.js present');
-assert(existsSync(path.join(base, 'services/jobs/jobScheduler.js')), 'services/jobs/jobScheduler.js present');
 assert(existsSync(path.join(base, 'services/maintenance/storageCleaner.js')), 'services/maintenance/storageCleaner.js present');
 assert(existsSync(path.join(base, 'infrastructure/excelExporter.js')), 'infrastructure/excelExporter.js present');
 assert(existsSync(path.join(base, 'infrastructure/fileManager.js')), 'infrastructure/fileManager.js present');
@@ -215,10 +203,9 @@ assert(!existsSync(path.join(base, 'modules')), 'old modules/ folder removed');
 assert(!existsSync(path.join(base, 'vendor')), 'old vendor/ folder removed');
 assert(!existsSync(path.join(base, 'ipcHandlers.js')), 'ipcHandlers.js moved out of main/ root');
 
-// Notifier extrait du scheduler
-assert(typeof Notifier.notifyGoodDeal === 'function', 'Notifier.notifyGoodDeal extracted to infrastructure');
+// Notifier : responsable de la notification OS des bonnes affaires
+assert(typeof Notifier.notifyGoodDeal === 'function', 'Notifier.notifyGoodDeal present');
 assert(typeof Notifier.isSupported === 'function', 'Notifier.isSupported present');
-assert(typeof JobSchedulerManager.prototype.notifyGoodDeal === 'undefined', 'scheduler no longer holds notifyGoodDeal (SRP)');
 
 // Settings extrait d'ipcHandlers
 assert(typeof loadSettings === 'function', 'loadSettings extracted to core/settings');
@@ -307,11 +294,6 @@ console.log('\n[AUDIT] Correctifs de fiabilité');
 assert(!/aiApiKey\.value/.test(appCode), 'app.js: plus de aiApiKey.value (accesseur sûr getAiApiKey)');
 assert(!/openAiKeyGroup/.test(appCode), 'app.js: openAiKeyGroup supprimé (champ OpenAI retiré)');
 assert(/getAiApiKey/.test(appCode), 'app.js: accesseur getAiApiKey() null-tolerant');
-
-// FIX #2 : le timer du scheduler persiste lastRun même pour les tâches restaurées
-const schedCode = fs.readFileSync(path.join(base, 'services/jobs/jobScheduler.js'), 'utf8');
-assert(/stored\.lastRun = Date\.now\(\);[\s\S]*this\._saveToDisk\(\);[\s\S]*this\.onTriggerJob/.test(schedCode), 'jobScheduler: _saveToDisk() appelé dans le timer avant onTriggerJob');
-assert(!/if \(!opts\.skipSave\) this\._saveToDisk\(\);\s*\n\s*this\.onTriggerJob/.test(schedCode), 'jobScheduler: plus de skipSave conditionnel avant onTriggerJob dans le timer');
 
 // FIX #3 : cleanOldJobs basé sur le timestamp du nom du dossier, pas le mtime
 const cleanerCode = fs.readFileSync(path.join(base, 'services/maintenance/storageCleaner.js'), 'utf8');
@@ -457,6 +439,32 @@ assert(/window\.chrome/.test(loginPreloadCode), 'aistudioLoginPreload: window.ch
 assert(/aistudioLoginPreload\.js/.test(htmlCode), 'index.html: webview reçoit le preload anti-détection Google');
 assert(/contextIsolation=no/.test(htmlCode), 'index.html: webview contextIsolation=no (override navigator côté page)');
 assert(/openAiStudioLogin/.test(preloadCodeFull), 'preload.js: expose openAiStudioLogin');
+
+// === MODULE D'AIDE : FAQ / Help / Feedback ===
+assert(/openFaqBtn/.test(htmlCode), 'index.html: bouton FAQ présent');
+assert(/openHelpBtn/.test(htmlCode), 'index.html: bouton Help présent');
+assert(/openFeedbackBtn/.test(htmlCode), 'index.html: bouton Problèmes & Améliorations présent');
+assert(/id="faqModal"/.test(htmlCode), 'index.html: modale FAQ présente');
+assert(/id="helpModal"/.test(htmlCode), 'index.html: modale Help présente');
+assert(/id="feedbackModal"/.test(htmlCode), 'index.html: modale Feedback présente');
+assert(/helpModule\.js/.test(htmlCode), 'index.html: inclut helpModule.js');
+assert(existsSync(path.join(__dirname, '..', 'src/renderer', 'helpModule.js')), 'renderer/helpModule.js present');
+const helpModCode = fs.readFileSync(path.join(__dirname, '..', 'src/renderer', 'helpModule.js'), 'utf8');
+assert(/FAQ_DATA/.test(helpModCode), 'helpModule: données FAQ présentes');
+assert(/HELP_SECTIONS/.test(helpModCode), 'helpModule: sections du guide présentes');
+assert(/submitFeedback/.test(helpModCode), 'helpModule: fonction submitFeedback (préparée pour future API)');
+assert(/window\.helpModule/.test(helpModCode), 'helpModule: exposé sur window.helpModule');
+// Les boutons d'aide sont discrets (classe help-btn), distincts des onglets principaux
+assert(/class="help-btn"/.test(htmlCode), 'index.html: boutons aide discrets (class help-btn)');
+// IPC diagnostic non sensible pour le feedback
+assert(/app:getDiagnostics/.test(ipcHandlersCode), 'ipcHandlers: handler app:getDiagnostics (diagnostic feedback)');
+assert(/getDiagnostics/.test(preloadCodeFull), 'preload.js: expose getDiagnostics');
+// Le feedback n'envoie rien sur le réseau tant que l'API n'est pas branchée (V2).
+// On vérifie l'absence de fetch ACTIF (hors commentaires) et la présence de
+// l'archive locale (comportement réel tant que le backend n'existe pas).
+const helpNoComments = helpModCode.replace(/\/\/[^\n]*\n/g, '');
+assert(!/fetch\(\s*['"]https/.test(helpNoComments), 'helpModule: pas d\'envoi HTTP actif (API backend pas encore développé)');
+assert(/localStorage.*feedback-archive/.test(helpModCode), 'helpModule: rapport archivé localement (V2 en attendant le serveur)');
 
 console.log(`\n=== RÉSULTAT : ${pass} réussis, ${fail} échoués ===`);
 process.exit(fail > 0 ? 1 : 0);

@@ -35,12 +35,15 @@
         <span id="offlineBadge" class="badge badge-offline hidden" title="Mode hors-ligne — vous pouvez consulter les jobs déjà scrapés, mais le scraping est désactivé.">📶 Hors-ligne</span>
         <button id="toggleWidgetBtn" class="btn btn-secondary btn-small">🖥️ Widget Flottant</button>
         <button id="openSettingsModalBtn" class="btn btn-secondary btn-small">⚙️ Paramètres</button>
+        <div class="header-help-btns">
+          <button id="openFaqBtn" class="help-btn" title="Questions fréquentes" aria-label="FAQ">❓</button>
+          <button id="openHelpBtn" class="help-btn" title="Guide d'utilisation" aria-label="Aide">📖</button>
+          <button id="openFeedbackBtn" class="help-btn" title="Signaler un problème ou proposer une amélioration" aria-label="Problèmes & Améliorations">💬</button>
+        </div>
 
         <div class="nav-tabs">
           <button class="tab-btn active" data-tab="tab-scraper">🚀 Scraper</button>
           <button class="tab-btn" data-tab="tab-ai-studio">🤖 Navigateur IA Studio</button>
-          <button class="tab-btn" data-tab="tab-global-ai">🧠 Analyse Globale IA</button>
-          <button class="tab-btn" data-tab="tab-scheduler">⏰ Planificateur</button>
           <button class="tab-btn" data-tab="tab-logs">📜 Logs</button>
           <button class="tab-btn" data-tab="tab-history">📁 Historique Jobs</button>
           <button class="tab-btn" data-tab="tab-explorer">🔍 Explorateur Annonces</button>
@@ -98,7 +101,7 @@
               <div class="form-group">
                 <label class="checkbox-label">
                   <input type="checkbox" id="autoAiMarket">
-                  <strong>☑️ Analyser automatiquement le marché avec l'IA après le scraping</strong>
+                  <strong>🧠 Analyser automatiquement le marché avec l'IA après le scraping</strong>
                 </label>
               </div>
 
@@ -314,127 +317,6 @@
         </div>
       </section>
 
-
-      <!-- PAGE ANALYSE GLOBALE IA -->
-      <section id="tab-global-ai" class="tab-content">
-        <div class="card">
-          <h2>🧠 Moteur d'Analyse Globale Gemini IA (1M+ Tokens)</h2>
-          <p class="text-muted mb-15">Analysez l'ensemble des annonces d'un dataset en une seule fois pour établir un classement intelligent Top 20.</p>
-
-          <div class="form-row">
-            <div class="form-group flex-2">
-              <label for="globalJobSelect">Session à analyser :</label>
-              <select id="globalJobSelect" class="filter-select">
-                <option value="ALL">🌐 Tous les scrapings combinés (Dataset Global)</option>
-              </select>
-            </div>
-
-            <div class="form-group flex-2">
-              <label for="globalPresetSelect">Mode d'Analyse Globale :</label>
-              <select id="globalPresetSelect" class="filter-select">
-                <option value="TOP_DEALS">🏆 Top 20 Meilleures Affaires & Pépites</option>
-                <option value="RESELL_FLIP">💸 Spécial Achat-Revente / Flip (Marge Nette)</option>
-                <option value="PERF_PRICE">⚡ Rapport Performance / Prix Maximal</option>
-                <option value="CUSTOM">✏️ Consigne Personnalisée (Custom)</option>
-              </select>
-            </div>
-
-            <div class="form-group flex-2">
-              <label for="geminiApiKey">Clé API Google AI Studio (100% Gratuite) :</label>
-              <input type="password" id="geminiApiKey" placeholder="AIzaSy...">
-            </div>
-          </div>
-
-          <div class="form-group hidden" id="customInstructionGroup">
-            <label for="customInstructionText">Consigne Personnalisée :</label>
-            <textarea id="customInstructionText" rows="3" class="filter-input" placeholder="Ex: Trouve les 5 meilleures cartes graphiques à moins de 80€..."></textarea>
-          </div>
-
-          <div class="actions" style="margin-top:15px;">
-            <button id="startGlobalAiBtn" class="btn btn-primary">🚀 Lancer l'Analyse Globale Gemini</button>
-            <small class="text-muted" style="align-self:center;">Obtenez une clé API gratuite en 30s sur <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:var(--primary-color);">aistudio.google.com</a></small>
-          </div>
-        </div>
-
-        <div id="globalReportContainer" class="hidden">
-          <div class="stats-grid">
-            <div class="stat-card">
-              <span class="stat-title">Annonces Comparées</span>
-              <span id="kpiTotalAnalyzed" class="stat-value">-</span>
-            </div>
-            <div class="stat-card">
-              <span class="stat-title">Meilleure Pépite</span>
-              <span id="kpiBestDeal" class="stat-value text-green font-small">-</span>
-            </div>
-            <div class="stat-card">
-              <span class="stat-title">Profit Revente Potentiel</span>
-              <span id="kpiTotalProfit" class="stat-value text-green">-</span>
-            </div>
-          </div>
-
-          <div class="card">
-            <h3>📋 Vue d'Ensemble & Stratégie</h3>
-            <p id="kpiOverviewText" class="text-muted" style="font-size:0.9rem; line-height:1.5;"></p>
-          </div>
-
-          <div class="card">
-            <h3>🏆 Classement des Meilleures Opportunités</h3>
-            <div id="rankingCardsBox" class="ranking-cards-box"></div>
-          </div>
-        </div>
-      </section>
-
-      <!-- PAGE PLANIFICATEUR -->
-      <section id="tab-scheduler" class="tab-content">
-        <div class="card">
-          <h2>⏰ Planificateur de Scraping Automatique</h2>
-          <p class="text-muted mb-15">Programmez des scrapings réguliers en arrière-plan. Une notification Windows surgira dès qu'une Bonne Affaire est trouvée !</p>
-
-          <div class="form-row">
-            <div class="form-group flex-3">
-              <label for="schedUrl">URL à surveiller :</label>
-              <input type="url" id="schedUrl" placeholder="https://www.leboncoin.fr/recherche?text=processeur">
-            </div>
-
-            <div class="form-group flex-1">
-              <label for="schedInterval">Intervalle d'exécution :</label>
-              <select id="schedInterval">
-                <option value="15">Toutes les 15 minutes</option>
-                <option value="30" selected>Toutes les 30 minutes</option>
-                <option value="60">Toutes les 1 heure</option>
-                <option value="120">Toutes les 2 heures</option>
-                <option value="360">Toutes les 6 heures</option>
-              </select>
-            </div>
-
-            <div class="form-group flex-1">
-              <label>&nbsp;</label>
-              <button id="addSchedBtn" class="btn btn-primary">➕ Programmer Tâche</button>
-            </div>
-          </div>
-        </div>
-
-        <div class="card">
-          <h2>Tâches Planifiées Actives</h2>
-          <div class="history-table-container">
-            <table class="history-table">
-              <thead>
-                <tr>
-                  <th>URL de Recherche</th>
-                  <th>Intervalle</th>
-                  <th>Statut</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody id="schedTableBody">
-                <tr>
-                  <td colspan="4" class="text-center">Aucune tâche planifiée activée</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </section>
 
       <!-- PAGE LOGS -->
       <section id="tab-logs" class="tab-content">
@@ -694,6 +576,9 @@
           <option value="balanced">⚖️ Équilibré — 5 parallèle, délais modérés</option>
           <option value="safe">🛡️ Prudent — séquentiel, délais humains (anti-blocage max)</option>
         </select>
+        <small class="form-hint" id="speedHint" style="display:block; margin-top:4px; color:var(--text-muted); font-size:0.72rem;">
+          ⚠️ « Rapide » n'extrait pas les descriptions détaillées (le titre + prix suffisent). Pour l'analyse de marché IA, préférez « Équilibré » ou « Prudent ».
+        </small>
       </div>
 
       <div class="form-group text-left" style="margin-top:12px;">
@@ -823,6 +708,78 @@
     </div>
   </div>
 
+  <!-- ❓ MODALE FAQ -->
+  <div id="faqModal" class="modal-overlay hidden">
+    <div class="modal-card modal-large" style="max-width:720px;">
+      <div class="modal-header">
+        <h3 style="margin:0;">❓ Questions fréquentes (FAQ)</h3>
+        <button class="btn-close" data-close-modal="faqModal" aria-label="Fermer">×</button>
+      </div>
+      <p class="text-muted" style="font-size:0.82rem; margin-bottom:12px;">Cliquez sur une question pour afficher / masquer sa réponse.</p>
+      <div id="faqAccordion" class="faq-accordion"></div>
+      <div class="modal-actions" style="margin-top:18px; text-align:right;">
+        <button class="btn btn-secondary" data-close-modal="faqModal">Fermer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 📖 MODALE GUIDE D'UTILISATION -->
+  <div id="helpModal" class="modal-overlay hidden">
+    <div class="modal-card modal-large" style="max-width:720px;">
+      <div class="modal-header">
+        <h3 style="margin:0;">📖 Guide d'utilisation</h3>
+        <button class="btn-close" data-close-modal="helpModal" aria-label="Fermer">×</button>
+      </div>
+      <p class="text-muted" style="font-size:0.82rem; margin-bottom:12px;">Suivez ce guide pas à pas : de la première recherche à l'analyse fine des résultats.</p>
+      <div id="helpContent" class="help-content"></div>
+      <div class="modal-actions" style="margin-top:18px; text-align:right;">
+        <button class="btn btn-secondary" data-close-modal="helpModal">Fermer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 💬 MODALE PROBLÈMES & AMÉLIORATIONS -->
+  <div id="feedbackModal" class="modal-overlay hidden">
+    <div class="modal-card modal-large" style="max-width:560px;">
+      <div class="modal-header">
+        <h3 style="margin:0;">💬 Problèmes &amp; Améliorations</h3>
+        <button class="btn-close" data-close-modal="feedbackModal" aria-label="Fermer">×</button>
+      </div>
+      <p class="text-muted" style="font-size:0.82rem; margin-bottom:12px;">Signalez un bug, proposez une amélioration ou demandez une nouvelle fonctionnalité. Votre rapport nous aide à améliorer le logiciel.</p>
+
+      <div class="form-group text-left">
+        <label style="font-size:0.8rem; color:var(--text-muted); display:block; margin-bottom:6px;">Type de message :</label>
+        <select id="feedbackType" style="width:100%;">
+          <option value="bug">🐛 Problème / Bug</option>
+          <option value="improvement">💡 Amélioration</option>
+          <option value="feature">✨ Nouvelle fonctionnalité</option>
+          <option value="other">❓ Autre</option>
+        </select>
+      </div>
+
+      <div class="form-group text-left" style="margin-top:12px;">
+        <label style="font-size:0.8rem; color:var(--text-muted); display:block; margin-bottom:6px;">Votre message <span style="color:var(--danger,#ef4444);">*</span> :</label>
+        <textarea id="feedbackMessage" rows="6" placeholder="Décrivez le problème ou votre suggestion avec le plus de détails possible (étapes pour reproduire, comportement attendu, comportement observé…)" style="width:100%; resize:vertical; font-family:inherit;"></textarea>
+      </div>
+
+      <details class="feedback-diag" style="margin-top:10px;">
+        <summary style="cursor:pointer; font-size:0.8rem; color:var(--text-muted);">ℹ️ Informations techniques jointes automatiquement</summary>
+        <div id="feedbackDiagPreview" class="feedback-diag-preview"></div>
+      </details>
+
+      <div id="feedbackStatus" class="feedback-status hidden"></div>
+
+      <div class="modal-actions" style="margin-top:18px; display:flex; justify-content:space-between; align-items:center;">
+        <span class="text-muted" style="font-size:0.72rem;">L'envoi vers un serveur sera activé dans une version ultérieure.</span>
+        <div style="display:flex; gap:10px;">
+          <button class="btn btn-secondary" data-close-modal="feedbackModal">Annuler</button>
+          <button id="submitFeedbackBtn" class="btn btn-primary">📤 Envoyer</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="helpModule.js"></script>
   <script src="aiStudioModule.js"></script>
   <script src="app.js"></script>
 </body>

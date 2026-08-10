@@ -2,7 +2,7 @@
 
 const path = require('path');
 const fs = require('fs');
-const { ipcMain, shell } = require('electron');
+const { ipcMain, shell, app } = require('electron');
 const { HarCapturer } = require('../services/scraping/harCapturer');
 const { PipelineRunner } = require('../services/scraping/pipelineRunner');
 const { FileManager } = require('../infrastructure/fileManager');
@@ -11,8 +11,6 @@ const { StorageCleaner } = require('../services/maintenance/storageCleaner');
 const { ExcelExporter } = require('../infrastructure/excelExporter');
 const { MarketAnalyzer } = require('../services/ai/marketAnalyzer');
 const { ImageAnalyzer } = require('../services/ai/imageAnalyzer');
-const { JobSchedulerManager } = require('../services/jobs/jobScheduler');
-const { GlobalAnalyzer } = require('../services/ai/globalAnalyzer');
 const { PromptGenerator } = require('../services/ai/promptGenerator');
 const { checkOllamaHealth } = require('../services/ai/ollamaHealth');
 const { Notifier } = require('../infrastructure/notifications');
@@ -33,11 +31,6 @@ function setupIpcHandlers(getMainWindow) {
     const w = typeof getMainWindow === 'function' ? getMainWindow() : getMainWindow;
     return w && !w.isDestroyed() ? w : null;
   };
-
-  const scheduler = new JobSchedulerManager((config) => {
-    const w = getWin();
-    if (w) w.webContents.send('scheduler:trigger', config);
-  });
 
   const settings = loadSettings();
 
@@ -183,7 +176,7 @@ function setupIpcHandlers(getMainWindow) {
         // 🖼️ ANALYSE D'IMAGES PAR IA VISION (si activée)
         if (analyzeImages) {
           sendStatus({ state: 'processing', message: 'Analyse visuelle des images par IA...' });
-          const visionModel = aiConfig?.visionModel || (aiConfig?.provider === 'ollama' ? 'llava' : 'gemini-1.5-flash');
+          const visionModel = aiConfig?.visionModel || 'llava';
           sendLog({ level: 'info', message: `🖼️ Lancement de l'Analyse Visuelle IA (${ads.length} annonces, 3 images/annonce, modèle ${visionModel})...` });
 
           const t0Vision = Date.now();
@@ -297,41 +290,24 @@ function setupIpcHandlers(getMainWindow) {
     return JobHistoryManager.getLatestJob();
   });
 
-  ipcMain.handle('globalai:analyze', async (event, { jobId, presetKey, customInstruction, geminiApiKey, geminiModel }) => {
-    if (isRunning) throw new Error('Un job de scraping est en cours — attendez la fin avant l\'analyse globale.');
-    if (!geminiApiKey) throw new Error('Clé API Gemini manquante.');
-
-    const jobs = JobHistoryManager.listAllJobs();
-    let ads = [];
-
-    if (!jobId || jobId === 'ALL') {
-      jobs.forEach((j) => {
-        if (Array.isArray(j.ads)) ads.push(...j.ads);
-      });
-    } else {
-      const job = jobs.find((j) => j.id === jobId);
-      if (!job) throw new Error(`Job introuvable (id: ${jobId}).`);
-      ads = Array.isArray(job.ads) ? job.ads : [];
-    }
-
-    if (ads.length === 0) throw new Error('Aucune annonce à analyser dans ce dataset.');
-
-    sendStatus({ state: 'processing', message: 'Analyse Globale Gemini en cours...' });
-
-    const report = await GlobalAnalyzer.analyze(ads, {
-      presetKey,
-      customInstruction,
-      geminiApiKey,
-      geminiModel: geminiModel || 'gemini-2.0-flash',
-    }, (prog) => {
-      sendProgress({ percent: prog.percent, status: prog.status });
-    });
-
-    return report;
-  });
-
   ipcMain.handle('config:get', async () => {
     return loadSettings();
+  });
+
+  // ℹ️ Diagnostic applicatif (non sensible) pour le formulaire de feedback.
+  // Renvoie version, plateforme, arch et date — rien de personnel.
+  ipcMain.handle('app:getDiagnostics', async () => {
+    const os = require('os');
+    return {
+      appVersion: app.getVersion(),
+      electronVersion: process.versions.electron,
+      nodeVersion: process.versions.node,
+      platform: os.platform(),
+      arch: process.arch,
+      osRelease: os.release(),
+      locale: app.getLocale(),
+      timestamp: new Date().toISOString(),
+    };
   });
 
   // Génération de prompt personnalisé via Ollama LOCAL (module AI Studio).
@@ -408,20 +384,6 @@ function setupIpcHandlers(getMainWindow) {
     } catch {
       return { online: false };
     }
-  });
-
-  ipcMain.handle('scheduler:add', async (event, task) => {
-    scheduler.addSchedule(task);
-    return scheduler.listSchedules();
-  });
-
-  ipcMain.handle('scheduler:remove', async (event, id) => {
-    scheduler.removeSchedule(id);
-    return scheduler.listSchedules();
-  });
-
-  ipcMain.handle('scheduler:list', async () => {
-    return scheduler.listSchedules();
   });
 
   ipcMain.handle('job:getHistory', async () => {

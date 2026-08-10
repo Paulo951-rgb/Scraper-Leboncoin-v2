@@ -22,17 +22,8 @@ contextBridge.exposeInMainWorld('api', {
   },
 
   analyzeMarket: (data) => ipcRenderer.invoke('market:analyze', data),
-  analyzeGlobalDataset: (data) => ipcRenderer.invoke('globalai:analyze', data),
   generatePrompt: (data) => ipcRenderer.invoke('prompt:generate', data),
   listOllamaModels: (data) => ipcRenderer.invoke('ollama:models', data),
-
-  onSchedulerTrigger: (callback) => {
-    ipcRenderer.removeAllListeners('scheduler:trigger');
-    ipcRenderer.on('scheduler:trigger', (event, data) => callback(data));
-  },
-  addSchedule: (task) => ipcRenderer.invoke('scheduler:add', task),
-  removeSchedule: (id) => ipcRenderer.invoke('scheduler:remove', id),
-  listSchedules: () => ipcRenderer.invoke('scheduler:list'),
 
   getHistory: () => ipcRenderer.invoke('job:getHistory'),
   deleteJob: (jobId) => ipcRenderer.invoke('job:delete', jobId),
@@ -43,6 +34,7 @@ contextBridge.exposeInMainWorld('api', {
 
   getConfig: () => ipcRenderer.invoke('config:get'),
   saveConfig: (patch) => ipcRenderer.invoke('config:save', patch),
+  getDiagnostics: () => ipcRenderer.invoke('app:getDiagnostics'),
 
   checkOllamaHealth: (opts) => ipcRenderer.invoke('ollama:health', opts),
   checkNetwork: () => ipcRenderer.invoke('network:check'),

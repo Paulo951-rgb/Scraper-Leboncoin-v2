@@ -15,8 +15,6 @@ document.querySelectorAll('.tab-btn').forEach((btn) => {
 
     if (btn.dataset.tab === 'tab-history') loadHistoryPage();
     if (btn.dataset.tab === 'tab-explorer') loadExplorerPage();
-    if (btn.dataset.tab === 'tab-global-ai') loadGlobalAiPage();
-    if (btn.dataset.tab === 'tab-scheduler') loadSchedulerPage();
     if (btn.dataset.tab === 'tab-stats') {
       loadStatsPage();
       // Force Leaflet à recalculer sa taille d'affichage après l'ouverture de l'onglet (anti-bug d'affichage)
@@ -46,114 +44,12 @@ document.addEventListener('keydown', (e) => {
     adDetailModal.classList.add('hidden');
     compareModal.classList.add('hidden');
     settingsModal.classList.add('hidden');
+    // Modales d'aide (FAQ / Help / Feedback)
+    document.getElementById('faqModal')?.classList.add('hidden');
+    document.getElementById('helpModal')?.classList.add('hidden');
+    document.getElementById('feedbackModal')?.classList.add('hidden');
   }
 });
-
-// Éléments UI Global Gemini
-const globalJobSelect = document.getElementById('globalJobSelect');
-const globalPresetSelect = document.getElementById('globalPresetSelect');
-const geminiApiKey = document.getElementById('geminiApiKey');
-const customInstructionGroup = document.getElementById('customInstructionGroup');
-const customInstructionText = document.getElementById('customInstructionText');
-const startGlobalAiBtn = document.getElementById('startGlobalAiBtn');
-
-const globalReportContainer = document.getElementById('globalReportContainer');
-const kpiTotalAnalyzed = document.getElementById('kpiTotalAnalyzed');
-const kpiBestDeal = document.getElementById('kpiBestDeal');
-const kpiTotalProfit = document.getElementById('kpiTotalProfit');
-const kpiOverviewText = document.getElementById('kpiOverviewText');
-const rankingCardsBox = document.getElementById('rankingCardsBox');
-
-geminiApiKey.value = ''; // chargé asynchrone depuis le SecretStore chiffré
-(async () => {
-  try { geminiApiKey.value = await window.api.getSecret('gemini-api-key') || ''; } catch {}
-})();
-geminiApiKey.addEventListener('change', (e) => window.api.setSecret('gemini-api-key', e.target.value));
-
-globalPresetSelect.addEventListener('change', (e) => {
-  if (e.target.value === 'CUSTOM') customInstructionGroup.classList.remove('hidden');
-  else customInstructionGroup.classList.add('hidden');
-});
-
-async function loadGlobalAiPage() {
-  allJobsCache = await window.api.getHistory();
-  populateSessionDropdown(globalJobSelect);
-}
-
-// 🧠 LANCEMENT DE L'ANALYSE GLOBALE GEMINI (1M TOKENS)
-startGlobalAiBtn.addEventListener('click', async () => {
-  const apiKey = geminiApiKey.value.trim();
-  if (!apiKey) {
-    alert('Veuillez entrer une clé API gratuite Google AI Studio (aistudio.google.com).');
-    return;
-  }
-
-  startGlobalAiBtn.disabled = true;
-  const origText = startGlobalAiBtn.textContent;
-  statusText.textContent = 'Analyse Globale Gemini en cours...';
-
-  try {
-    const reportData = await window.api.analyzeGlobalDataset({
-      jobId: globalJobSelect.value,
-      presetKey: globalPresetSelect.value,
-      customInstruction: customInstructionText.value.trim(),
-      geminiApiKey: apiKey,
-      geminiModel: 'gemini-2.0-flash',
-    });
-
-    renderGlobalReport(reportData);
-  } catch (err) {
-    const msg = (err && err.message) ? err.message : String(err);
-    // Erreur de quota Gemini (429) : message explicite + proposition de réessayer.
-    if (/429|quota|rate.?limit/i.test(msg)) {
-      const retryMatch = msg.match(/(\d+)\s*s/i);
-      const waitHint = retryMatch ? ` Attendez ~${retryMatch[1]}s.` : '';
-      statusText.textContent = '⏳ Quota Gemini atteint' + waitHint;
-      if (confirm('⚠️ Quota Gemini dépassé (429).\n\nLe plan gratuit Gemini a une limite de requêtes/minute. Le logiciel a déjà réessayé 3 fois automatiquement.\n\n' + waitHint + '\n\nOptions :\n• Cliquez OK pour réessayer maintenant\n• Attendez quelques minutes puis relancez\n• Ou utilisez l\'Analyse de Marché locale (Ollama) dans l\'onglet 🚀 Scraper\n\nDétail :\n' + msg)) {
-        startGlobalAiBtn.disabled = false;
-        startGlobalAiBtn.click();
-        return;
-      }
-    } else {
-      alert('Erreur Analyse Globale : ' + msg);
-    }
-  } finally {
-    startGlobalAiBtn.disabled = false;
-    startGlobalAiBtn.textContent = origText;
-  }
-});
-
-function renderGlobalReport(data) {
-  if (!data || !data.summaryKpi) return;
-
-  globalReportContainer.classList.remove('hidden');
-
-  kpiTotalAnalyzed.textContent = `${data.summaryKpi.totalAnalyzed || 0} annonces`;
-  kpiBestDeal.textContent = data.summaryKpi.bestDealTitle || '-';
-  kpiTotalProfit.textContent = `+${data.summaryKpi.totalPotentialProfitEur || 0} €`;
-  kpiOverviewText.textContent = data.summaryKpi.overview || 'Analyse terminée.';
-
-  if (Array.isArray(data.topRanking)) {
-    rankingCardsBox.innerHTML = data.topRanking
-      .map(
-        (item) => `
-      <div class="rank-card rank-${item.rank}">
-        <div class="rank-badge-box">#${item.rank}</div>
-        <div class="rank-content">
-          <div class="rank-title">${escapeHtml(item.identifiedProduct || 'Annonce')}</div>
-          <div class="rank-price-row">
-            Prix Demandé : <span class="rank-price">${item.askingPrice} €</span> | 
-            Valeur Estimée : <strong>${item.estimatedMarketValue} €</strong> | 
-            Marge Revente : <strong style="color:var(--green-deal);">+${item.estimatedNetProfitEur} € (${item.dealDiscountPct}%)</strong>
-          </div>
-          <div class="rank-reason">💬 <strong>Analyse de l'IA :</strong> ${escapeHtml(item.whyItIsTop)}</div>
-        </div>
-      </div>
-    `
-      )
-      .join('');
-  }
-}
 
 // Reste des éléments UI
 const startBtn = document.getElementById('startBtn');
@@ -225,12 +121,6 @@ const statPart = document.getElementById('statPart');
 
 // Déclarations de sécurité pour l'historique et la suppression
 const openMainFolderBtn = document.getElementById('openMainFolderBtn');
-
-// Scheduler Elements
-const schedUrl = document.getElementById('schedUrl');
-const schedInterval = document.getElementById('schedInterval');
-const addSchedBtn = document.getElementById('addSchedBtn');
-const schedTableBody = document.getElementById('schedTableBody');
 
 // Proxy & AI
 const proxyUrl = document.getElementById('proxyUrl');
@@ -357,8 +247,14 @@ openCompareModalBtn.addEventListener('click', () => {
 closeCompareModalBtn.addEventListener('click', () => compareModal.classList.add('hidden'));
 
 // Widget Flottant — fenêtre always-on-top qui affiche la progression du scraping
-document.getElementById('toggleWidgetBtn').addEventListener('click', () => {
+// Feedback visuel : le bouton bascule en état "actif" tant que le widget est ouvert.
+const toggleWidgetBtn = document.getElementById('toggleWidgetBtn');
+let widgetActive = false;
+toggleWidgetBtn.addEventListener('click', () => {
   window.api.toggleWidget();
+  widgetActive = !widgetActive;
+  toggleWidgetBtn.classList.toggle('btn-active', widgetActive);
+  toggleWidgetBtn.title = widgetActive ? 'Widget flottant ouvert — cliquez pour fermer' : 'Ouvrir le widget flottant';
 });
 
 // Modal Paramètres
@@ -1004,7 +900,11 @@ function renderStatsView() {
     statAvgPrice.textContent = '-'; statMedPrice.textContent = '-'; statMinPrice.textContent = '-'; statMaxPrice.textContent = '-';
   }
 
-  const handCount = sourceAds.filter((a) => !a.shipping).length;
+  // « Remise en main propre » = livraison explicitement indisponible
+  // (shipping === false). On n'utilise PAS !a.shipping car shipping=null
+  // (info non extraite, p. ex. en mode ultra-rapide) serait compté à tort
+  // comme une remise en main propre.
+  const handCount = sourceAds.filter((a) => a.shipping === false).length;
   const proCount = sourceAds.filter((a) => a.isPro).length;
   const partCount = sourceAds.length - proCount;
 
@@ -1077,16 +977,27 @@ async function renderMap(ads) {
 
   const mapHandDeliveryOnly = document.getElementById('mapHandDeliveryOnly').checked;
 
-  // Filtrer les annonces "main propre" uniquement
-  let targetAds = ads;
+  // Déduplication : une même annonce peut apparaître dans plusieurs sessions
+  // de scraping (ex. « tous les scrapings combinés »). On ne l'affiche qu'une
+  // seule fois sur la carte, identifiée par son id Leboncoin (fiable).
+  const seenIds = new Set();
+  const dedupedAds = [];
+  for (const a of ads) {
+    const key = a.id || a.url || a.title;
+    if (!key || !seenIds.has(key)) {
+      if (key) seenIds.add(key);
+      dedupedAds.push(a);
+    }
+  }
+
+  // Filtrer les annonces "main propre" uniquement (shipping === false,
+  // pas null qui signifie « info non extraite »).
+  let targetAds = dedupedAds;
   if (mapHandDeliveryOnly) {
-    targetAds = ads.filter((a) => {
-      // shipping est un booléen Leboncoin (true = livraison possible, false/null = remise main propre)
-      return !a.shipping;
-    });
-    console.log(`[Carte] Filtre main propre ON : ${targetAds.length}/${ads.length} annonces (shipping=true exclus)`);
+    targetAds = dedupedAds.filter((a) => a.shipping === false);
+    console.log(`[Carte] Filtre main propre ON : ${targetAds.length}/${dedupedAds.length} annonces (shipping=false uniquement) — ${ads.length - dedupedAds.length} doublon(s) supprimé(s)`);
   } else {
-    console.log(`[Carte] Filtre main propre OFF : ${ads.length} annonces affichées`);
+    console.log(`[Carte] Filtre main propre OFF : ${dedupedAds.length} annonces affichées — ${ads.length - dedupedAds.length} doublon(s) supprimé(s)`);
   }
 
   for (const a of targetAds) {
@@ -1160,11 +1071,37 @@ function renderCharts(ads) {
     type: 'doughnut',
     data: {
       labels: ['Particuliers', 'Professionnels'],
-      datasets: [{ data: [partCount, proCount], backgroundColor: ['#38bdf8', '#8b5cf6'] }],
+      datasets: [{
+        data: [partCount, proCount],
+        backgroundColor: ['#38bdf8', '#8b5cf6'],
+        borderColor: 'var(--bg-card, #1e293b)',
+        borderWidth: 3,
+        hoverOffset: 8,
+      }],
     },
     options: {
       responsive: true, maintainAspectRatio: false,
-      plugins: { title: { display: true, text: 'Vendeurs Particuliers vs Pros' } },
+      cutout: '62%',
+      plugins: {
+        title: { display: true, text: 'Vendeurs Particuliers vs Pros', padding: { bottom: 12 } },
+        legend: {
+          position: 'bottom',
+          labels: { usePointStyle: true, pointStyle: 'circle', padding: 18, boxWidth: 10 },
+        },
+        tooltip: {
+          backgroundColor: 'rgba(15,23,42,0.95)',
+          padding: 12,
+          cornerRadius: 8,
+          callbacks: {
+            label: (ctx) => {
+              const total = partCount + proCount;
+              const v = ctx.parsed;
+              const pct = total ? Math.round((v / total) * 100) : 0;
+              return `${ctx.label}: ${v.toLocaleString('fr-FR')} (${pct}%)`;
+            },
+          },
+        },
+      },
     },
   });
 
@@ -1187,7 +1124,12 @@ function renderCharts(ads) {
     options: {
       indexAxis: 'y', responsive: true, maintainAspectRatio: false,
       plugins: { title: { display: true, text: 'Top 10 Villes' }, legend: { display: false } },
-      scales: { x: { beginAtZero: true, ticks: { precision: 0 } } },
+      scales: {
+        x: { beginAtZero: true, ticks: { precision: 0 } },
+        // Force l'affichage des 10 labels de villes (autoSkip désactivé, aucun
+        // masquage alterné).
+        y: { ticks: { autoSkip: false, maxTicksLimit: 10 } },
+      },
     },
   });
 }
@@ -1249,91 +1191,4 @@ clearLogsBtn.addEventListener('click', () => {
 // Écouteur pour rafraîchir la carte si on coche/décoche la remise en main propre
 document.getElementById('mapHandDeliveryOnly').addEventListener('change', () => {
   renderStatsView();
-});
-
-// ============================================================
-// PAGE PLANIFICATEUR — chargement, ajout, suppression, déclenchement
-// ============================================================
-
-async function loadSchedulerPage() {
-  try {
-    const tasks = await window.api.listSchedules();
-    renderSchedulerTable(tasks);
-  } catch (err) {
-    schedTableBody.innerHTML = `<tr><td colspan="4" class="text-center">Erreur planificateur : ${escapeHtml(err.message)}</td></tr>`;
-  }
-}
-
-function renderSchedulerTable(tasks) {
-  if (!tasks || tasks.length === 0) {
-    schedTableBody.innerHTML = '<tr><td colspan="4" class="text-center">Aucune tâche planifiée activée</td></tr>';
-    return;
-  }
-
-  schedTableBody.innerHTML = tasks
-    .map((t) => {
-      const nextRunTxt = t.nextRun ? new Date(t.nextRun).toLocaleString('fr-FR') : '-';
-      const lastRunTxt = t.lastRun ? new Date(t.lastRun).toLocaleString('fr-FR') : 'Jamais';
-      return `
-      <tr>
-        <td>${escapeHtml(t.searchUrl || '-')}</td>
-        <td>${t.intervalMinutes || '?'} min</td>
-        <td>Prochaine : ${escapeHtml(nextRunTxt)}<br><small class="text-muted">Dernière : ${escapeHtml(lastRunTxt)}</small></td>
-        <td><button class="btn btn-danger btn-small" onclick="removeSchedule('${escapeHtml(t.id)}')">🗑️ Supprimer</button></td>
-      </tr>
-    `;
-    })
-    .join('');
-}
-
-addSchedBtn.addEventListener('click', async () => {
-  const url = schedUrl.value.trim();
-  if (!url) {
-    alert('Veuillez entrer une URL à surveiller.');
-    return;
-  }
-  const interval = parseInt(schedInterval.value, 10) || 30;
-  const task = {
-    id: `sched-${Date.now()}`,
-    searchUrl: url,
-    pages: parseInt(document.getElementById('pages').value, 10) || 1,
-    intervalMinutes: interval,
-    noDesc: document.getElementById('noDesc').checked,
-    csv: document.getElementById('csv').checked,
-    autoAiMarket: autoAiMarket.checked,
-    analyzeImages: analyzeImages.checked,
-    limit: document.getElementById('limit').value ? parseInt(document.getElementById('limit').value, 10) : undefined,
-    aiConfig: {
-      provider: aiProvider.value,
-      model: aiModelName.value.trim() || 'llama3',
-      apiKey: getAiApiKey(),
-    },
-    proxyUrl: proxyUrl.value.trim() || undefined,
-  };
-
-  try {
-    addSchedBtn.disabled = true;
-    const tasks = await window.api.addSchedule(task);
-    renderSchedulerTable(tasks);
-    schedUrl.value = '';
-  } catch (err) {
-    alert(`Erreur planification : ${err.message}`);
-  } finally {
-    addSchedBtn.disabled = false;
-  }
-});
-
-window.removeSchedule = async (id) => {
-  try {
-    const tasks = await window.api.removeSchedule(id);
-    renderSchedulerTable(tasks);
-  } catch (err) {
-    alert(`Erreur suppression tâche : ${err.message}`);
-  }
-};
-
-// Déclenchement d'une tâche planifiée par le main process → on lance le scraping
-window.api.onSchedulerTrigger((config) => {
-  statusText.textContent = '⏰ Tâche planifiée déclenchée — lancement automatique...';
-  window.api.startScraping(config);
 });
