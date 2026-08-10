@@ -53,4 +53,9 @@ contextBridge.exposeInMainWorld('api', {
   toggleWidget: () => ipcRenderer.send('widget:toggle'),
   sendWidgetProgress: (data) => ipcRenderer.send('widget:progress', data),
   sendWidgetStatus: (data) => ipcRenderer.send('widget:status', data),
+
+  // Ouvre une vraie fenêtre (BrowserWindow) pour se connecter à Google sur
+  // AI Studio — le <webview> est bloqué par Google pour l'OAuth. Même partition
+  // persistante que le <webview>, donc la session se partage après connexion.
+  openAiStudioLogin: (url) => ipcRenderer.send('aistudio:openLogin', url),
 });
