@@ -1,8 +1,8 @@
 # 🛒 Leboncoin Scraper Pro
 
-Application de bureau **Electron** permettant de scraper, enrichir, analyser (via IA) et exporter des annonces [Leboncoin.fr](https://www.leboncoin.fr) de manière semi-automatisée, avec détection de bonnes affaires, estimation de valeur marché, calcul de marge de revente et détection de risques/arnaques.
+Application de bureau **Electron** pour scraper, enrichir, analyser (via IA **100% locale**) et exporter des annonces [Leboncoin.fr](https://www.leboncoin.fr), avec détection de bonnes affaires, estimation de valeur marché, calcul de marge de revente et détection d'arnaques.
 
-> Ce document est écrit pour permettre à une IA (ou à un développeur) sans aucune connaissance préalable du projet de comprendre entièrement son fonctionnement, son architecture et son code, sans avoir besoin d'autre contexte.
+> Document écrit pour qu'une IA ou un développeur sans aucune connaissance préalable du projet puisse comprendre entièrement son fonctionnement, son architecture et son code.
 
 ---
 
@@ -10,34 +10,38 @@ Application de bureau **Electron** permettant de scraper, enrichir, analyser (vi
 
 1. [Vue d'ensemble](#-vue-densemble)
 2. [Fonctionnalités principales](#-fonctionnalités-principales)
-3. [Architecture technique](#-architecture-technique)
-4. [Structure du projet](#-structure-du-projet)
-5. [Stack technique](#-stack-technique)
-6. [Flux de fonctionnement détaillé](#-flux-de-fonctionnement-détaillé)
-7. [Le modèle de données "Annonce"](#-le-modèle-de-données-annonce)
-8. [L'algorithme de scoring des affaires](#-lalgorithme-de-scoring-des-affaires)
-9. [Interface utilisateur (onglets)](#-interface-utilisateur-onglets)
-10. [Communication IPC (Main ↔ Renderer)](#-communication-ipc-main--renderer)
-11. [Anti-blocage & gestion de session](#-anti-blocage--gestion-de-session)
-12. [Installation & lancement](#-installation--lancement)
-13. [Configuration de l'IA](#-configuration-de-lia)
-14. [Fichiers générés (sorties)](#-fichiers-générés-sorties)
-15. [Tests de non-régression](#-tests-de-non-régression)
-16. [Limitations connues](#-limitations-connues)
-17. [Avertissement légal](#-avertissement-légal)
+3. [Module Navigateur IA Studio](#-module-navigateur-ia-studio)
+4. [Architecture technique](#-architecture-technique)
+5. [Structure du projet](#-structure-du-projet)
+6. [Stack technique](#-stack-technique)
+7. [Flux de fonctionnement](#-flux-de-fonctionnement)
+8. [Modèle de données « Annonce »](#-modèle-de-données-annonce)
+9. [Algorithme de scoring](#-algorithme-de-scoring)
+10. [Interface utilisateur (onglets)](#-interface-utilisateur-onglets)
+11. [Communication IPC](#-communication-ipc)
+12. [Anti-blocage & session](#-anti-blocage--session)
+13. [Sécurité](#-sécurité)
+14. [Installation & lancement](#-installation--lancement)
+15. [Configuration de l'IA](#-configuration-de-lia)
+16. [Fichiers générés](#-fichiers-générés)
+17. [Tests de non-régression](#-tests-de-non-régression)
+18. [Limitations connues](#-limitations-connues)
+19. [Avertissement légal](#-avertissement-légal)
 
 ---
 
 ## 🎯 Vue d'ensemble
 
-**Leboncoin Scraper Pro** est une application desktop (Windows/Mac/Linux) construite avec **Electron**, dont le but est de :
+**Leboncoin Scraper Pro** est une application desktop (Windows/Mac/Linux) construite avec **Electron** qui :
 
-1. **Capturer** les résultats d'une recherche Leboncoin (via un navigateur Chromium piloté par Playwright).
-2. **Extraire** les annonces à partir du trafic réseau capturé (fichier `.har`).
-3. **Enrichir** chaque annonce avec sa description complète (non présente dans les résultats de recherche bruts).
-4. **Analyser le marché** via une IA (locale via Ollama, ou distante via OpenAI) pour estimer si le prix demandé est une bonne affaire, une arnaque potentielle, ou un prix correct.
-5. **Exporter** les résultats en JSON, CSV, TXT et Excel (`.xlsx`) formaté avec mise en forme conditionnelle.
-6. Offrir une interface complète de **pilotage, planification, historique, exploration, comparaison et visualisation cartographique/statistique** des annonces collectées.
+1. **Capture** les résultats d'une recherche Leboncoin (Chromium piloté par Playwright).
+2. **Extrait** les annonces à partir du trafic réseau capturé (fichier `.har`).
+3. **Enrichit** chaque annonce avec sa description complète (non présente dans les résultats bruts).
+4. **Analyse le marché** via une **IA locale** (Ollama) pour estimer si le prix est une bonne affaire, une arnaque potentielle, ou un prix correct.
+5. **Exporte** les résultats en JSON, CSV, TXT et Excel (`.xlsx`) avec mise en forme conditionnelle.
+6. Offre un **navigateur IA Studio intégré** pour générer des prompts d'analyse personnalisés via Ollama et les utiliser dans Google AI Studio directement dans le logiciel.
+
+L'IA est **100% locale** (Ollama) pour l'analyse par annonce et la génération de prompts : aucune clé API payante, aucun envoi de données vers le cloud, fonctionnement hors-ligne. Seule l'Analyse Globale optionnelle utilise Google Gemini (gratuit).
 
 L'application est pensée pour un usage **semi-automatisé** : l'utilisateur peut devoir résoudre un captcha manuellement si Leboncoin détecte une activité robotique, après quoi le scraping reprend automatiquement.
 
@@ -45,82 +49,95 @@ L'application est pensée pour un usage **semi-automatisé** : l'utilisateur peu
 
 ## ⚙️ Fonctionnalités principales
 
+### Scraping & extraction
 - 🚀 **Scraping automatisé** d'une URL de recherche Leboncoin sur plusieurs pages.
-- 🔑 **Session globale persistante** ("Master Session") pour éviter de repasser un captcha à chaque lancement.
+- 🔑 **Session globale persistante** (« Master Session ») pour éviter de repasser un captcha à chaque lancement.
 - 🤖 **Détection automatique de blocage/captcha** avec pause et reprise après résolution manuelle.
-- 📝 **Extraction des descriptions complètes** des annonces en mode rapide parallèle (10 requêtes HTTP simultanées par batch via `Promise.all`, exécutées directement dans la page pour hériter des cookies/session).
-- 🧠 **Analyse IA par annonce** (`marketAnalyzer.js`) : identification du produit, gamme, état, type de photo, puis calcul d'un **score de 0 à 100**, d'une **classification** (Très bonne affaire / Bonne affaire / Prix correct / Légèrement cher / Trop cher), d'une **marge de revente estimée (ROI)** et d'un **score d'arnaque (scam score)**.
-- 🧠 **Analyse Globale IA (Gemini)** : un moteur d'analyse "grand contexte" (Gemini 2.0 Flash, jusqu'à 1M tokens) capable d'analyser l'ensemble d'un job en une fois pour produire un classement des meilleures opportunités avec instructions personnalisées.
-- 📊 **Export Excel (.xlsx)** stylisé (couleurs, filtres automatiques, liens hypertextes, mise en forme conditionnelle des bonnes/mauvaises affaires) via `exceljs`.
+- 📝 **Extraction des descriptions complètes** en mode rapide parallèle (batchs de 10 via `Promise.all`, exécutées dans la page pour hériter des cookies/session).
+- 📦 **Extraction livraison** — l'info « remise en main propre / livraison » est extraite des pages individuelles.
+- 🔄 **Rotation de User-Agent** (10 UA réalistes en rotation aléatoire).
+- 🚀 **3 presets de vitesse** (Rapide / Équilibré / Prudent).
+- ⏳ **Rate limiting adaptatif** — backoff exponentiel si Leboncoin répond lentement ou bloque (403/429).
+
+### Analyse IA (100% locale via Ollama)
+- 🧠 **Analyse IA par annonce** (`marketAnalyzer.js`) : identification du produit, gamme, état, type de photo, puis calcul d'un **score 0-100**, d'une **classification**, d'une **marge de revente (ROI)** et d'un **scam score**.
+- 🖼️ **Analyse d'images par IA Vision** (optionnelle) — les 3 premières photos analysées (type, état, défauts, authenticité).
+- 🧠 **Cache IA** — les annonces déjà analysées (même `list_id`) ne sont pas re-demandées (plafond 5000 entrées avec éviction des plus anciennes).
+- 🩺 **Health-check Ollama** — vérifie que le serveur est démarré et le modèle chargé avant l'analyse.
+
+### Analyse Globale (Gemini, optionnel)
+- 🧠 **Analyse Globale IA (Gemini 2.0 Flash)** — analyse « grand contexte » de tout un job en une fois, classement des meilleures opportunités.
+- ⚠️ **Gestion d'erreur 429** — message clair avec délai suggéré, retry auto (3×), proposition de réessayer ou d'utiliser l'analyse locale.
+
+### Export & visualisation
+- 📊 **Export Excel (.xlsx)** stylisé (couleurs, filtres auto, liens, mise en forme conditionnelle).
 - 📄 Export **JSON, CSV et TXT** lisible.
-- ⏰ **Planificateur de tâches** (scraping récurrent à intervalle défini en minutes) avec notifications Windows natives lors de la découverte d'une "Très bonne affaire".
-- 📁 **Historique complet des jobs** de scraping (annonces, statistiques, fichiers générés) avec suppression.
-- 🔍 **Explorateur d'annonces** avec filtres (mot-clé, prix min/max, tag de deal), tri, vue tableau/grille, fiche détaillée par annonce (galerie photo, résumé IA, marge, etc.).
-- 🆚 **Comparateur d'annonces** côte à côte.
-- 📊 **Statistiques & carte interactive** (Leaflet.js) affichant la répartition géographique des annonces en France, graphiques (Chart.js) de répartition des deals et des vendeurs.
-- 📌 **Presets de recherche** réutilisables en un clic.
-- 🖥️ **Widget flottant** always-on-top pour suivre la progression du scraping en temps réel, même fenêtre principale minimisée (pourcentage, barre de progression, statut, point coloré animé).
-- 🎨 **13 thèmes visuels** (Sombre, Clair, OLED, Violet Doux, Vert Émeraude, Sunset, Carbon, Rose, Amber, Mint, Slate, Crimson, Nordic) — réglables depuis la modale Paramètres.
-- 🌐 **Support proxy rotatif** optionnel (HTTP proxy avec authentification).
-- 🚀 **3 presets de vitesse** (Rapide / Équilibré / Prudent) réglables dans les Paramètres, du parallèle agressif au séquentiel anti-blocage.
-- 🧠 **Cache IA** — les annonces déjà analysées (même `list_id`) ne sont pas re-demandées à l'IA. Accélération massive sur les scrapings répétés.
-- 🔄 **Rotation de User-Agent** — 10 User-Agents réalistes en rotation aléatoire pour réduire la détection.
-- 💾 **Persistance des tâches planifiées** — les tâches du planificateur survivent au redémarrage de l'application.
-- 🔍 **Filtres mémorisés** — les filtres de l'Explorateur Annonces (mot-clé, prix, tri) sont sauvegardés entre les sessions.
-- 📦 **Extraction livraison** — l'info "remise en main propre / livraison" est extraite depuis les pages individuelles d'annonces (Leboncoin ne la fournit pas dans les résultats de recherche).
-- 🖼️ **Analyse d'images par IA Vision** — les 3 premières photos de chaque annonce sont analysées (type de photo, état visible, défauts, authenticité). Affine le scoring et détecte les photos constructeur vs réelles. Optionnel (case à cocher).
-- 🧹 **Nettoyage automatique** des anciens fichiers `.har` (configurable, par défaut 7 jours) pour limiter l'usage disque.
-- ⏳ **Rate limiting adaptatif** — le pipeline ralentit dynamiquement (backoff exponentiel) si Leboncoin répond lentement ou bloque (403/429), et accélère après une série de succès rapides.
-- 🔒 **Validation d'intégrité** — checksum SHA-256 des `annonces.json` (fichier `.sha256` associé) pour détecter toute corruption de disque.
-- 📶 **Mode hors-ligne** — un badge signale la perte de connexion ; le scraping est désactivé mais l'historique des jobs reste consultable.
-- 🔐 **Chiffrement des clés API** — les clés Gemini/OpenAI sont stockées chiffrées via `safeStorage` (trousseau OS), plus en clair dans le localStorage.
-- 🧱 **Sandbox renderer durcie** — `contextIsolation` + `sandbox:true` + preload strict sur toutes les fenêtres (y compris le widget flottant).
-- 📜 **Logs rotatifs** — un fichier de log par jour (`output/logs/scraper-YYYY-MM-DD.log`) avec rétention configurable, en plus de la console.
-- 🩺 **Health-check Ollama** — avant l'analyse IA locale, l'app vérifie que le serveur Ollama est démarré et que le modèle demandé est chargé.
-- 🗑️ **Suppression auto des jobs** (optionnel, décochée par défaut) — supprime automatiquement les dossiers de jobs plus anciens qu'une durée choisie par l'utilisateur.
+- 🔍 **Explorateur d'annonces** — filtres (mot-clé, prix, tag de deal), tri, vue tableau/grille, fiche détaillée, comparateur.
+- 📊 **Statistiques** — 8 cartes colorées (Total, Prix Moyen/Médian/Min/Max, Main Propre, Pro/Particulier) + 3 graphiques (Distribution des prix, Vendeurs, Top 10 Villes).
+- 🗺️ **Carte interactive** (Leaflet) — répartition géographique avec filtre « remise main propre », géocodage via API Gouv France (cache + timeout 10s).
+- 🆚 **Comparateur** d'annonces côte à côte.
+- ⏰ **Planificateur** de scrapings récurrents avec notifications natives.
+- 📁 **Historique** complet des jobs avec suppression.
+- 🖥️ **Widget flottant** always-on-top (progression temps réel).
+- 🎨 **13 thèmes visuels**.
+- 📶 **Mode hors-ligne** — badge de connectivité, scraping désactivé mais historique consultable.
+- 📜 **Logs rotatifs** (un fichier par jour, rétention configurable).
+
+---
+
+## 🌐 Module Navigateur IA Studio
+
+Onglet dédié intégrant **Google AI Studio directement dans le logiciel** (via `<webview>`) + génération de prompts par IA locale.
+
+### Composants
+- **Navigateur webview intégré** ouvrant `https://aistudio.google.com/` avec boutons de navigation (précédent/suivant/recharger/accueil), barre d'URL, et ouverture dans le navigateur externe.
+- **Connexion Google** via une fenêtre dédiée (BrowserWindow) — le `<webview>` étant bloqué par Google pour l'OAuth, une vraie fenêtre partage la même session persistante (`persist:aistudio`).
+- **Anti-détection Google** : User-Agent Chrome réel (sans « Electron »), masquage des Client Hints `sec-ch-ua`, override de `navigator.userAgentData` et `navigator.webdriver` via preload dédié.
+- **Génération de prompts par Ollama (local)** — l'utilisateur fournit un domaine (PC/Hardware, GPU, Smartphones, Livres, Personnalisé), un objectif et des variables ; l'IA locale génère un prompt complet à coller dans AI Studio. Aucune IA sur le web, aucune clé API.
+- **Test Ollama** intégré — bouton pour vérifier la connexion et lister les modèles installés.
+- **Bouton ouvrir dossier des jobs** — accès direct au dossier de sortie.
+- **Drag & drop .json** — glisser un fichier d'annonces dans le chat AI Studio.
+
+### Fichiers
+- `src/renderer/aiStudioModule.js` — logique renderer du module.
+- `src/main/services/ai/promptGenerator.js` — génération de prompts via Ollama local.
+- `src/main/aistudioLoginPreload.js` — preload anti-détection pour la fenêtre de connexion Google.
 
 ---
 
 ## 🏗️ Architecture technique
 
-L'application suit l'architecture standard **Electron** en deux processus séparés, avec un **sous-processus additionnel** dédié au traitement lourd des données :
+Architecture standard **Electron** (main + renderer) avec un **sous-processus** dédié au traitement lourd :
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        PROCESSUS MAIN (Node.js)                  │
-│  src/main/main.js  →  crée la BrowserWindow + charge core/ipcHandlers │
-│                                                                     │
-│  ┌───────────────┐   ┌──────────────────┐   ┌──────────────────┐ │
-│  │ HarCapturer   │   │ PipelineRunner    │   │ MarketAnalyzer    │ │
-│  │ (Playwright)  │──▶│ (fork process)    │──▶│ (IA scoring)      │ │
-│  └───────────────┘   └──────────────────┘   └──────────────────┘ │
-│  services/scraping/      services/scraping/      services/ai/      │
-│         │                     │                       │           │
-│         ▼                     ▼                       ▼           │
-│   capture.har        annonces.json/.csv/.txt    marketAnalysis    │
-│                                                         │           │
-│                                              ┌──────────────────┐  │
-│                                              │  ExcelExporter    │  │
-│                                              │  infrastructure/  │  │
-│                                              └──────────────────┘  │
+│                  PROCESSUS MAIN (Node.js)                        │
+│  main.js → BrowserWindow + ipcHandlers                          │
+│  ┌────────────┐   ┌───────────────┐   ┌────────────────┐        │
+│  │ HarCapturer │   │ PipelineRunner │   │ MarketAnalyzer │        │
+│  │ (Playwright)│──▶│ (fork process) │──▶│ (IA scoring)   │        │
+│  └────────────┘   └───────────────┘   └────────────────┘        │
+│       │                  │                    │                 │
+│       ▼                  ▼                    ▼                 │
+│   capture.har      annonces.json/csv/txt   marketAnalysis        │
+│                                            → ExcelExporter      │
 └─────────────────────────────────────────────────────────────────┘
-                              ▲  IPC (ipcMain / ipcRenderer)  │
-                              │                                ▼
+                            ▲ IPC (ipcMain ↔ ipcRenderer) ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    PROCESSUS RENDERER (Chromium)                 │
-│   src/renderer/index.html + app.js + styles.css                  │
-│   Exposé au renderer via preload.js (contextBridge → window.api) │
+│                PROCESSUS RENDERER (Chromium, sandboxé)           │
+│  index.html + app.js + styles.css + aiStudioModule.js            │
+│  Exposé via preload.js (contextBridge → window.api)             │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-Le processus main suit une **architecture en couches** (`core/` orchestration, `services/` logique métier, `infrastructure/` intégrations externes, `config/` configuration, `utils/` utilitaires) — voir la section *Structure du projet* ci-dessous.
+Le main suit une **architecture en couches** : `core/` (orchestration), `services/` (métier), `infrastructure/` (intégrations), `config/` (configuration), `utils/` (utilitaires).
 
-### Pourquoi un sous-processus (`fork`) séparé pour le pipeline ?
+### Pourquoi un sous-processus (`fork`) pour le pipeline ?
 
-Le fichier `src/main/services/scraping/leboncoin-pipeline.js` est un **script CLI Node.js autonome** (utilisable aussi en ligne de commande) lancé via `child_process.fork()` depuis `pipelineRunner.js`. Cela permet :
-- d'isoler un traitement potentiellement lourd (parsing de très gros fichiers `.har`, jusqu'à plusieurs centaines de Mo) du processus principal Electron pour ne pas geler l'UI ;
-- de pouvoir tuer/interrompre proprement le traitement (`SIGINT`) sans affecter Electron ;
-- de communiquer la progression via `stdout` (parsing de logs formatés `[done/total]`).
+`leboncoin-pipeline.js` est un script CLI Node.js autonome lancé via `child_process.fork()` depuis `pipelineRunner.js`. Cela permet :
+- d'isoler le traitement lourd (parsing de gros `.har`, jusqu'à plusieurs centaines de Mo) du main process pour ne pas geler l'UI ;
+- de tuer/interrompre proprement (`SIGINT`) sans affecter Electron ;
+- de communiquer la progression via `stdout` (logs formatés `[done/total]`).
 
 ---
 
@@ -130,160 +147,128 @@ Le fichier `src/main/services/scraping/leboncoin-pipeline.js` est un **script CL
 leboncoin-scraper-app/
 ├── package.json                          # Métadonnées, dépendances, script "start"
 ├── test/
-│   └── regression.test.js                # Suite de non-régression (146 assertions)
+│   └── regression.test.js                # Suite de non-régression (231 assertions)
 └── src/
-    ├── main/                             # Processus principal Electron (Node.js)
-    │   ├── main.js                       # Point d'entrée : cycle de vie app + fenêtre principale + fenêtre widget
-    │   ├── preload.js                    # Pont sécurisé (contextBridge) Main ↔ Renderer
-    │   ├── widgetPreload.js              # Preload dédié au widget (sandbox strict)
-    │   ├── core/                         # Cœur applicatif (orchestration)
-    │   │   ├── ipcHandlers.js            # Routage IPC uniquement (délègue aux services)
-    │   │   └── settings.js               # Persistance des paramètres utilisateur
-    │   ├── config/                       # Configuration
-    │   │   ├── constants.js              # Chemins, defaults, thèmes
-    │   │   └── risk-keywords.js          # Mots-clés à risque (logique métier isolée)
-    │   ├── services/                     # Services métier (par domaine)
-    │   │   ├── scraping/                 # Couche de scraping
-    │   │   │   ├── harCapturer.js        # Capture du trafic réseau via Playwright/Chromium
-    │   │   │   ├── pipelineRunner.js     # Lance leboncoin-pipeline.js en sous-processus (fork)
-    │   │   │   └── leboncoin-pipeline.js # Script CLI : HAR → JSON/CSV/TXT + enrichissement (rate limiting adaptatif)
-    │   │   ├── ai/                       # Couche d'analyse IA
-    │   │   │   ├── marketAnalyzer.js     # Analyse IA par annonce (Ollama / OpenAI)
-    │   │   │   ├── globalAnalyzer.js     # Analyse globale du dataset (Google Gemini)
-    │   │   │   ├── imageAnalyzer.js      # Analyse d'images par IA Vision (LLaVA / Gemini Vision)
-    │   │   │   ├── aiCache.js            # Cache IA (namespace par prefix)
-    │   │   │   └── ollamaHealth.js       # Health-check Ollama (dispo + modèle chargé)
-    │   │   ├── analysis/                 # Couche d'analyse statistique
-    │   │   │   └── dealFinder.js         # Détection bonnes affaires / annonces à risque
-    │   │   ├── jobs/                     # Gestion des jobs
-    │   │   │   ├── jobHistory.js         # Listing, lecture, suppression des jobs passés (validation intégrité)
-    │   │   │   └── jobScheduler.js       # Planification de scrapings récurrents
-    │   │   └── maintenance/              # Maintenance
-    │   │       └── storageCleaner.js     # Nettoyage des anciens .har + suppression auto des jobs
-    │   ├── infrastructure/               # Intégrations externes / OS
-    │   │   ├── excelExporter.js          # Génération du fichier .xlsx stylisé (exceljs)
-    │   │   ├── fileManager.js            # Ouverture de fichiers/dossiers (explorateur système)
-    │   │   └── notifications.js          # Notifications système (Electron Notification)
-    │   └── utils/                        # Utilitaires transverses
-    │       ├── helpers.js                # sleep, randomDelay, écriture atomique, formatDuration...
-    │       ├── diagnostics.js            # Helpers de log/diagnostic (redact, formatBytes…)
-    │       ├── integrity.js              # Checksum SHA-256 pour validation d'intégrité des JSON
-    │       ├── rateLimiter.js            # Rate limiting adaptatif (backoff exponentiel)
-    │       ├── logger.js                 # Logger avec rotation quotidienne + rétention
-    │       └── secretStore.js            # Stockage chiffré des clés API (safeStorage OS)
-    └── renderer/                         # Interface utilisateur (front-end, sandboxé)
-        ├── index.html                    # Structure de l'UI (onglets, modales, formulaires)
-        ├── widget.html                   # Widget flottant always-on-top (progression temps réel)
-        ├── app.js                        # Logique front-end (événements, rendu dynamique, appels API)
-        └── styles.css                    # Habillage visuel + thèmes
+    ├── main/                             # Processus principal Electron
+    │   ├── main.js                       # Cycle de vie + fenêtres + session AI Studio
+    │   ├── preload.js                    # Pont sécurisé Main ↔ Renderer (contextBridge)
+    │   ├── widgetPreload.js              # Preload dédié au widget flottant
+    │   ├── aistudioLoginPreload.js       # Preload anti-détection Google (fenêtre login)
+    │   ├── core/
+    │   │   ├── ipcHandlers.js            # Tous les handlers IPC
+    │   │   └── settings.js               # Persistance user-settings.json
+    │   ├── config/
+    │   │   ├── constants.js              # Chemins, defaults, thèmes (require electron)
+    │   │   ├── risk-keywords.js          # Mots-clés de risque (arnaques)
+    │   │   ├── ai-cache.json             # Cache IA persistant
+    │   │   ├── scheduled-tasks.json      # Tâches planifiées persistées
+    │   │   └── user-settings.json        # Paramètres utilisateur
+    │   ├── services/
+    │   │   ├── scraping/
+    │   │   │   ├── harCapturer.js         # Capture HAR via Playwright + pré-check captcha
+    │   │   │   ├── pipelineRunner.js     # Lance le pipeline en fork + parse stdout
+    │   │   │   ├── leboncoin-pipeline.js # CLI : HAR → annonces + enrichissement
+    │   │   │   └── userAgents.js         # 10 User-Agents réalistes en rotation
+    │   │   ├── ai/
+    │   │   │   ├── marketAnalyzer.js     # Analyse IA par annonce (Ollama) + scoring
+    │   │   │   ├── globalAnalyzer.js     # Analyse globale du dataset (Gemini, retry 429)
+    │   │   │   ├── imageAnalyzer.js      # Analyse d'images IA Vision (Ollama LLaVA)
+    │   │   │   ├── promptGenerator.js    # Génération de prompts via Ollama local
+    │   │   │   ├── aiCache.js            # Cache IA (plafond 5000 + éviction)
+    │   │   │   └── ollamaHealth.js       # Health-check Ollama
+    │   │   ├── analysis/
+    │   │   │   └── dealFinder.js         # Détection statistique affaires/risques
+    │   │   ├── jobs/
+    │   │   │   ├── jobHistory.js         # Listing/lecture/suppression jobs (checksum)
+    │   │   │   └── jobScheduler.js       # Planification scrapings récurrents
+    │   │   └── maintenance/
+    │   │       └── storageCleaner.js     # Nettoyage .har + jobs (âge = timestamp dossier)
+    │   ├── infrastructure/
+    │   │   ├── excelExporter.js          # Export .xlsx stylisé (exceljs)
+    │   │   ├── fileManager.js            # Ouverture fichiers/dossiers (explorateur)
+    │   │   └── notifications.js          # Notifications système
+    │   └── utils/
+    │       ├── helpers.js                # sleep, atomicWriteFileSync, cleanText...
+    │       ├── diagnostics.js            # redact, formatBytes, summarizeAds, describeError
+    │       ├── integrity.js              # Checksum SHA-256 + écriture atomique
+    │       ├── rateLimiter.js            # Rate limiting adaptatif (backoff)
+    │       ├── logger.js                 # Logger rotatif quotidien + rétention
+    │       └── secretStore.js            # Secrets chiffrés (safeStorage + fallback AES)
+    └── renderer/
+        ├── index.html                    # UI (onglets, modales, webview AI Studio)
+        ├── widget.html                   # Widget flottant
+        ├── app.js                        # Logique front-end
+        ├── aiStudioModule.js             # Module Navigateur IA Studio
+        └── styles.css                    # Habillage + 13 thèmes + stat-cards
 ```
 
 ---
 
 ## 🧰 Stack technique
 
-| Composant          | Technologie                          | Rôle                                                        |
-|---------------------|---------------------------------------|---------------------------------------------------------------|
-| Shell applicatif    | **Electron 28**                       | Fait tourner une app web comme une application desktop native |
-| Navigation & scraping | **Playwright 1.41.2** (Chromium)   | Pilote un vrai navigateur pour capturer le trafic réseau (HAR) et contourner les protections anti-bot basiques |
-| Export Excel        | **ExcelJS 4.4**                       | Génère des fichiers `.xlsx` avec mise en forme, filtres, liens |
-| Cartographie         | **Leaflet.js** (CDN)                 | Carte interactive de France pour géolocaliser les annonces |
-| Graphiques           | **Chart.js** (CDN)                   | Statistiques visuelles (répartition des deals, vendeurs)   |
-| IA locale            | **Ollama** (`llama3` par défaut, HTTP local `127.0.0.1:11434`) | Analyse IA gratuite/hors-ligne des annonces |
-| IA distante (option) | **OpenAI API** (`gpt-4o-mini` par défaut) | Alternative payante à Ollama pour l'analyse par annonce |
-| IA "Analyse Globale" | **Google Gemini** (`gemini-2.0-flash`, clé gratuite Google AI Studio) | Analyse contextuelle de l'ensemble d'un job (classement des meilleures opportunités) |
-| Runtime              | **Node.js** (via Electron)            | Exécution du processus main et du pipeline en sous-processus |
+| Composant          | Technologie          | Rôle                                                         |
+|--------------------|----------------------|--------------------------------------------------------------|
+| Shell applicatif   | **Electron 28**      | App web comme application desktop native                      |
+| Scraping           | **Playwright 1.41**  | Pilotage Chromium, capture réseau HAR                        |
+| IA locale          | **Ollama**           | Analyse par annonce + génération de prompts (100% local)     |
+| IA vision          | **Ollama LLaVA**     | Analyse d'images (optionnel)                                 |
+| IA globale         | **Google Gemini 2.0**| Analyse globale du dataset (optionnel, gratuit)              |
+| Export Excel       | **ExcelJS 4.4**      | Génération .xlsx stylisé                                     |
+| Carte              | **Leaflet.js**       | Carte interactive des annonces                               |
+| Graphiques         | **Chart.js**         | Distribution prix, vendeurs, top villes                       |
+| Géocodage          | **API Gouv France**  | Coordonnées des villes (cache LocalStorage)                   |
 
 ---
 
-## 🔄 Flux de fonctionnement détaillé
+## 🔄 Flux de fonctionnement
 
-Voici le cycle de vie complet d'un scraping, du clic sur "Démarrer" jusqu'au fichier Excel final :
-
-### Étape 1 — Pré-check & Capture HAR (`HarCapturer`, via Playwright)
-- **Pré-check** : lance un navigateur **Chromium headless**, charge la **session globale** (`global-session.json`) si elle existe, navigue sur l'URL de recherche. Si la page retourne un code HTTP ≥ 400 (403/429) ou si un CAPTCHA est détecté dans le texte → **bascule en navigateur visible** pour résolution manuelle. Le navigateur visible recharge la page toutes les 2 secondes jusqu'à ce que le blocage soit levé. La session validée est ensuite sauvegardée.
-- **Capture** : navigue sur l'URL de recherche, page par page (paramètre `page=N` ajouté automatiquement à l'URL).
-- Enregistre **tout le trafic réseau** correspondant aux appels d'API/recherche dans un fichier `capture.har` (`recordHar` de Playwright, filtré sur `recherche|api|items`).
-- **Sauvegarde la session globale dès la 1ère page réussie** (HTTP < 400) — ne l'écrase plus ensuite pour éviter de corrompre la session avec des cookies anti-bot des pages suivantes.
-- **Arrêt immédiat** si une page retourne un 403 pendant la capture, au lieu de continuer sur les pages suivantes.
-- Recycle la page toutes les 3 pages pour limiter la consommation mémoire.
-- À la fin, sauvegarde une session locale au job (`session-state.json`) pour le pipeline d'enrichissement.
-
-### Étape 2 — Extraction & enrichissement (`PipelineRunner` → `leboncoin-pipeline.js`, en sous-processus)
-1. **Parsing du HAR** : lecture de toutes les réponses HTTP au format JSON (ou JSON embarqué dans un `<script id="__NEXT_DATA__">` d'une page HTML).
-2. **Recherche récursive** (parcours itératif type DFS avec une pile, limité à 500 000 nœuds visités) de tout objet "ressemblant à une annonce" (présence d'un identifiant, d'un titre, d'un prix ou d'une URL).
-3. **Normalisation** de chaque annonce brute vers un modèle de données unifié (voir section suivante).
-4. **Fusion des doublons** par identifiant d'annonce.
-5. **Écriture atomique** des résultats intermédiaires (`annonces.json`, `annonces.txt`, `annonces.csv` si activé) — écriture dans un fichier temporaire puis renommage, pour éviter la corruption en cas de crash.
-6. **Enrichissement des descriptions** (`DescriptionEnricher`) : les résultats de recherche Leboncoin ne contiennent pas toujours la description complète. Le pipeline :
-   - relance un navigateur Chromium (avec la session globale, images/CSS bloquées pour la vitesse) ;
-   - envoie des requêtes `fetch()` **directement depuis la page** (pour hériter des cookies du navigateur) vers chaque URL d'annonce, **par batchs de 10 en parallèle** (`Promise.all`) pour aller vite ;
-   - parse le HTML retourné pour en extraire la description via le JSON `__NEXT_DATA__` ;
-   - **s'arrête préventivement** après 3 blocages HTTP 403/429 consécutifs, pour éviter un bannissement IP, et sauvegarde immédiatement la progression déjà acquise ;
-   - sauvegarde périodiquement (tous les 10 items) et recycle le contexte navigateur tous les 200 items traités.
-7. Le script s'exécute en tant que **CLI indépendant**, communique sa progression au processus parent via des lignes de log formatées `[done/total]` sur `stdout`, capturées et retransmises à l'UI par `PipelineRunner`.
-
-### Étape 3 — Analyse de marché IA (`MarketAnalyzer`, optionnelle mais activée par défaut)
-Pour chaque annonce :
-1. Un **prompt IA** (Ollama local ou OpenAI) demande d'identifier précisément le produit, sa gamme (`ENTREE_DE_GAMME` / `MILIEU_DE_GAMME` / `HAUT_DE_GAMME`), son état réel, le type de photo (authentique ou photo constructeur), et si l'annonce est trop vague pour être fiable (`isVague`).
-2. La fonction `computeMarketValue()` calcule ensuite, à partir de la **médiane des prix du dataset complet** et d'un multiplicateur dépendant de la gamme identifiée :
-   - une **estimation de valeur marché** (moyenne, min, max) ;
-   - l'**écart** entre le prix demandé et l'estimation (en € et en %) ;
-   - une **marge de revente nette estimée** et un **ROI (%)** (en déduisant des frais estimés de ~8% + 4,90€) ;
-   - un **score d'arnaque** (`scamScore`, 0-99) basé sur un écart de prix anormalement bas, l'absence de livraison, une annonce vague, ou une photo "constructeur" ;
-   - un **score global sur 100 points** combinant : écart de prix vs marché (30 pts), gamme du produit (20 pts), état (15 pts), fiabilité de l'estimation IA (20 pts), marge potentielle (10 pts), confiance de l'analyse (5 pts), avec un **malus de -20 points** si l'annonce est signalée à risque (mots-clés comme "HS", "pour pièces", "cassé", etc. — voir `RISK_KEYWORDS` dans `constants.js`).
-   - une **classification finale** : `Très bonne affaire` (≥80), `Bonne affaire` (≥60), `Prix correct` (50-59), `Légèrement cher` (35-49), `Trop cher` (<35).
-
-### Étape 4 — Export
-- Les résultats enrichis sont réécrits dans `annonces.json`.
-- Un fichier **Excel (.xlsx)** est généré (`ExcelExporter`) avec 14 colonnes (ID, titre, prix, classification, prix moyen marché, fourchette, écarts, indice de confiance, résumé, ville, vendeur, date, lien hypertexte cliquable), en-tête stylisé, couleurs conditionnelles (vert pour les bonnes affaires, rouge pour "Trop cher") et filtres automatiques activés.
-- Si une ou plusieurs annonces sont classées **"Très bonne affaire"**, une **notification système Windows** est envoyée automatiquement.
-
-### Étape 5 — Analyse Globale IA (à la demande, séparée)
-Depuis l'onglet dédié, l'utilisateur peut lancer une **analyse globale** d'un job entier via l'API **Google Gemini** (modèle `gemini-2.0-flash`, clé API gratuite Google AI Studio). Contrairement à l'analyse par annonce, celle-ci traite **l'ensemble du dataset en un seul appel** (profitant de la grande fenêtre de contexte de Gemini) pour produire :
-- des indicateurs clés (nombre d'annonces analysées, meilleure affaire, profit potentiel total) ;
-- une synthèse stratégique en langage naturel ;
-- un **classement (top ranking)** des meilleures opportunités avec justification IA pour chacune.
-- L'utilisateur peut fournir une **instruction personnalisée** (ex : *"Trouve les 5 meilleures cartes graphiques à moins de 80€"*) pour orienter l'analyse.
+1. **Lancement** (`job:start`) → `HarCapturer` ouvre Chromium (headless), navigue vers Leboncoin.
+2. **Pré-check captcha** : si blocage détecté (texte ou HTTP ≥400), ouverture d'une fenêtre visible pour résolution manuelle. Session validée persistée.
+3. **Capture HAR** : navigation page par page, enregistrement du trafic filtré (`recherche|api|items`).
+4. **Pipeline** (`fork`) : parse le HAR → extrait les annonces (`__NEXT_DATA__`) → normalise → déduplique → enrichit les descriptions (batchs parallèles + rate limiter).
+5. **Analyse IA** (si activée) : `MarketAnalyzer.analyzeAds()` → pour chaque annonce, appel Ollama → scoring → `marketAnalysis`. Cache pour les re-analyses.
+6. **Analyse d'images** (si activée) : `ImageAnalyzer.analyzeAll()` → télécharge 3 images → Ollama LLaVA → `imageAnalysis` + recalcul du score.
+7. **Export** : `ExcelExporter.exportToXlsx()` → .xlsx stylisé + JSON/CSV/TXT.
+8. **Notification** : si « Très bonne affaire » détectée, notification système native.
+9. **Historique** : job enregistré, accessible dans l'onglet Historique.
 
 ---
 
-## 🗂️ Le modèle de données "Annonce"
+## 🗂️ Modèle de données « Annonce »
 
-Chaque annonce, une fois normalisée par le pipeline, suit cette structure (dans `annonces.json`) :
+Chaque annonce normalisée (dans `annonces.json`) :
 
 ```jsonc
 {
-  "id": "2831923847",                 // identifiant unique Leboncoin
+  "id": "2831923847",
   "title": "PC portable Gamer",
   "price": 450,
-  "description": "Texte complet de l'annonce...",
+  "description": "Texte complet...",
   "url": "https://www.leboncoin.fr/ad/2831923847.htm",
-  "images": ["https://...jpg", "..."],
+  "images": ["https://...jpg"],
   "main_image": "https://...jpg",
   "city": "Lyon",
   "zipcode": "69000",
-  "shipping": true,
+  "shipping": true,              // true = livraison, false/null = main propre
   "seller": "Jean D.",
   "isPro": false,
   "date": "2026-08-01T10:00:00Z",
   "category": "Informatique",
 
-  // Ajouté par DealFinder (analyse statistique locale) :
-  "dealTag": "GOOD",                  // GOOD | NORMAL | HIGH
+  // DealFinder (analyse statistique locale) :
+  "dealTag": "GOOD",
   "dealDiscountPct": 22,
   "hasRisk": false,
   "detectedRisks": [],
 
-  // Ajouté par MarketAnalyzer (analyse IA) :
+  // MarketAnalyzer (analyse IA) :
   "marketAnalysis": {
     "productName": "PC Portable Gamer Ryzen 5 / RTX 3060",
     "classification": "Très bonne affaire",
-    "badgeClass": "tag-deal-super",
     "askingPrice": 450,
+    "marketAvg": 600,
     "marketMin": 510,
     "marketMax": 690,
-    "marketAvg": 600,
     "diffEur": -150,
     "diffPct": -25,
     "confidence": "Élevé",
@@ -291,7 +276,6 @@ Chaque annonce, une fois normalisée par le pipeline, suit cette structure (dans
     "netMarginEur": 95,
     "roiPct": 21,
     "scamScore": 12,
-    "photoType": "AUTHENTIQUE",
     "score": 84
   }
 }
@@ -299,26 +283,23 @@ Chaque annonce, une fois normalisée par le pipeline, suit cette structure (dans
 
 ---
 
-## 🏆 L'algorithme de scoring des affaires
+## 🏆 Algorithme de scoring
 
-Le score (0 à 100) est calculé sur 7 critères pondérés (voir `marketAnalyzer.js → computeMarketValue()`) :
+Score (0-100) calculé sur 7 critères (`marketAnalyzer.js → computeMarketValue()`) :
 
-| Critère                                            | Points max |
-|-----------------------------------------------------|-----------:|
-| Écart de prix vs estimation marché                  | 30         |
-| Gamme du produit identifiée par l'IA                | 20         |
-| État déclaré du produit                              | 15         |
-| Fiabilité de l'identification IA (non vague)        | 20         |
-| Marge de revente potentielle (marge + ROI)          | 10         |
-| Confiance globale de l'analyse                       | 5          |
-| **Malus** si annonce à risque (HS, pour pièces...)  | **−20**    |
+| Critère                                     | Points max |
+|---------------------------------------------|-----------:|
+| Écart de prix vs estimation marché          | 30         |
+| Gamme du produit identifiée par l'IA        | 20         |
+| État déclaré                                | 15         |
+| Fiabilité de l'identification IA (non vague)| 20         |
+| Marge de revente potentielle                | 10         |
+| Confiance globale                           | 5          |
+| **Malus** si annonce à risque               | **−20**    |
 
-Classification résultante :
-- **≥ 80** → 🟢 Très bonne affaire
-- **60-79** → 🟢 Bonne affaire
-- **50-59** → ⚪ Prix correct
-- **35-49** → 🟠 Légèrement cher
-- **< 35** → 🔴 Trop cher
+Classification : **≥80** 🟢 Très bonne affaire · **60-79** 🟢 Bonne affaire · **50-59** ⚪ Prix correct · **35-49** 🟠 Légèrement cher · **<35** 🔴 Trop cher.
+
+L'analyse d'images (si activée) affine ensuite le score via `applyImageAnalysis()` : bonus/malus selon le type de photo, l'état visible et les défauts détectés.
 
 ---
 
@@ -326,96 +307,75 @@ Classification résultante :
 
 | Onglet | Description |
 |---|---|
-| 🚀 **Scraper** | Formulaire de lancement d'un scraping (URL, nombre de pages, limite, proxy, config IA, options CSV/description), presets de recherche 1-clic, barre de progression et statut en temps réel. |
-| 🧠 **Analyse Globale IA** | Sélection d'un job existant, saisie d'une clé API Gemini, instructions personnalisées ou presets d'analyse, affichage de KPIs et d'un classement des meilleures opportunités. |
-| ⏰ **Planificateur** | Création de scrapings récurrents (URL + intervalle en minutes) avec liste des tâches actives. |
-| 📜 **Logs** | Console de logs en direct (info/warn/error/debug) de toutes les étapes du scraping. |
-| 📁 **Historique Jobs** | Liste de tous les scrapings passés avec accès direct aux fichiers générés et suppression. |
-| 🔍 **Explorateur Annonces** | Recherche/filtrage (mot-clé, prix, tag de deal), tri, vue tableau ou grille, fiche détaillée par annonce (galerie photo, résumé IA, badge de deal), comparateur côte-à-côte, lancement manuel de l'analyse marché. |
-| 📊 **Statistiques & Carte** | KPIs (bonnes affaires, risques, total d'annonces), carte interactive Leaflet des annonces en France (avec filtre "remise en main propre uniquement"), graphiques Chart.js de répartition des deals et des vendeurs. |
-
-D'autres éléments transverses : bouton **widget flottant**, modale de **paramètres globaux** (voir ci-dessous).
+| 🚀 **Scraper** | Lancement d'un scraping (URL, pages, limite, proxy, config IA Ollama, options), presets 1-clic, progression temps réel. **Analyse auto du marché décochée par défaut** (à cocher manuellement). |
+| 🌐 **AI Studio** | Navigateur intégré (Google AI Studio) + génération de prompts par Ollama local + test Ollama + bouton dossier jobs + drag & drop .json. |
+| 🧠 **Analyse Globale IA** | Sélection d'un job, clé API Gemini, presets/instructions personnalisées, KPIs + classement des meilleures opportunités. Gestion d'erreur 429. |
+| ⏰ **Planificateur** | Scrapings récurrents (URL + intervalle minutes) + liste des tâches actives. |
+| 📜 **Logs** | Console de logs en direct (info/warn/error/debug). |
+| 📁 **Historique Jobs** | Liste des scrapings passés + accès fichiers + suppression. |
+| 🔍 **Explorateur Annonces** | Filtres, tri, vue tableau/grille, fiche détaillée, comparateur, analyse marché manuelle. |
+| 📊 **Statistiques & Carte** | 8 cartes colorées (Total, Prix Moyen/Médian/Min/Max, Main Propre, Pro/Particulier) + 3 graphiques (Distribution prix, Vendeurs, Top 10 Villes) + carte Leaflet. |
 
 ### ⚙️ Modale Paramètres
 
-Accessible via le bouton **⚙️ Paramètres** dans le header. Centralise tous les réglages utilisateur :
+- **Thème** : 13 thèmes (aperçu temps réel).
+- **Vitesse de scraping** : Rapide (10 parallèle, 0,5-1s) / Équilibré (5 parallèle, 1-2s) / Prudent (séquentiel, 1,5-3s).
+- **Délai entre les pages** (ms, défaut 1000).
+- **Mode de capture** : invisible (headless) ou visible.
+- **Analyses IA simultanées** (parallélisme Ollama, défaut 5).
+- **Nettoyage auto des .har** (jours, défaut 7).
+- **Suppression auto des jobs** (optionnel, basée sur le timestamp du dossier).
+- **Rétention des logs** (jours, défaut 7).
 
-**🎨 Apparence**
-- **Thème** : 13 thèmes (Sombre, Clair, OLED, Violet Doux, Vert Émeraude, Sunset, Carbon, Rose, Amber, Mint, Slate, Crimson, Nordic). Aperçu en temps réel à la sélection.
-
-**🚀 Scraping**
-- **Vitesse de scraping** : 3 presets pour l'enrichissement des descriptions :
-  - ⚡ **Rapide** — 10 fetchs parallèles (`Promise.all`), délais courts (0,5-1s). Le plus rapide, mais risque de 403 plus élevé.
-  - ⚖️ **Équilibré** — 5 fetchs parallèles, délais modérés (1-2s). Bon compromis vitesse/risque.
-  - 🛡️ **Prudent** — séquentiel (1 fetch à la fois), délais humains (1,5-3s + 0,8-1,8s entre chaque). Anti-blocage maximal.
-- **Délai entre les pages de recherche** (ms) : contrôle la vitesse de navigation entre les pages de résultats Leboncoin (défaut 1000ms).
-- **Mode de capture** : invisible (headless) ou visible. En headless, le navigateur s'affiche automatiquement en cas de CAPTCHA.
-
-**🧠 Analyse IA Locale** (nouveau)
-- **Analyses simultanées** (parallélisme IA) : nombre d'annonces analysées en parallèle par l'IA locale (Ollama). Plus élevé = plus rapide, mais demande plus de RAM/VRAM. Recommandé : 3-5 pour CPU, 5-10 pour GPU. Défaut : 5.
-
-**🧹 Maintenance**
-- **Nettoyage auto des fichiers .har** (jours) : les fichiers .har plus anciens que ce nombre sont supprimés au démarrage (défaut 7).
-
-Tous les paramètres sont sauvegardés dans `src/main/config/user-settings.json` et persistés entre les sessions. Le bouton **↺ Réinitialiser** remet tout aux valeurs par défaut.
+Paramètres persistés dans `config/user-settings.json`. Bouton **Réinitialiser** pour les valeurs par défaut.
 
 ---
 
-## 🔌 Communication IPC (Main ↔ Renderer)
+## 🔌 Communication IPC
 
-Le renderer n'a **aucun accès direct à Node.js** (`contextIsolation: true`, `nodeIntegration: false`) : toute communication passe par le pont sécurisé exposé dans `preload.js` sous `window.api`, qui relaie vers `ipcMain` dans `ipcHandlers.js` :
+Le renderer n'a **aucun accès direct à Node.js** (`contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`). Toute communication passe par `preload.js` → `window.api` → `ipcMain` dans `ipcHandlers.js`.
 
-| Méthode `window.api` | Canal IPC | Rôle |
-|---|---|---|
-| `startScraping(config)` | `job:start` (send) | Démarre un scraping complet (capture → pipeline → IA → export) |
-| `stopScraping()` | `job:stop` (send) | Interrompt le scraping en cours proprement |
-| `onLog(cb)` / `onProgress(cb)` / `onStatusChange(cb)` | `log` / `progress` / `status` | Écoute des événements temps réel envoyés par le main process |
-| `analyzeMarket(data)` | `market:analyze` (invoke) | Relance une analyse IA sur un job existant |
-| `onSchedulerTrigger(cb)` | `scheduler:trigger` | Notifie le renderer qu'une tâche planifiée démarre |
-| `addSchedule` / `removeSchedule` / `listSchedules` | `scheduler:add/remove/list` | Gestion du planificateur |
-| `getHistory()` / `deleteJob(id)` | `job:getHistory` / `job:delete` | Gestion de l'historique des jobs |
-| `openFolder(path)` / `openFile(path)` | `file:openFolder` / `file:openFile` | Ouvre un fichier/dossier dans l'explorateur système natif |
-| `toggleWidget()` | `widget:toggle` (send) | Affiche/masque le widget flottant always-on-top |
-| `sendWidgetProgress(data)` / `sendWidgetStatus(data)` | `widget:progress` / `widget:status` (send) | Transmet la progression/statut au widget flottant |
+**27 canaux IPC** : `job:start/stop`, `market:analyze`, `globalai:analyze`, `prompt:generate`, `ollama:health/models`, `scheduler:add/remove/list`, `job:getHistory/delete`, `file:openFolder/openFile`, `shell:openExternal`, `config:get/save`, `secret:get/set/has/remove`, `network:check`, `aistudio:openLogin`, `widget:toggle/progress/status/close`, `log/progress/status`, `scheduler:trigger`.
 
-> Le contrat IPC complet (17 canaux preload ↔ main) est vérifié automatiquement par la suite de tests de régression.
+Les listeners utilisent `removeAllListeners` avant re-souscription pour éviter les fuites. Le getter `getMainWindow()` renvoie null si la fenêtre est détruite (pas de capture par closure).
 
 ---
 
-## 🛡️ Anti-blocage & gestion de session
+## 🛡️ Anti-blocage & session
 
-L'application intègre plusieurs mécanismes pour limiter les risques de blocage par Leboncoin :
+- **Session globale persistante** (`global-session.json`) : cookies validés réutilisés pour tous les jobs suivants.
+- **Sauvegarde intelligente** : session globale sauvegardée dès la 1ère page réussie (HTTP <400), **jamais écrasée ensuite** (les 403 suivants ne corrompent pas la session).
+- **Détection double** : marqueurs textuels (`captcha`, `robot`, `restreint`...) **ou** HTTP ≥400 (détecte les 403 silencieux).
+- **Bascule fenêtre visible** si blocage au pré-check, reload toutes les 2s pour vérifier la levée.
+- **Arrêt préventif** : un 403 pendant la capture arrête la boucle immédiatement.
+- **Masquage `navigator.webdriver`**, UA Chrome réaliste, locale `fr-FR`.
+- **Arrêt préventif enrichissement** après 3 blocages 403/429 consécutifs.
+- **Support proxy** HTTP optionnel.
+- **Recyclage mémoire** périodique du contexte navigateur.
 
-- **Session globale persistante** (`global-session.json`, stockée dans `output/` en dev, `Documents/Leboncoin Scraper Pro/` en version packagée) : les cookies validés (notamment après résolution d'un captcha) sont réutilisés pour tous les jobs suivants.
-- **Sauvegarde de session intelligente** : la session globale est sauvegardée dès la **1ère page réussie** (HTTP < 400) pendant la capture, et **jamais écrasée ensuite** — les pages suivantes pouvant retourner 403 (anti-bot), leurs cookies ne corrompent pas la session propre.
-- **Détection de blocage double** : un blocage est détecté soit par **marqueurs textuels** (`captcha`, `robot`, `restreint`, `vitesse surhumaine`, `captcha-delivery`) dans le titre/texte de la page, soit par **code HTTP d'erreur** (≥ 400, typiquement 403/429). Un 403 "silencieux" (sans page CAPTCHA) est ainsi correctement détecté.
-- **Bascule en navigateur visible** : si un blocage est détecté lors du pré-check, une fenêtre Chromium **visible** s'ouvre pour permettre à l'utilisateur de résoudre manuellement (CAPTCHA) ou d'attendre que le blocage IP se lève. Le navigateur recharge la page toutes les 2 secondes pour vérifier si le blocage est levé.
-- **Arrêt préventif de la capture** : si une page retourne un 403 pendant la capture, la boucle s'arrête **immédiatement** au lieu de gaspiller des requêtes sur les pages suivantes.
-- **Masquage de l'empreinte "webdriver"** (`navigator.webdriver = undefined`) pour réduire la détection d'automatisation.
-- **User-Agent réaliste** (Chrome Windows) et **locale `fr-FR`** fixés sur tous les contextes navigateur.
-- **Enrichissement parallèle rapide** : les descriptions d'annonces sont fetchées **par batchs de 10 en parallèle** (`Promise.all`) avec une courte pause inter-batch (0,5-1s) pour limiter — sans éliminer — le risque de blocage.
-- **Délais aléatoires** (jitter) entre les pages de recherche (0,8-1,5s) et entre les batches d'enrichissement (0,5-1s).
-- **Arrêt préventif automatique** après 3 réponses HTTP 403/429 consécutives lors de l'enrichissement, pour éviter un bannissement IP prolongé — les données déjà collectées sont sauvegardées.
-- **Support de proxy HTTP rotatif** optionnel (avec authentification).
-- **Recyclage périodique du navigateur/contexte** pour limiter la consommation mémoire sur de gros volumes.
+---
+
+## 🔒 Sécurité
+
+- **Sandbox renderer** : `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true` (fenêtre principale + widget).
+- **Path-traversal bloqué** : `isPathAllowed()` n'autorise que les chemins dans `BASE_OUT_DIR`.
+- **`shell:openExternal` filtré** : seuls `http:`/`https:` sont autorisés (bloque `file:`, `javascript:`, `data:`).
+- **Secrets chiffrés** : `safeStorage` OS (Keychain/DPAPI/libsecret) + fallback AES-256-GCM si indisponible. Clés API jamais en clair.
+- **Intégrité des données** : checksum SHA-256 (`writeWithChecksum`/`readWithChecksum`), écriture atomique (`.tmp` + `rename`).
+- **Single-instance lock** : empêche plusieurs instances concurrentes (conflit session/fichiers).
 
 ---
 
 ## 🚀 Installation & lancement
 
 ### Prérequis
-- [Node.js](https://nodejs.org/) (version récente recommandée)
-- npm
+- [Node.js](https://nodejs.org/) (version récente)
+- [Ollama](https://ollama.com) installé et démarré (`ollama serve`) avec un modèle (`ollama pull llama3`)
 
 ### Installation
 
 ```bash
 npm install
-```
-
-Cette commande installe les dépendances, dont **Electron** et **Playwright**. Playwright peut nécessiter l'installation des navigateurs Chromium associés :
-
-```bash
 npx playwright install chromium
 ```
 
@@ -425,79 +385,76 @@ npx playwright install chromium
 npm start
 ```
 
-Cela exécute la commande définie dans `package.json` :
-```json
-"start": "electron --max-old-space-size=8192 ."
-```
-(la mémoire allouée à V8 est augmentée à 8 Go pour supporter le traitement de gros fichiers `.har`).
+(`electron --max-old-space-size=8192 .` — 8 Go alloués à V8 pour les gros `.har`)
 
-### Emplacement des fichiers de sortie
-- **En développement** : `./output/` (dossier local du projet).
-- **En version packagée (.exe)** : `Documents/Leboncoin Scraper Pro/` de l'utilisateur.
+### Emplacement des fichiers
+- **Dev** : `./output/`
+- **Packagé (.exe)** : `Documents/Leboncoin Scraper Pro/`
 
 ---
 
 ## 🤖 Configuration de l'IA
 
-L'application utilise **trois usages distincts de l'IA**, chacun configurable indépendamment :
+| Usage | Moteur | Configuration |
+|---|---|---|
+| Analyse par annonce + génération de prompts | **Ollama (local, gratuit)** | Onglet Scraper → URL + nom du modèle (ex: `llama3`). Health-check intégré. |
+| Analyse d'images (optionnel) | **Ollama LLaVA** | Case à cocher « Analyser les images » + modèle vision. |
+| Analyse Globale (optionnel) | **Google Gemini** | Onglet Analyse Globale → clé API Google AI Studio gratuite (aistudio.google.com). |
 
-1. **Analyse par annonce (`marketAnalyzer.js` / `aiAnalyzer.js`)** — choix entre :
-   - **Ollama (local, gratuit, hors-ligne)** : nécessite qu'[Ollama](https://ollama.com) tourne en local (`http://127.0.0.1:11434` par défaut) avec un modèle téléchargé (ex : `llama3`).
-   - **OpenAI (cloud, payant)** : nécessite une clé API OpenAI (`sk-...`), modèle par défaut `gpt-4o-mini`.
-2. **Analyse Globale (Gemini)** — nécessite une clé API **Google AI Studio** (gratuite), modèle `gemini-2.0-flash`.
-
-Les clés API et préférences (proxy, clé Gemini) sont conservées dans le `localStorage` du renderer pour éviter de les ressaisir à chaque session.
+**OpenAI a été retiré** : l'IA se fait 100% en local via Ollama (aucune clé payante, hors-ligne). La clé Gemini (seule clé API restante) est stockée chiffrée via `safeStorage`.
 
 ---
 
-## 📦 Fichiers générés (sorties)
+## 📦 Fichiers générés
 
-Pour chaque job de scraping (`output/jobs/job-<timestamp>/`) :
+Pour chaque job (`output/jobs/job-<timestamp>/`) :
 
 | Fichier | Contenu |
 |---|---|
-| `capture.har` | Trace réseau brute capturée par Playwright |
-| `session-state.json` | Cookies/session Playwright propres à ce job |
-| `results/annonces.json` | Données structurées complètes (avec analyse IA/marché) |
-| `results/annonces.csv` | Export tabulaire simplifié |
-| `results/annonces.txt` | Export texte lisible, une fiche par annonce |
-| `results/annonces.xlsx` | Export Excel stylisé avec mise en forme conditionnelle |
+| `capture.har` | Trace réseau brute |
+| `session-state.json` | Cookies/session du job |
+| `results/annonces.json` | Données structurées + analyse IA (checksum SHA-256) |
+| `results/annonces.csv` | Export tabulaire |
+| `results/annonces.txt` | Export texte lisible |
+| `results/annonces.xlsx` | Export Excel stylisé |
 
 ---
 
 ## 🧪 Tests de non-régression
 
-Le projet inclut une suite de tests dans `test/regression.test.js` (script Node.js autonome, sans framework externe) couvrant **146 assertions** réparties en 6 sections :
+`test/regression.test.js` — script Node.js autonome (sans framework externe), **231 assertions** couvrant :
 
-1. **`utils/diagnostics.js`** (~26 tests) : helpers de log (`redact`, `formatBytes`, `summarizeAds`, `countBy`, `describeError`...).
-2. **Modules principaux** (~14 tests) : exports et logique de `MarketAnalyzer`, `GlobalAnalyzer`, `JobSchedulerManager`, `DealFinder`, `StorageCleaner`, `FileManager`, `Notifier`, `settings`, `RISK_KEYWORDS`.
-3. **Pipeline via `fork`** (~6 tests) : crée un faux HAR, lance le vrai pipeline en sous-processus, vérifie l'extraction (exit code 0, annonces extraites, normalisation `shipping`/`city`/`isPro`).
-4. **Corrections PR #3** (~16 tests) : vérifie par lecture du code source que les fixes précédents sont présents (`mapInstance`, `escapeHtml`, `openExternal`, scheduler trigger, etc.).
-5. **Architecture restructurée** (~47 tests) : vérifie la structure en couches (fichiers au bon endroit, anciens dossiers supprimés, `Notifier`/`settings`/`RISK_KEYWORDS` extraits, contrat IPC 17 canaux, widget flottant implémenté).
-6. **Nouvelles features v1.2** (~37 tests) : intégrité (checksum SHA-256), rate limiting adaptatif (backoff), logs rotatifs, health-check Ollama, secretStore chiffré, suppression auto des jobs, sandbox renderer durcie, mode hors-ligne, nouveaux settings/IPC/UI.
+1. **utils/diagnostics.js** — helpers de log.
+2. **Modules principaux** — MarketAnalyzer, GlobalAnalyzer, JobScheduler, DealFinder, StorageCleaner, SecretStore, settings.
+3. **Pipeline via fork** — crée un faux HAR, lance le vrai pipeline, vérifie l'extraction.
+4. **Corrections & renderer** — fixes présents (mapInstance, escapeHtml, stats, gestion 429).
+5. **Architecture** — structure en couches, contrat IPC (27 canaux), widget, sandbox.
+6. **Features** — intégrité SHA-256, rate limiting, logs rotatifs, health-check Ollama, secretStore, suppression auto jobs, mode hors-ligne, module AI Studio.
+7. **Audit fiabilité** — crash renderer (getAiApiKey), scheduler lastRun, nettoyage jobs (timestamp), timeout géocodage, plafond cache IA.
 
-### Exécuter les tests
+### Exécuter
 
 ```bash
 node test/regression.test.js
 ```
 
-Résultat attendu : `=== RÉSULTAT : 146 réussis, 0 échoués ===`
+Résultat attendu : `=== RÉSULTAT : 231 réussis, 0 échoués ===`
 
-> Le test installe des **stubs** pour `electron`, `playwright` et `exceljs` (lignes 13-29) afin de pouvoir `require()` les modules en Node pur, sans lancer Electron ni Chromium.
+> Le test installe des **stubs** pour `electron`, `playwright` et `exceljs` afin de `require()` les modules en Node pur, sans lancer Electron/Chromium.
 
 ---
 
 ## ⚠️ Limitations connues
 
-- Le scraping de Leboncoin repose sur la structure actuelle de leurs pages/API (`__NEXT_DATA__`, endpoints de recherche) : toute évolution significative du site peut nécessiter une adaptation du parsing (`leboncoin-pipeline.js`).
-- La résolution de captcha reste **manuelle** (l'app ne la contourne pas automatiquement, elle ouvre une fenêtre visible et attend l'intervention humaine).
-- L'analyse IA (marché, scoring, résumé) dépend de la qualité du modèle utilisé (un modèle local léger comme `llama3` peut être moins précis qu'un modèle cloud).
-- L'enrichissement des descriptions est **parallèle** (10 requêtes simultanées par batch) pour la vitesse : si tu te fais bloquer (403), l'app s'arrête automatiquement après 3 blocages consécutifs et sauvegarde ce qui a déjà été collecté.
-- Un blocage IP déjà actif (suite à de trop nombreux lancements rapprochés) peut nécessiter d'attendre quelques heures ou d'utiliser un proxy.
+- Le scraping repose sur la structure actuelle de Leboncoin (`__NEXT_DATA__`, endpoints de recherche) : toute évolution du site peut nécessiter une adaptation du parsing.
+- La résolution de captcha reste **manuelle** (l'app ouvre une fenêtre visible et attend l'intervention humaine).
+- L'analyse IA dépend de la qualité du modèle Ollama (`llama3` local peut être moins précis qu'un modèle cloud).
+- L'enrichissement des descriptions est parallèle (10 simultanées) : en cas de 403, arrêt auto après 3 blocages et sauvegarde des données collectées.
+- Un blocage IP déjà actif peut nécessiter d'attendre ou d'utiliser un proxy.
+- La connexion Google dans AI Studio peut être bloquée par Google malgré l'anti-détection (UA spoofing, Client Hints, `navigator.userAgentData`).
 
 ---
 
 ## ⚖️ Avertissement légal
 
-Cet outil interagit avec un site tiers (Leboncoin.fr) dont les [conditions générales d'utilisation](https://www.leboncoin.fr/) peuvent restreindre ou interdire le scraping automatisé. L'utilisation de cette application est sous l'entière responsabilité de l'utilisateur, qui doit s'assurer de respecter la législation applicable (notamment concernant la protection des données personnelles, le RGPD pour les données de vendeurs particuliers, et les CGU du site ciblé) avant tout usage, en particulier à des fins commerciales.
+Cet outil interagit avec un site tiers (Leboncoin.fr) dont les [conditions d'utilisation](https://www.leboncoin.fr/) peuvent restreindre ou interdire le scraping automatisé. L'utilisation de cette application est sous l'entière responsabilité de l'utilisateur, qui doit s'assurer de respecter la législation applicable (RGPD pour les données de vendeurs particuliers, CGU du site) avant tout usage, notamment commercial.
