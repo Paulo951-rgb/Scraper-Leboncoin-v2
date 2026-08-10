@@ -54,7 +54,9 @@ L'application est pensée pour un usage **semi-automatisé** : l'utilisateur peu
 - 🔑 **Session globale persistante** (« Master Session ») pour éviter de repasser un captcha à chaque lancement.
 - 🤖 **Détection automatique de blocage/captcha** avec pause et reprise après résolution manuelle.
 - 📝 **Extraction des descriptions complètes** en mode rapide parallèle (batchs de 10 via `Promise.all`, exécutées dans la page pour hériter des cookies/session).
-- 📦 **Extraction livraison** — l'info « remise en main propre / livraison » est extraite des pages individuelles.
+- 📦 **Mode de remise** — remise en main propre vs livraison, avec libellé du transporteur (extraction défensive multi-chemins + enrichissement depuis la page de détail).
+- 🏷️ **Catégorie exacte** de l'annonce (ex: Ordinateurs, Téléphones) extraite à la fois sur la liste et la page de détail.
+- ⭐ **Note vendeur + nombre d'avis** (ex: 4,8/5 (27 avis)) extraits défensivement de l'objet `owner`.
 - 🔄 **Rotation de User-Agent** (10 UA réalistes en rotation aléatoire).
 - 🚀 **3 presets de vitesse** (Rapide / Équilibré / Prudent).
 - ⏳ **Rate limiting adaptatif** — backoff exponentiel si Leboncoin répond lentement ou bloque (403/429).
@@ -143,7 +145,7 @@ Le main suit une **architecture en couches** : `core/` (orchestration), `service
 leboncoin-scraper-app/
 ├── package.json                          # Métadonnées, dépendances, script "start"
 ├── test/
-│   └── regression.test.js                # Suite de non-régression (239 assertions)
+│   └── regression.test.js                # Suite de non-régression (269 assertions)
 └── src/
     ├── main/                             # Processus principal Electron
     │   ├── main.js                       # Cycle de vie + fenêtres + session AI Studio
@@ -243,11 +245,16 @@ Chaque annonce normalisée (dans `annonces.json`) :
   "main_image": "https://...jpg",
   "city": "Lyon",
   "zipcode": "69000",
-  "shipping": true,              // true = livraison, false/null = main propre
+  "shipping": true,              // true = livraison, false = main propre, null = inconnu
+  "handDelivery": false,         // true = remise en main propre uniquement
+  "deliveryMode": "livraison",   // 'livraison' | 'main_propre' | 'inconnu'
+  "deliveryLabel": "Chronopost", // libellé du transporteur si dispo (sinon null)
   "seller": "Jean D.",
   "isPro": false,
+  "sellerRating": 4.8,           // note vendeur (0-5), null si indisponible
+  "sellerRatingCount": 27,       // nombre d'avis, null si indisponible
   "date": "2026-08-01T10:00:00Z",
-  "category": "Informatique",
+  "category": "Ordinateurs",     // catégorie exacte de l'annonce
 
   // DealFinder (analyse statistique locale) :
   "dealTag": "GOOD",
@@ -413,7 +420,7 @@ Pour chaque job (`output/jobs/job-<timestamp>/`) :
 
 ## 🧪 Tests de non-régression
 
-`test/regression.test.js` — script Node.js autonome (sans framework externe), **239 assertions** couvrant :
+`test/regression.test.js` — script Node.js autonome (sans framework externe), **269 assertions** couvrant :
 
 1. **utils/diagnostics.js** — helpers de log.
 2. **Modules principaux** — MarketAnalyzer, DealFinder, StorageCleaner, SecretStore, settings.
@@ -429,7 +436,7 @@ Pour chaque job (`output/jobs/job-<timestamp>/`) :
 node test/regression.test.js
 ```
 
-Résultat attendu : `=== RÉSULTAT : 239 réussis, 0 échoués ===`
+Résultat attendu : `=== RÉSULTAT : 269 réussis, 0 échoués ===`
 
 > Le test installe des **stubs** pour `electron`, `playwright` et `exceljs` afin de `require()` les modules en Node pur, sans lancer Electron/Chromium.
 

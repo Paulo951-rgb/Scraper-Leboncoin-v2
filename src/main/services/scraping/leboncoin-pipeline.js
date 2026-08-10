@@ -218,6 +218,125 @@ function firstDefined(...vals) {
   return null;
 }
 
+/**
+ * firstNonNull : comme firstDefined mais n'accepte pas les chaînes vides
+ * ni les valeurs "falsy" (0, false, ''). Utilisé pour les champs où on veut
+ * une vraie valeur exploitable (note, nombre d'avis...).
+ */
+function firstNonNull(...vals) {
+  for (const v of vals) {
+    if (v !== undefined && v !== null && v !== '' && !Number.isNaN(v)) return v;
+  }
+  return null;
+}
+
+/**
+ * Extraction défensive du mode de remise et des options de livraison.
+ * Leboncoin expose le shipping de plusieurs façons selon le contexte
+ * (recherche vs page détail) :
+ *   - has_option.shipping / options.shipping / has_shipping (bool livraison)
+ *   - delivery.shipping / delivery_option (livraison Chronopost/Mondial Relay)
+ *
+ * On retourne un objet structuré :
+ *   { shipping: bool|null,          // true = livraison possible, false = main propre
+ *     handDelivery: bool|null,      // true = remise en main propre uniquement
+ *     deliveryMode: 'main_propre'|'livraison'|'inconnu',
+ *     deliveryLabel: string|null } // libellé humain si dispo
+ */
+function extractDeliveryInfo(raw) {
+  const shipping = firstDefined(
+    raw.has_option?.shipping,
+    raw.options?.shipping,
+    raw.has_shipping,
+    raw.shipping,
+    raw.delivery?.shipping,
+    null
+  );
+  const deliveryOption = firstDefined(
+    raw.delivery?.delivery_option,
+    raw.delivery_option,
+    raw.delivery?.option,
+    null
+  );
+
+  let handDelivery = null;
+  if (shipping === false) handDelivery = true;
+  else if (shipping === true) handDelivery = false;
+
+  let deliveryMode = 'inconnu';
+  if (shipping === true) deliveryMode = 'livraison';
+  else if (shipping === false) deliveryMode = 'main_propre';
+
+  const deliveryLabel = firstNonNull(
+    deliveryOption,
+    raw.delivery?.carrier,
+    raw.delivery?.label,
+    null
+  );
+
+  return { shipping, handDelivery, deliveryMode, deliveryLabel };
+}
+
+/**
+ * Extraction défensive de la catégorie de l'annonce.
+ * Leboncoin expose la catégorie sous plusieurs chemins selon la version de
+ * l'API (recherche vs page détail). On essaie dans l'ordre :
+ *   category_name, category.name, category_name_json, category_label.
+ */
+function extractCategory(raw) {
+  return firstDefined(
+    raw.category_name,
+    raw.category?.name,
+    raw.category?.label,
+    raw.category_label,
+    raw.category_name_json,
+    null
+  );
+}
+
+/**
+ * Extraction défensive de la note vendeur et du nombre d'avis.
+ * Leboncoin expose ces données dans l'objet owner de la page de détail
+ * (rarement dans la liste de recherche). Plusieurs noms de champs possibles :
+ *   owner.rating / owner.rating_average / owner.score  → note (ex: 4.8)
+ *   owner.nb_ratings / owner.ratings_count / owner.rating_count → nb avis
+ */
+function extractSellerRating(raw) {
+  const owner = raw.owner || {};
+  const ratingVal = firstNonNull(
+    owner.rating,
+    owner.rating_average,
+    owner.score,
+    owner.ratingValue,
+    raw.seller_rating,
+    raw.rating,
+    null
+  );
+  const countVal = firstNonNull(
+    owner.nb_ratings,
+    owner.ratings_count,
+    owner.rating_count,
+    owner.nbReviews,
+    owner.review_count,
+    raw.seller_rating_count,
+    raw.nb_ratings,
+    null
+  );
+
+  let sellerRating = null;
+  if (ratingVal !== null) {
+    const n = parseFloat(ratingVal);
+    if (!Number.isNaN(n) && n >= 0 && n <= 5) sellerRating = Math.round(n * 10) / 10;
+  }
+  let sellerRatingCount = null;
+  if (countVal !== null) {
+    const c = parseInt(countVal, 10);
+    if (!Number.isNaN(c) && c >= 0) sellerRatingCount = c;
+  }
+
+  return { sellerRating, sellerRatingCount };
+}
+
 function normalizeAd(raw) {
   const id = firstDefined(raw.list_id, raw.id, raw.ad_id);
   const title = firstDefined(raw.subject, raw.title, raw.name);
@@ -229,6 +348,9 @@ function normalizeAd(raw) {
 
   const imagesList = Array.isArray(raw.images?.urls) ? raw.images.urls : [];
 
+  const delivery = extractDeliveryInfo(raw);
+  const { sellerRating, sellerRatingCount } = extractSellerRating(raw);
+
   return {
     id: id != null ? String(id) : null,
     title: title || null,
@@ -239,20 +361,34 @@ function normalizeAd(raw) {
     main_image: imagesList.length > 0 ? imagesList[0] : null,
     city: city || null,
     zipcode: zipcode || null,
-    shipping: firstDefined(
-      raw.has_option?.shipping,
-      raw.options?.shipping,
-      raw.has_shipping,
-      raw.shipping,
-      raw.delivery?.shipping,
-      null
-    ) ?? null,
+    shipping: delivery.shipping,
+    handDelivery: delivery.handDelivery,
+    deliveryMode: delivery.deliveryMode,
+    deliveryLabel: delivery.deliveryLabel,
     seller: firstDefined(raw.owner?.name, raw.owner_name),
     isPro: raw.owner?.type === 'pro',
+    sellerRating,
+    sellerRatingCount,
+    category: extractCategory(raw),
     date: firstDefined(raw.first_publication_date, raw.index_date, raw.date),
-    category: raw.category_name || null,
     raw,
   };
+}
+
+// Fusionne deux annonces en préservant les valeurs non-nulles : on ne remplace
+// JAMAIS un champ déjà renseigné (non-null) par une valeur null provenant de
+// l'autre version. Évite de perdre category/rating/shipping extraits sur une
+// page quand l'autre occurrence ne les contient pas.
+function mergeKeepingNonNull(existing, incoming) {
+  const merged = { ...existing, ...incoming };
+  for (const key of Object.keys(merged)) {
+    if (existing[key] != null && incoming[key] == null) {
+      merged[key] = existing[key];
+    }
+  }
+  // raw reste l'objet brut le plus riche (on garde incoming.raw si plus de clés)
+  merged.raw = existing.raw || incoming.raw;
+  return merged;
 }
 
 function mergeDuplicates(ads, logger) {
@@ -266,8 +402,7 @@ function mergeDuplicates(ads, logger) {
     }
     if (byId.has(ad.id)) {
       const existing = byId.get(ad.id);
-      const merged = { ...existing, ...ad };
-      if (!existing.description && ad.description) merged.description = ad.description;
+      const merged = mergeKeepingNonNull(existing, ad);
       byId.set(ad.id, merged);
       dupCount++;
     } else {
@@ -350,7 +485,7 @@ class DescriptionEnricher {
   }
 
   parseHtmlDescription(html, adId) {
-    if (!html) return { description: null, shipping: null };
+    if (!html) return { description: null, shipping: null, category: null, sellerRating: null, sellerRatingCount: null, deliveryMode: null, handDelivery: null, deliveryLabel: null };
     const match = html.match(/<script\s+id="__NEXT_DATA__"\s+type="application\/json">\s*([\s\S]*?)\s*<\/script>/i);
     if (match && match[1]) {
       try {
@@ -359,19 +494,26 @@ class DescriptionEnricher {
         const exact = found.find((c) => String(c.list_id || c.id) === String(adId));
         const target = exact || found[0];
         const body = target?.body || target?.description;
-        // Extraction shipping depuis la page individuelle
-        const shipping = target ? firstDefined(
-          target.has_option?.shipping,
-          target.options?.shipping,
-          target.has_shipping,
-          target.shipping,
-          target.delivery?.shipping,
-          null
-        ) ?? null : null;
-        return { description: body ? cleanText(body) : null, shipping };
+
+        // Extraction enrichie depuis la page de détail (qui contient souvent
+        // PLUS de données que la liste de recherche : catégorie exacte, note
+        // vendeur, options de livraison détaillées).
+        const delivery = target ? extractDeliveryInfo(target) : null;
+        const { sellerRating, sellerRatingCount } = target ? extractSellerRating(target) : { sellerRating: null, sellerRatingCount: null };
+
+        return {
+          description: body ? cleanText(body) : null,
+          shipping: delivery ? delivery.shipping : null,
+          category: target ? extractCategory(target) : null,
+          sellerRating,
+          sellerRatingCount,
+          deliveryMode: delivery ? delivery.deliveryMode : null,
+          handDelivery: delivery ? delivery.handDelivery : null,
+          deliveryLabel: delivery ? delivery.deliveryLabel : null,
+        };
       } catch { /* Ignorer */ }
     }
-    return { description: null, shipping: null };
+    return { description: null, shipping: null, category: null, sellerRating: null, sellerRatingCount: null, deliveryMode: null, handDelivery: null, deliveryLabel: null };
   }
 
   async enrichAll(ads, writeOutputs) {
@@ -467,15 +609,23 @@ class DescriptionEnricher {
         const res = results[ad.id];
 
         if (res && res.html) {
-          const { description: desc, shipping: extractedShipping } = this.parseHtmlDescription(res.html, ad.id);
-          if (desc) {
-            ad.description = desc;
+          const parsed = this.parseHtmlDescription(res.html, ad.id);
+          if (parsed.description) {
+            ad.description = parsed.description;
             successCount++;
             this.consecutiveBlocks = 0;
-            // Met à jour le shipping si on l'a extrait et qu'il était null
-            if (extractedShipping != null && ad.shipping == null) {
-              ad.shipping = extractedShipping;
+            // Enrichissement des champs extraits de la page de détail.
+            // On ne remplace QUE si la valeur courante est absente (null) :
+            // on ne perd jamais une donnée déjà acquise sur la liste.
+            if (parsed.shipping != null && ad.shipping == null) ad.shipping = parsed.shipping;
+            if (parsed.handDelivery != null && ad.handDelivery == null) ad.handDelivery = parsed.handDelivery;
+            if (parsed.deliveryMode && parsed.deliveryMode !== 'inconnu' && (!ad.deliveryMode || ad.deliveryMode === 'inconnu')) {
+              ad.deliveryMode = parsed.deliveryMode;
             }
+            if (parsed.deliveryLabel && !ad.deliveryLabel) ad.deliveryLabel = parsed.deliveryLabel;
+            if (parsed.category && !ad.category) ad.category = parsed.category;
+            if (parsed.sellerRating != null && ad.sellerRating == null) ad.sellerRating = parsed.sellerRating;
+            if (parsed.sellerRatingCount != null && ad.sellerRatingCount == null) ad.sellerRatingCount = parsed.sellerRatingCount;
             this.logger.info(`✅ [${done}/${targets.length}] ${(ad.title || '').slice(0, 50)}`);
           } else {
             notFoundCount++;
@@ -551,14 +701,27 @@ function toReadableBlock(ad, index) {
     ? ad.images.map((img, i) => `  - Photo ${i + 1} : ${img}`).join('\n')
     : '  - Aucune photo';
 
+  const deliveryLine = ad.deliveryMode === 'livraison'
+    ? `Livraison  : OUI${ad.deliveryLabel ? ' (' + ad.deliveryLabel + ')' : ''}`
+    : ad.deliveryMode === 'main_propre'
+      ? `Livraison  : NON (remise en main propre)`
+      : `Livraison  : ? (information non extraite)`;
+
+  const ratingLine = ad.sellerRating != null
+    ? `Note vénd. : ${ad.sellerRating}/5${ad.sellerRatingCount != null ? ' (' + ad.sellerRatingCount + ' avis)' : ''}`
+    : 'Note vénd. : -';
+
   return [
     `===== ANNONCE ${index + 1} =====`,
     `ID          : ${ad.id ?? '-'}`,
     `Titre       : ${ad.title ?? '-'}`,
     `URL         : ${ad.url ?? '-'}`,
     `Prix        : ${ad.price != null ? ad.price + ' €' : '-'}`,
+    `Catégorie   : ${ad.category ?? '-'}`,
     `Ville       : ${ad.city ?? '-'}${ad.zipcode ? ' (' + ad.zipcode + ')' : ''}`,
     `Vendeur     : ${ad.seller ?? '-'}${ad.isPro ? ' (Pro)' : ''}`,
+    ratingLine,
+    deliveryLine,
     `Date        : ${ad.date ?? '-'}`,
     `Photos (${ad.images ? ad.images.length : 0}) :`,
     imgLines,
@@ -577,11 +740,15 @@ function writeOutputsFactory(outDir, opts) {
     writeWithChecksum(jsonPath, ads, null, 2);
     atomicWriteFileSync(txtPath, ads.map(toReadableBlock).join('\n'));
     if (opts.csv) {
-      const headers = ['id', 'title', 'price', 'city', 'seller', 'date', 'url', 'main_image', 'images', 'description'];
+      const headers = ['id', 'title', 'price', 'category', 'city', 'seller', 'isPro', 'sellerRating', 'sellerRatingCount', 'deliveryMode', 'shipping', 'handDelivery', 'deliveryLabel', 'date', 'url', 'main_image', 'images', 'description'];
       const rows = [headers.join(',')];
       for (const a of ads) {
         const line = headers.map((h) => {
-          const val = h === 'images' && Array.isArray(a.images) ? a.images.join(' ') : (a[h] || '');
+          let val;
+          if (h === 'images' && Array.isArray(a.images)) val = a.images.join(' ');
+          else if (h === 'sellerRating') val = a.sellerRating != null ? String(a.sellerRating) : '';
+          else if (h === 'sellerRatingCount') val = a.sellerRatingCount != null ? String(a.sellerRatingCount) : '';
+          else val = (a[h] != null ? a[h] : '').toString();
           return `"${String(val).replace(/"/g, '""')}"`;
         }).join(',');
         rows.push(line);

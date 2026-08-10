@@ -472,6 +472,8 @@ input:focus, select:focus { border-color: var(--primary-color); }
 .price-box { background-color: var(--bg-color); padding: 12px; border-radius: 6px; border: 1px solid var(--border-color); margin: 10px 0; }
 .price-big { font-size: 1.5rem; font-weight: bold; color: var(--primary-color); }
 .seller-info-banner { font-size: 0.8rem; color: var(--text-muted); margin-bottom: 10px; }
+.modal-extra-val { color: var(--text-primary); font-weight: 600; }
+#modalExtraInfoBanner { display: flex; font-size: 0.82rem; }
 .full-desc-text { font-size: 0.8rem; color: var(--text-color); line-height: 1.4; max-height: 180px; overflow-y: auto; white-space: pre-wrap; background: var(--bg-color); padding: 10px; border-radius: 6px; }
 
 /* =========================================================================

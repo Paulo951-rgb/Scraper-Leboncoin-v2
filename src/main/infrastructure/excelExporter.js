@@ -17,6 +17,7 @@ class ExcelExporter {
       { header: 'ID', key: 'id', width: 14 },
       { header: 'Titre de l\'annonce', key: 'title', width: 35 },
       { header: 'Prix Demande (€)', key: 'price', width: 15 },
+      { header: 'Catégorie', key: 'category', width: 18 },
       { header: 'Classification Marché', key: 'classification', width: 22 },
       { header: 'Prix Moyen Marché (€)', key: 'marketAvg', width: 20 },
       { header: 'Fourchette Marché (€)', key: 'marketRange', width: 20 },
@@ -26,6 +27,8 @@ class ExcelExporter {
       { header: 'Résumé Analyse Marché', key: 'summary', width: 45 },
       { header: 'Ville', key: 'city', width: 18 },
       { header: 'Vendeur', key: 'seller', width: 18 },
+      { header: 'Note Vendeur', key: 'sellerRating', width: 14 },
+      { header: 'Mode de Remise', key: 'deliveryMode', width: 18 },
       { header: 'Date', key: 'date', width: 18 },
       { header: 'Lien Leboncoin', key: 'url', width: 30 },
     ];
@@ -43,10 +46,26 @@ class ExcelExporter {
     ads.forEach((ad) => {
       const ma = ad.marketAnalysis || {};
 
+      // Libellé humain pour le mode de remise
+      const deliveryLabelMap = {
+        livraison: '📦 Livraison',
+        main_propre: '🤝 Main propre',
+        inconnu: '— Inconnu —',
+      };
+      const deliveryText = deliveryLabelMap[ad.deliveryMode] || '— Inconnu —';
+
+      // Note vendeur formatée (ex: "4,8/5 (27 avis)")
+      let ratingText = '-';
+      if (ad.sellerRating != null) {
+        ratingText = `${String(ad.sellerRating).replace('.', ',')}/5`;
+        if (ad.sellerRatingCount != null) ratingText += ` (${ad.sellerRatingCount} avis)`;
+      }
+
       const row = sheet.addRow({
         id: ad.id || '-',
         title: ad.title || '-',
         price: typeof ad.price === 'number' ? ad.price : parseFloat(ad.price) || 0,
+        category: ad.category || '-',
         classification: ma.classification || 'Prix correct',
         marketAvg: ma.marketAvg ? `${ma.marketAvg} €` : '-',
         marketRange: ma.marketMin ? `${ma.marketMin} € - ${ma.marketMax} €` : '-',
@@ -56,6 +75,8 @@ class ExcelExporter {
         summary: ma.summary || 'Analyse de marché non effectuée',
         city: `${ad.city || '-'}${ad.zipcode ? ' (' + ad.zipcode + ')' : ''}`,
         seller: `${ad.seller || 'Particulier'}${ad.isPro ? ' (Pro)' : ''}`,
+        sellerRating: ratingText,
+        deliveryMode: deliveryText,
         date: ad.date || '-',
         url: { text: 'Ouvrir l\'annonce', hyperlink: ad.url || '#' },
       });
