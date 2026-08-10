@@ -58,7 +58,12 @@ function _key(listId, prefix) {
 function get(listId, prefix) {
   if (!listId) return null;
   const cache = _load();
-  return cache[_key(listId, prefix)] || null;
+  const entry = cache[_key(listId, prefix)];
+  // Renvoie la valeur mise en cache (entry.specs), pas le wrapper
+  // { specs, cachedAt } — sinon les appelants (AdAnalyzer/MarketValueAnalyzer)
+  // reçoivent un objet sans les champs attendus (identifiedProduct, realValue,
+  // _fallback...) et la détection des fallbacks échoue silencieusement.
+  return entry && entry.specs != null ? entry.specs : null;
 }
 
 function set(listId, specs, prefix) {

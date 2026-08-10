@@ -116,6 +116,50 @@ assert(enrichedAds.length === 3, 'AdStats retourne les annonces inchangées');
 assert(!enrichedAds[0].hasOwnProperty('dealTag'), 'AdStats n\'ajoute PLUS dealTag (scoring retiré)');
 assert(!enrichedAds[0].hasOwnProperty('hasRisk'), 'AdStats n\'ajoute PLUS hasRisk (scam score retiré)');
 
+// AdStats : cas limites (vide, prix invalides, médiane paire/impaire)
+assert(AdStats.analyze([]).stats === null, 'AdStats: tableau vide → stats null');
+assert(AdStats.analyze(null).stats === null, 'AdStats: entrée null → stats null (pas de crash)');
+assert(AdStats.analyze([{ id: '1', price: 'abc' }, { id: '2' }]).stats === null, 'AdStats: prix invalides → stats null');
+assert(AdStats.analyze([{ id: '1', price: 0 }, { id: '2', price: -5 }]).stats === null, 'AdStats: prix <= 0 ignorés → stats null');
+const oddMed = AdStats.analyze([{ id: '1', price: 100 }, { id: '2', price: 300 }, { id: '3', price: 200 }]);
+assert(oddMed.stats.medianPrice === 200, 'AdStats: médiane impaire = valeur centrale (200)');
+const evenMed = AdStats.analyze([{ id: '1', price: 100 }, { id: '2', price: 200 }, { id: '3', price: 300 }, { id: '4', price: 400 }]);
+assert(evenMed.stats.medianPrice === 250, 'AdStats: médiane paire = moyenne des 2 centrales (250, pas 300)');
+const mixedPrices = AdStats.analyze([{ id: '1', price: 100 }, { id: '2', price: '200' }, { id: '3', price: null }]);
+assert(mixedPrices.stats.pricedAds === 2, 'AdStats: prix string parsés, null ignorés (pricedAds=2)');
+assert(mixedPrices.stats.minPrice === 100 && mixedPrices.stats.maxPrice === 200, 'AdStats: min/max après tri des prix valides');
+
+// iaCache : get() renvoie la valeur mise en cache (pas le wrapper {specs,cachedAt})
+// Bug critique : avant correction, le cache renvoyait {specs,cachedAt} → les champs
+// identifiedProduct/realValue/_fallback étaient absents et cassaient l'affichage IA +
+// la détection des fallbacks (un fallback caché était retourné comme valide).
+const _aiCacheUnderTest = require('../src/main/services/ai/aiCache');
+_aiCacheUnderTest.clear();
+assert(_aiCacheUnderTest.get('nope', 'analyse') === null, 'aiCache: get sur clé absente → null');
+assert(_aiCacheUnderTest.get('', 'analyse') === null, 'aiCache: get sur id vide → null');
+_aiCacheUnderTest.set('ad-1', { identifiedProduct: 'iPhone 12', _fallback: false }, 'analyse');
+const cachedOk = _aiCacheUnderTest.get('ad-1', 'analyse');
+assert(cachedOk && cachedOk.identifiedProduct === 'iPhone 12', 'aiCache: get renvoie la valeur interne (identifiedProduct présent)');
+assert(cachedOk && cachedOk._fallback === false, 'aiCache: get préserve _fallback (détection fallback)');
+_aiCacheUnderTest.set('ad-2', { summary: ' HS', _fallback: true, _error: 'IA down' }, 'analyse');
+const cachedFb = _aiCacheUnderTest.get('ad-2', 'analyse');
+assert(cachedFb && cachedFb._fallback === true, 'aiCache: get préserve _fallback=true (fallback caché détectable)');
+// Préfixe distinct : analyse vs market ne collisionnent pas
+_aiCacheUnderTest.set('ad-1', { realValue: 500 }, 'market');
+const mkt = _aiCacheUnderTest.get('ad-1', 'market');
+assert(mkt && mkt.realValue === 500, 'aiCache: préfixe market isolé du préfixe analyse');
+assert(_aiCacheUnderTest.get('ad-1', 'analyse').realValue === undefined, 'aiCache: analyse non pollué par market');
+_aiCacheUnderTest.clear();
+
+// excelExporter : noms de champs cohérents avec l'IA (identifiedProduct, valueRangeLow/High)
+// Bug : avant correction, l'Excel lisait identifiedName/marketMin/marketMax (champs
+// jamais produits par adAnalyzer/marketValueAnalyzer) → colonnes vides même après IA.
+const excelSrc = fs.readFileSync(path.join(__dirname, '..', 'src/main/infrastructure/excelExporter.js'), 'utf8');
+assert(/adAnalysis\.identifiedProduct/.test(excelSrc), 'excelExporter: lit adAnalysis.identifiedProduct (champ produit par l\'IA 1)');
+assert(!/adAnalysis\.identifiedName/.test(excelSrc), 'excelExporter: ne lit plus identifiedName (champ inexistant)');
+assert(/ma\.valueRangeLow/.test(excelSrc) && /ma\.valueRangeHigh/.test(excelSrc), 'excelExporter: lit valueRangeLow/High (champs produits par l\'IA 2)');
+assert(!/ma\.marketMin/.test(excelSrc) && !/ma\.marketMax/.test(excelSrc), 'excelExporter: ne lit plus marketMin/marketMax (champs inexistants)');
+
 // --- 3. Pipeline (fork) ---
 console.log('\n[3/4] Pipeline (leboncoin-pipeline.js)');
 const os = require('os');

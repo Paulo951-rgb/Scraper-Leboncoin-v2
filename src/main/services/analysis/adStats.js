@@ -36,7 +36,12 @@ class AdStats {
     const avg = Math.round(sum / validPrices.length);
     const minPrice = validPrices[0];
     const maxPrice = validPrices[validPrices.length - 1];
-    const median = validPrices[Math.floor(validPrices.length / 2)];
+    // Médiane : moyenne des deux valeurs centrales si le nombre d'éléments est
+    // pair, sinon la valeur centrale. (Le rendu Stats du renderer fait de même.)
+    const mid = Math.floor(validPrices.length / 2);
+    const median = validPrices.length % 2 !== 0
+      ? validPrices[mid]
+      : Math.round((validPrices[mid - 1] + validPrices[mid]) / 2);
 
     return {
       stats: {
