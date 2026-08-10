@@ -307,7 +307,7 @@
                 <button id="aistudioOpenExternalBtn" class="btn btn-secondary btn-small" title="Ouvrir dans le navigateur externe">↗</button>
               </div>
               <div class="browser-container">
-                <webview id="aistudioWebview" src="https://aistudio.google.com/" allowpopups partition="persist:aistudio"></webview>
+                <webview id="aistudioWebview" src="https://aistudio.google.com/" allowpopups partition="persist:aistudio" preload="../main/aistudioLoginPreload.js" webpreferences="contextIsolation=no,nodeIntegration=no"></webview>
                 <div id="aistudioWebviewLoading" class="browser-loading-badge">⏳ Chargement…</div>
               </div>
             </div>

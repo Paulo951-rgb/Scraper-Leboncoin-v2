@@ -389,6 +389,15 @@ assert(/setUserAgent/.test(mainCode4), 'main.js: setUserAgent Chrome réel sur l
 assert(/session\.fromPartition/.test(mainCode4), 'main.js: session.fromPartition pour configurer la partition IA Studio');
 assert(/sec-ch-ua/.test(mainCode4), 'main.js: réécriture sec-ch-ua (Client Hints) pour masquer la marque Electron');
 assert(/onBeforeSendHeaders/.test(mainCode4), 'main.js: onBeforeSendHeaders interception des en-têtes sortants');
+assert(/aistudioLoginPreload/.test(mainCode4), 'main.js: preload aistudioLoginPreload sur la fenêtre de connexion');
+assert(existsSync(path.join(base, 'aistudioLoginPreload.js')), 'aistudioLoginPreload.js present');
+const loginPreloadCode = fs.readFileSync(path.join(base, 'aistudioLoginPreload.js'), 'utf8');
+assert(/userAgentData/.test(loginPreloadCode), 'aistudioLoginPreload: override navigator.userAgentData (marque Electron en JS)');
+assert(/webdriver/.test(loginPreloadCode), 'aistudioLoginPreload: navigator.webdriver = false');
+assert(/window\.chrome/.test(loginPreloadCode), 'aistudioLoginPreload: window.chrome défini');
+// Le webview de l'onglet reçoit aussi le preload + contextIsolation désactivé
+assert(/aistudioLoginPreload\.js/.test(htmlCode), 'index.html: webview reçoit le preload anti-détection Google');
+assert(/contextIsolation=no/.test(htmlCode), 'index.html: webview contextIsolation=no (override navigator côté page)');
 assert(/openAiStudioLogin/.test(preloadCodeFull), 'preload.js: expose openAiStudioLogin');
 
 console.log(`\n=== RÉSULTAT : ${pass} réussis, ${fail} échoués ===`);

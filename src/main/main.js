@@ -149,9 +149,14 @@ ipcMain.on('aistudio:openLogin', (event, url) => {
     title: 'Connexion Google — AI Studio',
     autoHideMenuBar: true,
     webPreferences: {
-      contextIsolation: true,
+      // contextIsolation DÉSACTIVÉ sur cette fenêtre (qui ne charge QUE Google)
+      // pour permettre au preload d'override navigator.userAgentData / webdriver
+      // avant les scripts de Google. nodeIntegration reste false : pas d'accès
+      // Node dans la page, seul le preload (fichier local maîtrisé) s'exécute.
+      contextIsolation: false,
       nodeIntegration: false,
       partition: AI_STUDIO_PARTITION,
+      preload: path.join(__dirname, 'aistudioLoginPreload.js'),
     },
   });
 
