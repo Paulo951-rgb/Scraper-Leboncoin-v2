@@ -18,6 +18,7 @@ const { JOBS_DIR, BASE_OUT_DIR } = require('../config/constants');
 const { redact, summarizeAds, formatBytes, describeError } = require('../utils/diagnostics');
 const { writeWithChecksum } = require('../utils/integrity');
 const { loadSettings, saveSettings } = require('./settings');
+const { listSearchProviders } = require('../services/ai/search/searchProviderRegistry');
 
 function setupIpcHandlers(getMainWindow) {
   let activeCapturer = null;
@@ -161,7 +162,7 @@ function setupIpcHandlers(getMainWindow) {
 
           sendStatus({ state: 'processing', message: 'Analyse IA des annonces (texte + vision)...' });
           const visionModel = aiConfig?.visionModel || 'llava';
-          sendLog({ level: 'info', message: `🧠 Lancement de l'IA Analyse (${ads.length} annonces, texte + ${analyzeImages ? 'vision activée' : 'vision si photos'}, parallèle x${aiConfig.concurrency || 4}, modèle ${visionModel})...` });
+          sendLog({ level: 'info', message: `🧠 Lancement de l'IA Analyse (${ads.length} annonces, texte + ${analyzeImages ? 'vision activée' : 'vision si photos'}, parallèle x${userSettings.aiConcurrency || 4}, modèle ${visionModel})...` });
 
           const t0Ai = Date.now();
           const analysisConfig = {
@@ -309,7 +310,6 @@ function setupIpcHandlers(getMainWindow) {
 
   // 🔍 Liste les moteurs de recherche disponibles (pour l'UI de l'IA Marché).
   ipcMain.handle('search:providers', async () => {
-    const { listSearchProviders } = require('../services/ai/search/searchProviderRegistry');
     return { providers: listSearchProviders() };
   });
 

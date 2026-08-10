@@ -2,8 +2,9 @@
 
 /**
  * Mots-clés signalant un risque (annonce défectueuse, HS, pour pièces…).
- * Utilisés par le service d'analyse DealFinder pour détacher la logique métier
- * de la configuration des chemins (constants.js).
+ * Conservés pour référence et tests ; le nouveau système IA (adAnalyzer)
+ * détecte l'état et les défauts via l'analyse texte+vision plutôt que par
+ * correspondance de mots-clés.
  */
 const RISK_KEYWORDS = [
   'hs', 'pour pièces', 'pour pieces', 'panne', 'non testé', 'non teste',

@@ -174,7 +174,6 @@ if (searchProviderSelect) {
     }
   }).catch(() => { /* liste non disponible — fallback duckduckgo */ });
 }
-if (searchApiKeyEl && searchApiKeyEl.value === undefined) searchApiKeyEl.value = '';
 
 aiModelName.value = localStorage.getItem('ai-model-name') || 'llama3';
 aiModelName.addEventListener('change', (e) => localStorage.setItem('ai-model-name', e.target.value));
@@ -1098,86 +1097,90 @@ async function geocodeCityGov(cityName, zipcode) {
 async function renderMap(ads) {
   if (typeof L === 'undefined') return;
 
-  if (!mapInstance) {
-    mapInstance = L.map('leafletMap').setView([46.603354, 1.888334], 5);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 18,
-      attribution: '© OpenStreetMap',
-    }).addTo(mapInstance);
-  }
-
-  // Effacer les anciens marqueurs de la carte
-  mapInstance.eachLayer((layer) => {
-    if (layer instanceof L.Marker) mapInstance.removeLayer(layer);
-  });
-
-  const mapHandDeliveryOnly = document.getElementById('mapHandDeliveryOnly').checked;
-
-  // Déduplication : une même annonce peut apparaître dans plusieurs sessions
-  // de scraping (ex. « tous les scrapings combinés »). On ne l'affiche qu'une
-  // seule fois sur la carte, identifiée par son id Leboncoin (fiable).
-  const seenIds = new Set();
-  const dedupedAds = [];
-  for (const a of ads) {
-    const key = a.id || a.url || a.title;
-    if (!key || !seenIds.has(key)) {
-      if (key) seenIds.add(key);
-      dedupedAds.push(a);
+  try {
+    if (!mapInstance) {
+      mapInstance = L.map('leafletMap').setView([46.603354, 1.888334], 5);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 18,
+        attribution: '© OpenStreetMap',
+      }).addTo(mapInstance);
     }
-  }
 
-  // Filtrer les annonces "main propre" uniquement (shipping === false,
-  // pas null qui signifie « info non extraite »).
-  let targetAds = dedupedAds;
-  if (mapHandDeliveryOnly) {
-    targetAds = dedupedAds.filter((a) => a.shipping === false);
-    console.log(`[Carte] Filtre main propre ON : ${targetAds.length}/${dedupedAds.length} annonces (shipping=false uniquement) — ${ads.length - dedupedAds.length} doublon(s) supprimé(s)`);
-  } else {
-    console.log(`[Carte] Filtre main propre OFF : ${dedupedAds.length} annonces affichées — ${ads.length - dedupedAds.length} doublon(s) supprimé(s)`);
-  }
+    // Effacer les anciens marqueurs de la carte
+    mapInstance.eachLayer((layer) => {
+      if (layer instanceof L.Marker) mapInstance.removeLayer(layer);
+    });
 
-  // Géocodage à concurrence limitée (au lieu d'un await séquentiel qui
-  // pouvait prendre plusieurs minutes pour 100+ annonces). On borne à 6
-  // requêtes parallèles pour rester dans les limites de l'API Gouv.
-  const GEOCODE_CONCURRENCY = 6;
-  const queue = [...targetAds];
-  const placeMarker = (a, coords) => {
-    if (!coords) return;
-    const jitterCoords = [
-      coords[0] + (Math.random() - 0.5) * 0.012,
-      coords[1] + (Math.random() - 0.5) * 0.012
-    ];
-    const marker = L.marker(jitterCoords).addTo(mapInstance);
-    const deliveryTxt = a.deliveryMode === 'livraison'
-      ? '📦 Livraison possible'
-      : a.deliveryMode === 'main_propre'
-        ? '🤝 Remise en main propre'
-        : 'ℹ️ Remise non précisée';
-    marker.bindPopup(`
-      <div style="font-family:sans-serif; font-size:0.8rem; line-height:1.3;">
-        <strong>${escapeHtml(a.title)}</strong><br>
-        <span style="color:var(--primary-color); font-weight:bold;">${a.price} €</span><br>
-        📍 ${escapeHtml(a.city || 'Ville')}<br>
-        ${deliveryTxt}${a.category ? '<br>🏷️ ' + escapeHtml(a.category) : ''}<br>
-        <a href="#" onclick="openUrl('${escapePath(a.url)}'); return false;" style="color:#38bdf8; text-decoration:underline;">Ouvrir l'annonce</a>
-      </div>
-    `);
-  };
+    const mapHandDeliveryOnly = document.getElementById('mapHandDeliveryOnly').checked;
 
-  const worker = async () => {
-    while (queue.length > 0) {
-      const a = queue.shift();
-      if (!a) break;
-      try {
-        const coords = await geocodeCityGov(a.city, a.zipcode);
-        placeMarker(a, coords);
-      } catch (err) {
-        console.warn(`[Carte] géocodage échoué pour ${a.city || '?'} :`, err.message);
+    // Déduplication : une même annonce peut apparaître dans plusieurs sessions
+    // de scraping (ex. « tous les scrapings combinés »). On ne l'affiche qu'une
+    // seule fois sur la carte, identifiée par son id Leboncoin (fiable).
+    const seenIds = new Set();
+    const dedupedAds = [];
+    for (const a of ads) {
+      const key = a.id || a.url || a.title;
+      if (!key || !seenIds.has(key)) {
+        if (key) seenIds.add(key);
+        dedupedAds.push(a);
       }
     }
-  };
 
-  await Promise.all(Array.from({ length: Math.min(GEOCODE_CONCURRENCY, targetAds.length) }, () => worker()));
+    // Filtrer les annonces "main propre" uniquement (shipping === false,
+    // pas null qui signifie « info non extraite »).
+    let targetAds = dedupedAds;
+    if (mapHandDeliveryOnly) {
+      targetAds = dedupedAds.filter((a) => a.shipping === false);
+      console.log(`[Carte] Filtre main propre ON : ${targetAds.length}/${dedupedAds.length} annonces (shipping=false uniquement) — ${ads.length - dedupedAds.length} doublon(s) supprimé(s)`);
+    } else {
+      console.log(`[Carte] Filtre main propre OFF : ${dedupedAds.length} annonces affichées — ${ads.length - dedupedAds.length} doublon(s) supprimé(s)`);
+    }
+
+    // Géocodage à concurrence limitée (au lieu d'un await séquentiel qui
+    // pouvait prendre plusieurs minutes pour 100+ annonces). On borne à 6
+    // requêtes parallèles pour rester dans les limites de l'API Gouv.
+    const GEOCODE_CONCURRENCY = 6;
+    const queue = [...targetAds];
+    const placeMarker = (a, coords) => {
+      if (!coords) return;
+      const jitterCoords = [
+        coords[0] + (Math.random() - 0.5) * 0.012,
+        coords[1] + (Math.random() - 0.5) * 0.012
+      ];
+      const marker = L.marker(jitterCoords).addTo(mapInstance);
+      const deliveryTxt = a.deliveryMode === 'livraison'
+        ? '📦 Livraison possible'
+        : a.deliveryMode === 'main_propre'
+          ? '🤝 Remise en main propre'
+          : 'ℹ️ Remise non précisée';
+      marker.bindPopup(`
+        <div style="font-family:sans-serif; font-size:0.8rem; line-height:1.3;">
+          <strong>${escapeHtml(a.title)}</strong><br>
+          <span style="color:var(--primary-color); font-weight:bold;">${a.price} €</span><br>
+          📍 ${escapeHtml(a.city || 'Ville')}<br>
+          ${deliveryTxt}${a.category ? '<br>🏷️ ' + escapeHtml(a.category) : ''}<br>
+          <a href="#" onclick="openUrl('${escapePath(a.url)}'); return false;" style="color:#38bdf8; text-decoration:underline;">Ouvrir l'annonce</a>
+        </div>
+      `);
+    };
+
+    const worker = async () => {
+      while (queue.length > 0) {
+        const a = queue.shift();
+        if (!a) break;
+        try {
+          const coords = await geocodeCityGov(a.city, a.zipcode);
+          placeMarker(a, coords);
+        } catch (err) {
+          console.warn(`[Carte] géocodage échoué pour ${a.city || '?'} :`, err.message);
+        }
+      }
+    };
+
+    await Promise.all(Array.from({ length: Math.min(GEOCODE_CONCURRENCY, targetAds.length) }, () => worker()));
+  } catch (err) {
+    console.error('[Carte] Erreur lors du rendu de la carte :', err.message);
+  }
 }
 
 
