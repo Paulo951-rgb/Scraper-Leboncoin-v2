@@ -160,7 +160,14 @@ const ipcCode = fs.readFileSync(path.join(__dirname, '..', 'src/main/core/ipcHan
 const maCode = fs.readFileSync(path.join(__dirname, '..', 'src/main/services/ai/marketAnalyzer.js'), 'utf8');
 
 assert(/(let|const)\s+mapInstance\b/.test(appCode), 'app.js: mapInstance declared');
-assert(/(let|const)\s+dealsChartInstance\b/.test(appCode), 'app.js: dealsChartInstance declared');
+assert(/(let|const)\s+priceDistChartInstance\b/.test(appCode), 'app.js: priceDistChartInstance declared');
+assert(/(let|const)\s+topCitiesChartInstance\b/.test(appCode), 'app.js: topCitiesChartInstance declared');
+assert(/statAvgPrice/.test(appCode), 'app.js: statAvgPrice (prix moyen)');
+assert(/statMedPrice/.test(appCode), 'app.js: statMedPrice (prix médian)');
+assert(/statHandDelivery/.test(appCode), 'app.js: statHandDelivery (main propre)');
+assert(!/statGoodDeals/.test(appCode), 'app.js: statGoodDeals supprimé (stats bonnes affaires retirées)');
+assert(!/Répartition des Opportunités/.test(appCode), 'app.js: graphique Répartition des Opportunités supprimé');
+assert(/429|quota/i.test(appCode), 'app.js: gestion erreur 429 Gemini (analyse globale)');
 assert(/function\s+loadSchedulerPage\b/.test(appCode), 'app.js: loadSchedulerPage defined');
 assert(!/let\s+priceChartInstance\b/.test(appCode), 'app.js: priceChartInstance dead var removed');
 assert(/if \(viewMode === 'table'\) viewGridBtn\.click\(\);\s*else viewTableBtn\.click\(\);/.test(appCode), 'app.js: Spacebar toggles table<->grid');
@@ -331,6 +338,22 @@ assert(/cfgAutoCleanJobs/.test(htmlCode), 'index.html: cfgAutoCleanJobs checkbox
 assert(/cfgAutoCleanJobsDays/.test(htmlCode), 'index.html: cfgAutoCleanJobsDays input');
 assert(/cfgLogRetention/.test(htmlCode), 'index.html: cfgLogRetention input');
 assert(/badge-offline/.test(htmlCode), 'index.html: badge-offline CSS class');
+// Onglet scraper : option OpenAI retirée, autoAiMarket décoché par défaut
+assert(!/value="openai"/.test(htmlCode), 'index.html: option OpenAI ChatGPT retirée du scraper');
+assert(!/id="aiApiKey"/.test(htmlCode), 'index.html: champ clé API OpenAI retiré');
+assert(/<input type="checkbox" id="autoAiMarket">/.test(htmlCode), 'index.html: autoAiMarket décoché par défaut');
+assert(/value="ollama"/.test(htmlCode), 'index.html: option Ollama local conservée');
+// Stats : nouvelles cartes + retrait bonnes affaires
+assert(/statAvgPrice/.test(htmlCode), 'index.html: carte prix moyen');
+assert(/statMedPrice/.test(htmlCode), 'index.html: carte prix médian');
+assert(/statHandDelivery/.test(htmlCode), 'index.html: carte main propre');
+assert(/statPro/.test(htmlCode) && /statPart/.test(htmlCode), 'index.html: cartes pro/particulier');
+assert(!/statGoodDeals/.test(htmlCode), 'index.html: carte Bonnes Affaires supprimée');
+assert(!/statRisks/.test(htmlCode), 'index.html: carte Annonces Trop Chères supprimée');
+assert(!/id="dealsChart"/.test(htmlCode), 'index.html: canvas dealsChart (Répartition Opportunités) supprimé');
+assert(/id="priceDistChart"/.test(htmlCode), 'index.html: canvas priceDistChart (distribution prix)');
+assert(/id="topCitiesChart"/.test(htmlCode), 'index.html: canvas topCitiesChart (top villes)');
+assert(/stat-card-accent/.test(htmlCode), 'index.html: stat-cards accentuées');
 
 // F4 : Module Navigateur IA Studio
 console.log('\n[7/7] Module Navigateur IA Studio');

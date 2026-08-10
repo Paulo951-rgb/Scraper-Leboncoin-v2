@@ -89,6 +89,7 @@ startGlobalAiBtn.addEventListener('click', async () => {
   }
 
   startGlobalAiBtn.disabled = true;
+  const origText = startGlobalAiBtn.textContent;
   statusText.textContent = 'Analyse Globale Gemini en cours...';
 
   try {
@@ -102,9 +103,23 @@ startGlobalAiBtn.addEventListener('click', async () => {
 
     renderGlobalReport(reportData);
   } catch (err) {
-    alert(`Erreur Analyse Globale : ${err.message}`);
+    const msg = (err && err.message) ? err.message : String(err);
+    // Erreur de quota Gemini (429) : message explicite + proposition de réessayer.
+    if (/429|quota|rate.?limit/i.test(msg)) {
+      const retryMatch = msg.match(/(\d+)\s*s/i);
+      const waitHint = retryMatch ? ` Attendez ~${retryMatch[1]}s.` : '';
+      statusText.textContent = '⏳ Quota Gemini atteint' + waitHint;
+      if (confirm('⚠️ Quota Gemini dépassé (429).\n\nLe plan gratuit Gemini a une limite de requêtes/minute. Le logiciel a déjà réessayé 3 fois automatiquement.\n\n' + waitHint + '\n\nOptions :\n• Cliquez OK pour réessayer maintenant\n• Attendez quelques minutes puis relancez\n• Ou utilisez l\'Analyse de Marché locale (Ollama) dans l\'onglet 🚀 Scraper\n\nDétail :\n' + msg)) {
+        startGlobalAiBtn.disabled = false;
+        startGlobalAiBtn.click();
+        return;
+      }
+    } else {
+      alert('Erreur Analyse Globale : ' + msg);
+    }
   } finally {
     startGlobalAiBtn.disabled = false;
+    startGlobalAiBtn.textContent = origText;
   }
 });
 
@@ -199,9 +214,14 @@ const filterTagSelect = document.getElementById('filterTagSelect');
 const sortSelect = document.getElementById('sortSelect');
 const triggerMarketBtn = document.getElementById('triggerMarketBtn');
 
-const statGoodDeals = document.getElementById('statGoodDeals');
-const statRisks = document.getElementById('statRisks');
 const statTotalAds = document.getElementById('statTotalAds');
+const statAvgPrice = document.getElementById('statAvgPrice');
+const statMedPrice = document.getElementById('statMedPrice');
+const statMinPrice = document.getElementById('statMinPrice');
+const statMaxPrice = document.getElementById('statMaxPrice');
+const statHandDelivery = document.getElementById('statHandDelivery');
+const statPro = document.getElementById('statPro');
+const statPart = document.getElementById('statPart');
 
 // Déclarations de sécurité pour l'historique et la suppression
 const openMainFolderBtn = document.getElementById('openMainFolderBtn');
@@ -227,15 +247,10 @@ const openAiKeyGroup = document.getElementById('openAiKeyGroup');
 aiModelName.value = localStorage.getItem('ai-model-name') || 'llama3';
 aiModelName.addEventListener('change', (e) => localStorage.setItem('ai-model-name', e.target.value));
 
-aiApiKey.value = ''; // chargé asynchrone depuis le SecretStore chiffré
-(async () => {
-  try { aiApiKey.value = await window.api.getSecret('openai-key') || ''; } catch {}
-})();
-aiApiKey.addEventListener('change', (e) => window.api.setSecret('openai-key', e.target.value));
+aiApiKey.value = ''; // OpenAI retiré : l'IA se fait en local via Ollama
 
-aiProvider.addEventListener('change', (e) => {
-  if (e.target.value === 'openai') openAiKeyGroup.classList.remove('hidden');
-  else openAiKeyGroup.classList.add('hidden');
+aiProvider.addEventListener('change', () => {
+  // Plus que Ollama local désormais ; handler conservé pour compat.
 });
 
 // Presets
@@ -451,8 +466,9 @@ const modalDescription = document.getElementById('modalDescription');
 const modalOpenLeboncoinBtn = document.getElementById('modalOpenLeboncoinBtn');
 
 let allJobsCache = [];
-let dealsChartInstance = null;
+let priceDistChartInstance = null;
 let sellerChartInstance = null;
+let topCitiesChartInstance = null;
 let mapInstance = null;
 let pendingDeleteJobId = null;
 
@@ -966,12 +982,30 @@ function renderStatsView() {
     if (found && Array.isArray(found.ads)) sourceAds = found.ads;
   }
 
-  const goodDeals = sourceAds.filter((a) => a.marketAnalysis?.classification === 'Très bonne affaire' || a.marketAnalysis?.classification === 'Bonne affaire').length;
-  const highDeals = sourceAds.filter((a) => a.marketAnalysis?.classification === 'Trop cher').length;
+  const prices = sourceAds.map((a) => Number(a.price)).filter((p) => Number.isFinite(p) && p > 0).sort((a, b) => a - b);
+  const fmt = (n) => (Number.isFinite(n) ? n.toLocaleString('fr-FR') : '-');
 
-  statGoodDeals.textContent = `${goodDeals} affaires`;
-  statRisks.textContent = `${highDeals} annonces`;
-  statTotalAds.textContent = `${sourceAds.length}`;
+  statTotalAds.textContent = sourceAds.length;
+
+  if (prices.length > 0) {
+    const sum = prices.reduce((s, p) => s + p, 0);
+    const avg = Math.round(sum / prices.length);
+    const median = prices.length % 2 ? prices[(prices.length - 1) / 2] : Math.round((prices[prices.length / 2 - 1] + prices[prices.length / 2]) / 2);
+    statAvgPrice.textContent = fmt(avg) + ' €';
+    statMedPrice.textContent = fmt(median) + ' €';
+    statMinPrice.textContent = fmt(prices[0]) + ' €';
+    statMaxPrice.textContent = fmt(prices[prices.length - 1]) + ' €';
+  } else {
+    statAvgPrice.textContent = '-'; statMedPrice.textContent = '-'; statMinPrice.textContent = '-'; statMaxPrice.textContent = '-';
+  }
+
+  const handCount = sourceAds.filter((a) => !a.shipping).length;
+  const proCount = sourceAds.filter((a) => a.isPro).length;
+  const partCount = sourceAds.length - proCount;
+
+  statHandDelivery.textContent = fmt(handCount);
+  statPro.textContent = fmt(proCount);
+  statPart.textContent = fmt(partCount);
 
   renderCharts(sourceAds);
   renderMap(sourceAds);
@@ -1069,35 +1103,42 @@ async function renderMap(ads) {
 function renderCharts(ads) {
   if (typeof Chart === 'undefined' || ads.length === 0) return;
 
-  const superDeals = ads.filter((a) => a.marketAnalysis?.classification === 'Très bonne affaire').length;
-  const goodDeals = ads.filter((a) => a.marketAnalysis?.classification === 'Bonne affaire').length;
-  const normalDeals = ads.filter((a) => !a.marketAnalysis || a.marketAnalysis?.classification === 'Prix correct').length;
-  const highDeals = ads.filter((a) => a.marketAnalysis?.classification === 'Légèrement cher' || a.marketAnalysis?.classification === 'Trop cher').length;
+  // 1) Distribution des prix (histogramme)
+  const prices = ads.map((a) => Number(a.price)).filter((p) => Number.isFinite(p) && p > 0).sort((a, b) => a - b);
+  const priceDistCtx = document.getElementById('priceDistChart').getContext('2d');
+  if (priceDistChartInstance) priceDistChartInstance.destroy();
 
+  if (prices.length > 0) {
+    const maxPrice = prices[prices.length - 1];
+    // Bornes adaptatives : jusqu'à 8 tranches
+    const bucketCount = Math.min(8, Math.max(3, Math.ceil(Math.sqrt(prices.length))));
+    const bucketSize = Math.max(1, Math.ceil(maxPrice / bucketCount));
+    const buckets = new Array(bucketCount).fill(0);
+    const labels = [];
+    for (let i = 0; i < bucketCount; i++) {
+      const lo = i * bucketSize;
+      const hi = (i + 1) * bucketSize;
+      labels.push(lo === 0 ? `0–${hi} €` : `${lo}–${hi} €`);
+    }
+    for (const p of prices) {
+      let idx = Math.floor(p / bucketSize);
+      if (idx >= bucketCount) idx = bucketCount - 1;
+      buckets[idx]++;
+    }
+    priceDistChartInstance = new Chart(priceDistCtx, {
+      type: 'bar',
+      data: { labels, datasets: [{ label: 'Nombre d\'annonces', data: buckets, backgroundColor: '#38bdf8', borderRadius: 6 }] },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { title: { display: true, text: 'Distribution des Prix' }, legend: { display: false } },
+        scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
+      },
+    });
+  }
+
+  // 2) Vendeurs particuliers vs pros
   const proCount = ads.filter((a) => a.isPro).length;
   const partCount = ads.length - proCount;
-
-  const dealsCtx = document.getElementById('dealsChart').getContext('2d');
-  if (dealsChartInstance) dealsChartInstance.destroy();
-
-  dealsChartInstance = new Chart(dealsCtx, {
-    type: 'doughnut',
-    data: {
-      labels: ['🟢🟢 Très Bonne Affaire', '🟢 Bonne Affaire', '🟠 Prix Correct', '🔴 Trop Cher'],
-      datasets: [
-        {
-          data: [superDeals, goodDeals, normalDeals, highDeals],
-          backgroundColor: ['#22c55e', '#10b981', '#f59e0b', '#ef4444'],
-        },
-      ],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: { title: { display: true, text: 'Répartition des Opportunités' } },
-    },
-  });
-
   const sellerCtx = document.getElementById('sellerChart').getContext('2d');
   if (sellerChartInstance) sellerChartInstance.destroy();
 
@@ -1105,17 +1146,34 @@ function renderCharts(ads) {
     type: 'doughnut',
     data: {
       labels: ['Particuliers', 'Professionnels'],
-      datasets: [
-        {
-          data: [partCount, proCount],
-          backgroundColor: ['#38bdf8', '#8b5cf6'],
-        },
-      ],
+      datasets: [{ data: [partCount, proCount], backgroundColor: ['#38bdf8', '#8b5cf6'] }],
     },
     options: {
-      responsive: true,
-      maintainAspectRatio: false,
+      responsive: true, maintainAspectRatio: false,
       plugins: { title: { display: true, text: 'Vendeurs Particuliers vs Pros' } },
+    },
+  });
+
+  // 3) Top 10 villes par nombre d'annonces
+  const cityCounts = {};
+  for (const a of ads) {
+    const c = (a.city || 'Inconnue').trim() || 'Inconnue';
+    cityCounts[c] = (cityCounts[c] || 0) + 1;
+  }
+  const topCities = Object.entries(cityCounts).sort((a, b) => b[1] - a[1]).slice(0, 10);
+  const citiesCtx = document.getElementById('topCitiesChart').getContext('2d');
+  if (topCitiesChartInstance) topCitiesChartInstance.destroy();
+
+  topCitiesChartInstance = new Chart(citiesCtx, {
+    type: 'bar',
+    data: {
+      labels: topCities.map((c) => c[0]),
+      datasets: [{ label: 'Annonces', data: topCities.map((c) => c[1]), backgroundColor: '#22c55e', borderRadius: 6 }],
+    },
+    options: {
+      indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      plugins: { title: { display: true, text: 'Top 10 Villes' }, legend: { display: false } },
+      scales: { x: { beginAtZero: true, ticks: { precision: 0 } } },
     },
   });
 }
