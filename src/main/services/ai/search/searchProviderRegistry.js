@@ -19,6 +19,7 @@
  */
 
 const { DuckDuckGoSearchProvider } = require('./duckDuckGoSearchProvider');
+const { TavilySearchProvider } = require('./tavilySearchProvider');
 
 const registry = new Map();
 
@@ -61,7 +62,8 @@ function listSearchProviders() {
   return list;
 }
 
-// Enregistrement du moteur par défaut (sans clé).
+// Enregistrement du moteur par défaut (sans clé) + moteur à clé (Tavily).
 registerSearchProvider('duckduckgo', (cfg) => new DuckDuckGoSearchProvider(cfg));
+registerSearchProvider('tavily', (cfg) => new TavilySearchProvider(cfg));
 
 module.exports = { getSearchProvider, registerSearchProvider, listSearchProviders };

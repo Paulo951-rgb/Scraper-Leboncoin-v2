@@ -683,6 +683,73 @@ assert(!/via\.placeholder\.com/.test(appCodeNoComments), 'app.js: plus de dépen
 // Cohérence tri explorateur : défaut sauvegardé = 'DEFAULT' (option réelle)
 assert(/sort:\s*sortSelect\?\.value\s*\|\|\s*'DEFAULT'/.test(appCodeFull), 'app.js: défaut tri explorateur = DEFAULT (cohérent avec <select>');
 
+// === AUDIT SEARCH : Tavily provider + DDG anti-bot resilience ===
+const searchRegCode = fs.readFileSync(path.join(base, 'services/ai/search/searchProviderRegistry.js'), 'utf8');
+assert(/TavilySearchProvider/.test(searchRegCode), 'searchRegistry: importe TavilySearchProvider');
+assert(/registerSearchProvider\('tavily'/.test(searchRegCode), 'searchRegistry: enregistre le moteur tavily');
+const tavilyPath = path.join(base, 'services/ai/search/tavilySearchProvider.js');
+assert(existsSync(tavilyPath), 'tavilySearchProvider.js: fichier présent');
+const tavilyCode = fs.readFileSync(tavilyPath, 'utf8');
+assert(/api\.tavily\.com\/search/.test(tavilyCode), 'tavily: endpoint api.tavily.com/search');
+assert(/requiresApiKey\(\)\s*\{\s*return true/.test(tavilyCode), 'tavily: requiresApiKey() = true');
+assert(/Authorization.*Bearer/.test(tavilyCode), 'tavily: authentification Bearer');
+assert(/HTTP 401|HTTP 403|invalide/.test(tavilyCode), 'tavily: détecte clé invalide (401/403)');
+assert(/429|quota/.test(tavilyCode), 'tavily: détecte quota dépassé (429)');
+assert(/max_results/.test(tavilyCode), 'tavily: param max_results');
+assert(/r\.title[\s\S]*r\.content[\s\S]*r\.url/.test(tavilyCode.replace(/\/\/[^\n]*/g, '')), 'tavily: mappe title/content/url');
+// Tavily fonctionnel : clé manquante → ok:false clair
+const { TavilySearchProvider } = require(path.join(base, 'services/ai/search/tavilySearchProvider'));
+const _tNoKey = new TavilySearchProvider({});
+assert(_tNoKey.requiresApiKey() === true, 'tavily: requiresApiKey true');
+{
+  const h = await _tNoKey.checkHealth();
+  assert(h.ok === false, 'tavily: health false sans clé');
+  assert(/manquante/i.test(h.message), 'tavily: message clé manquante');
+}
+{
+  const s = await _tNoKey.search('test');
+  assert(s.ok === false, 'tavily: search false sans clé');
+  assert(/manquante/i.test(s.message), 'tavily: search message clé manquante');
+}
+// Tavily avec clé (fake) : health ok, pas de crash au constructeur
+const _tKey = new TavilySearchProvider({ apiKey: 'fake-key-xxx' });
+{
+  const h = await _tKey.checkHealth();
+  assert(h.ok === true, 'tavily: health ok avec clé');
+  assert(_tKey.name === 'Tavily (clé API)', 'tavily: name');
+}
+
+// DDG : détection page anti-bot (anomaly/captcha) + retry/backoff
+const ddgCode2 = fs.readFileSync(path.join(base, 'services/ai/search/duckDuckGoSearchProvider.js'), 'utf8');
+assert(/function isAnomalyPage/.test(ddgCode2), 'ddg: fonction isAnomalyPage');
+assert(/anomaly-modal/.test(ddgCode2), 'ddg: détecte anomaly-modal');
+assert(/status === 202/.test(ddgCode2), 'ddg: status 202 = anti-bot');
+assert(/isAnomalyPage\(html, res\.status\)/.test(ddgCode2), 'ddg: appelle isAnomalyPage après réception');
+assert(/MAX_ATTEMPTS/.test(ddgCode2), 'ddg: retry avec MAX_ATTEMPTS');
+assert(/_searchOnce/.test(ddgCode2), 'ddg: _searchOnce (requête unique isolée du retry)');
+assert(/_sleep/.test(ddgCode2), 'ddg: backoff (_sleep)');
+assert(/anti-bot|captcha|bloquée/i.test(ddgCode2), 'ddg: message clair anti-bot orientant vers Tavily');
+assert(/res\.status === 403 \|\| res\.status === 429/.test(ddgCode2), 'ddg: 403/429 retryable');
+// isAnomalyPage fonctionnel
+const { isAnomalyPage, parseDdgLite } = require(path.join(base, 'services/ai/search/duckDuckGoSearchProvider'));
+assert(isAnomalyPage('<div class="anomaly-modal__box">puzzle</div>', 200) === true, 'ddg: anomaly-modal détecté');
+assert(isAnomalyPage('', 202) === true, 'ddg: HTTP 202 = anomaly');
+assert(isAnomalyPage('<html>page normale</html>', 200) === false, 'ddg: page normale non anomaly');
+assert(isAnomalyPage('', 200) === false, 'ddg: vide+200 non anomaly');
+// parseDdgLite : structure réelle DDG Lite (result-link + result-snippet)
+const _parsed = parseDdgLite('<a class="result-link" href="https://ex.com/a">iPhone 12</a><td class="result-snippet">128 Go</td>');
+assert(_parsed.length === 1, 'ddg: parse 1 résultat');
+assert(_parsed[0].title === 'iPhone 12', 'ddg: titre parsé');
+assert(_parsed[0].url === 'https://ex.com/a', 'ddg: url parsée');
+assert(_parsed[0].source === 'ex.com', 'ddg: source host parsé');
+// listSearchProviders inclut tavily (le select du renderer sera peuplé)
+const _providers = listSearchProviders();
+assert(_providers.some((p) => p.id === 'tavily' && p.keyless === false), 'searchRegistry: tavily listé (keyless=false)');
+assert(_providers.some((p) => p.id === 'duckduckgo' && p.keyless === true), 'searchRegistry: duckduckgo listé (keyless=true)');
+
+// HTML : placeholder clé mentionne Tavily
+assert(/tavily/i.test(htmlCodeFull), 'index.html: placeholder clé mentionne Tavily');
+
 console.log(`\n=== RÉSULTAT : ${pass} réussis, ${fail} échoués ===`);
 process.exit(fail > 0 ? 1 : 0);
 }
