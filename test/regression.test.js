@@ -750,6 +750,58 @@ assert(_providers.some((p) => p.id === 'duckduckgo' && p.keyless === true), 'sea
 // HTML : placeholder clé mentionne Tavily
 assert(/tavily/i.test(htmlCodeFull), 'index.html: placeholder clé mentionne Tavily');
 
+// === AUDIT CONTEXTE IA : num_ctx + réparation JSON tronqué ===
+// Cause racine des valeurs absurdes (8€, 120€, 500€) + « JSON invalide » :
+// Ollama utilise num_ctx=2048 par défaut. Le prompt IA Marché (système + annonce
+// + 10 sources + spec JSON ≈ 2000 tokens) ne laissait ~0 token de sortie → JSON
+// tronqué en plein milieu d'un nombre ("realValue": 8 au lieu de 8000).
+const mvaCode = fs.readFileSync(path.join(base, 'services/ai/marketValueAnalyzer.js'), 'utf8');
+assert(/AI_NUM_CTX\s*=\s*8192/.test(mvaCode), 'marketValueAnalyzer: AI_NUM_CTX=8192 (contexte monté)');
+assert(/numCtx:\s*AI_NUM_CTX/.test(mvaCode), 'marketValueAnalyzer: passe numCtx au provider IA');
+assert(/MAX_SNIPPETS\s*=\s*6/.test(mvaCode), 'marketValueAnalyzer: MAX_SNIPPETS réduit à 6 (prompt plus compact)');
+assert(/MAX_SNIPPET_CHARS\s*=\s*250/.test(mvaCode), 'marketValueAnalyzer: MAX_SNIPPET_CHARS réduit à 250');
+assert(/function _repairTruncatedJson/.test(mvaCode), 'marketValueAnalyzer: _repairTruncatedJson (réparation JSON tronqué)');
+assert(/parsed\._repaired/.test(mvaCode), 'marketValueAnalyzer: gère le flag _repaired (confiance baissée)');
+// ollamaProvider : num_ctx transmis à l'API Ollama
+const ollamaCode2 = fs.readFileSync(path.join(base, 'services/ai/providers/ollamaProvider.js'), 'utf8');
+assert(/opts\.numCtx/.test(ollamaCode2), 'ollamaProvider: lit opts.numCtx');
+assert(/options\.num_ctx\s*=\s*opts\.numCtx/.test(ollamaCode2), 'ollamaProvider: transmet num_ctx à options Ollama');
+assert(/options\.num_predict\s*=\s*opts\.numPredict/.test(ollamaCode2), 'ollamaProvider: transmet num_predict (extensibilité)');
+// promptGenerator : num_ctx monté aussi (meta-prompt long ~3000+ caractères)
+const pgCode = fs.readFileSync(path.join(base, 'services/ai/promptGenerator.js'), 'utf8');
+assert(/numCtx:\s*8192/.test(pgCode), 'promptGenerator: numCtx:8192 (anti-troncation prompt long)');
+
+// Test fonctionnel : parseMarket répare le JSON tronqué
+const { _parseMarket } = require(path.join(base, 'services/ai/marketValueAnalyzer'));
+// JSON complet → parse normal, pas de _repaired
+{
+  const ok = _parseMarket('{"realValue": 8000, "confidence": "haute", "rationale": "ok"}');
+  assert(ok && ok.realValue === 8000 && ok._repaired === undefined, 'parseMarket: JSON complet OK sans _repaired');
+}
+// JSON tronqué (seule l'accolade fermante manque) → réparé, valeur correcte conservée
+{
+  const rep = _parseMarket('{"realValue": 8000, "confidence": "haute"');
+  assert(rep && rep.realValue === 8000 && rep._repaired === true, 'parseMarket: répare JSON tronqué (accolade manquante), conserve realValue');
+}
+// JSON tronqué en plein nombre → réparé (valeur partielle flaguée)
+{
+  const rep2 = _parseMarket('{"realValue": 8');
+  assert(rep2 && rep2._repaired === true, 'parseMarket: répare JSON tronqué mid-number (flag _repaired)');
+}
+// JSON sans realValue → null (irrécupérable)
+{
+  assert(_parseMarket('{"foo": 1') === null, 'parseMarket: null si pas de realValue');
+}
+// JSON totalement invalide → null
+{
+  assert(_parseMarket('pas du tout du json') === null, 'parseMarket: null si pas de JSON');
+}
+// Markdown autour → extrait le JSON
+{
+  const md = _parseMarket('```json\n{"realValue": 5000}\n```');
+  assert(md && md.realValue === 5000, 'parseMarket: extrait JSON entouré de markdown');
+}
+
 console.log(`\n=== RÉSULTAT : ${pass} réussis, ${fail} échoués ===`);
 process.exit(fail > 0 ? 1 : 0);
 }

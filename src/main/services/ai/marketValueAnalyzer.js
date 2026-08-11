@@ -33,8 +33,12 @@ const CACHE_PREFIX = 'market';
 const SEARCH_LIMIT = 10;
 const SEARCH_TIMEOUT_MS = 20000;
 const AI_TIMEOUT_MS = 180000;
-const MAX_SNIPPETS = 10;
-const MAX_SNIPPET_CHARS = 300;
+const MAX_SNIPPETS = 6;        // réduit de 10 → 6 : moins de contexte consommé,
+                              // laisse plus de place à la sortie (anti-troncation JSON)
+const MAX_SNIPPET_CHARS = 250; // réduit de 300 → 250 (même raison)
+const AI_NUM_CTX = 8192;       // contexte Ollama monté à 8192 (défaut 2048 trop petit :
+                              // le prompt IA Marché ≈ 2000 tokens laissait ~0 token de
+                              // sortie → JSON tronqué "realValue": 8 au lieu de 8000)
 
 const SYSTEM = `Tu es un expert en estimation de la valeur réelle de produits vendus en ligne.
 On te donne une annonce Leboncoin (produit identifié, état) et une liste de résultats de recherche Internet trouvés pour ce produit précis.
@@ -127,8 +131,57 @@ function parseMarket(rawText) {
   try {
     return JSON.parse(txt);
   } catch {
-    return null;
+    // Le JSON peut être TRONQUÉ (contexte Ollama trop petit avant le fix num_ctx) :
+    // ex: {"realValue": 8  (coupé en plein nombre, ouverte mais jamais fermée).
+    // On tente une réparation best-effort : fermer les accolades/crochets ouverts
+    // et re-parser. La valeur reste suspecte (tronquée), donc on marque
+    // _repaired pour que l'appelant puisse baisser la confiance.
+    return _repairTruncatedJson(txt, start);
   }
+}
+
+/**
+ * Réparation best-effort d'un JSON tronqué par épuisement du contexte.
+ * Compte les { [ ouverts non fermés et ajoute les fermetures manquantes.
+ * Renvoie l'objet parsé (avec _repaired:true) ou null si irrécupérable.
+ */
+function _repairTruncatedJson(txt, start) {
+  if (start === -1) return null;
+  const slice = txt.slice(start);
+  // Échec immédiat si pas au moins une clé "realValue"
+  if (!/"realValue"\s*:/.test(slice)) return null;
+  let depth = 0;
+  let inStr = false;
+  let escape = false;
+  for (let i = 0; i < slice.length; i++) {
+    const ch = slice[i];
+    if (inStr) {
+      if (escape) escape = false;
+      else if (ch === '\\') escape = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === '{' || ch === '[') depth++;
+    else if (ch === '}' || ch === ']') depth--;
+  }
+  if (depth <= 0) return null; // déjà équilibré → l'erreur venait d'ailleurs
+  // Si on est tombé en plein milieu d'une valeur numérique/chaine non fermée,
+  // on coupe juste avant le dernier séparateur incomplet puis on ferme.
+  let repaired = slice.replace(/,\s*$/, '');
+  // Coupe une éventuelle chaîne/valeur en cours (ex: "realValue": 8 → garde "realValue": 8)
+  // puis ferme les conteneurs ouverts.
+  repaired += '}'.repeat(Math.max(0, depth));
+  try {
+    const obj = JSON.parse(repaired);
+    if (obj && typeof obj === 'object') {
+      obj._repaired = true;
+      return obj;
+    }
+  } catch {
+    /* irrécupérable */
+  }
+  return null;
 }
 
 /**
@@ -230,6 +283,7 @@ class MarketValueAnalyzer {
         jsonFormat: true,
         temperature: 0.3,
         timeoutMs: AI_TIMEOUT_MS,
+        numCtx: AI_NUM_CTX,
       };
       if (aiConfig.textModel) opts.model = aiConfig.textModel;
       raw = await ai.chatText(prompt, opts);
@@ -242,6 +296,14 @@ class MarketValueAnalyzer {
     if (!parsed) {
       console.warn(`[MarketValueAnalyzer] JSON invalide pour ${ad.id} : ${truncate(raw, 100)}`);
       return fallbackMarket(ad, 'Réponse IA non interprétable (JSON invalide).', searchRes.results);
+    }
+    // JSON réparé (troncation contexte) : valeur potentiellement partielle →
+    // on baisse la confiance pour signaler à l'utilisateur de vérifier.
+    if (parsed._repaired) {
+      console.warn(`[MarketValueAnalyzer] JSON réparé (troncation contexte) pour ${ad.id} — confiance baissée.`);
+      parsed.confidence = 'basse';
+      if (parsed.rationale) parsed.rationale = `[estimation partielle — JSON tronqué réparé] ${parsed.rationale}`;
+      else parsed.rationale = 'Estimation partielle — JSON tronqué réparé (vérifier).';
     }
 
     // Normalise les champs numériques : un LLM peut renvoyer realValue sous forme
@@ -328,4 +390,4 @@ class MarketValueAnalyzer {
   }
 }
 
-module.exports = { MarketValueAnalyzer, _computeVerdict: computeVerdict };
+module.exports = { MarketValueAnalyzer, _computeVerdict: computeVerdict, _parseMarket: parseMarket };
