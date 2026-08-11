@@ -102,7 +102,9 @@ ${userContext}`;
     const t0 = Date.now();
     try {
       const ai = getAIProvider(aiConfig);
-      raw = await ai.chatText(metaPrompt, { temperature: 0.4, timeoutMs: GENERATION_TIMEOUT_MS });
+      // Le meta-prompt de génération est long (~3000+ caractères) : on monte le
+      // contexte Ollama pour éviter une sortie tronquée (défaut 2048 trop petit).
+      raw = await ai.chatText(metaPrompt, { temperature: 0.4, timeoutMs: GENERATION_TIMEOUT_MS, numCtx: 8192 });
     } catch (err) {
       console.error(`[PromptGenerator] Échec génération après ${formatMs(Date.now() - t0)} : ${err.message}`);
       throw err;

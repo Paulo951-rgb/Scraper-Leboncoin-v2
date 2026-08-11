@@ -53,6 +53,16 @@ class OllamaProvider extends AIProvider {
     // bloquant un worker du pool de concurrence jusqu'à figer l'analyse.
     const to = _withTimeout(timeoutMs);
     try {
+      // Options Ollama : on fusionne température + num_ctx (+ num_predict).
+      // num_ctx est CRUCIAL : par défaut Ollama utilise 2048 tokens de contexte.
+      // Pour les prompts longs (IA Marché = système + annonce + 10 sources + spec
+      // JSON ≈ 2000 tokens), il ne reste quasiment plus de place pour la sortie
+      // → le JSON se tronque en plein milieu d'un nombre ("realValue": 8 au lieu
+      // de 8000). On permet donc de monter le contexte via opts.numCtx.
+      const options = {};
+      if (opts.temperature != null) options.temperature = opts.temperature;
+      if (opts.numCtx != null) options.num_ctx = opts.numCtx;
+      if (opts.numPredict != null) options.num_predict = opts.numPredict;
       const res = await fetch(`${this.ollamaUrl}/api/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -61,7 +71,7 @@ class OllamaProvider extends AIProvider {
           prompt,
           stream: false,
           ...(opts.jsonFormat ? { format: 'json' } : {}),
-          ...(opts.temperature != null ? { options: { temperature: opts.temperature } } : {}),
+          ...(Object.keys(options).length > 0 ? { options } : {}),
         }),
         signal: to.signal,
       });
