@@ -54,9 +54,93 @@ const AiStudioModule = {
       }
       this.templates = res.templates;
       this.renderCards();
+
+      // Charge aussi les prompts IA internes (adAnalyzer, marketValueAnalyzer)
+      this.loadInternalPrompts();
     } catch (err) {
       console.error('[AI Studio] chargement templates échoué :', err);
       this.setGenStatus('Erreur chargement prompts : ' + (err.message || err), true);
+    }
+  },
+
+  /** Charge les prompts IA internes (utilisés pendant le scraping). */
+  async loadInternalPrompts() {
+    try {
+      if (!window.api || !window.api.listInternalPrompts) return;
+      const res = await window.api.listInternalPrompts();
+      if (!res || !res.prompts || res.prompts.length === 0) return;
+      this.renderInternalCards(res.prompts);
+    } catch (err) {
+      console.error('[AI Studio] chargement prompts internes échoué :', err);
+    }
+  },
+
+  /**
+   * Génère les cartes pour les prompts IA internes (sans champs à trous,
+   * juste un affichage + copie du prompt complet).
+   */
+  renderInternalCards(prompts) {
+    const container = this.el.aistudioCardsContainer;
+    for (const p of prompts) {
+      const card = document.createElement('div');
+      card.className = 'prompt-card prompt-card-internal';
+      card.dataset.tplId = p.id;
+
+      const header = document.createElement('div');
+      header.className = 'prompt-card-header';
+      const title = document.createElement('span');
+      title.className = 'prompt-card-title';
+      title.textContent = p.title;
+      const cat = document.createElement('span');
+      cat.className = 'prompt-card-cat';
+      cat.textContent = p.category || 'IA interne';
+      const toggle = document.createElement('span');
+      toggle.className = 'prompt-card-toggle';
+      toggle.textContent = '▼';
+      header.appendChild(title);
+      header.appendChild(cat);
+      header.appendChild(toggle);
+
+      const desc = document.createElement('div');
+      desc.className = 'prompt-card-desc';
+      desc.textContent = p.description || '';
+
+      const body = document.createElement('div');
+      body.className = 'prompt-card-body';
+
+      // Zone de prévisualisation du prompt complet
+      const preview = document.createElement('pre');
+      preview.className = 'prompt-preview';
+      preview.textContent = p.template || '';
+      preview.style.cssText = 'white-space:pre-wrap;word-break:break-word;background:var(--header-bg,#1a1a2e);border:1px solid var(--border-color,#333);border-radius:6px;padding:10px;font-size:0.75rem;max-height:400px;overflow-y:auto;margin-bottom:10px;';
+
+      const actions = document.createElement('div');
+      actions.className = 'prompt-card-actions';
+      const copyBtn = document.createElement('button');
+      copyBtn.className = 'btn btn-primary';
+      copyBtn.textContent = '📋 Copier le prompt';
+      copyBtn.addEventListener('click', async () => {
+        try {
+          await this.copyToClipboard(p.template || '');
+          this.flashCard(p.id, '✅ Prompt copié !');
+        } catch (err) {
+          this.setGenStatus('❌ ' + (err.message || err), true);
+        }
+      });
+      actions.appendChild(copyBtn);
+
+      body.appendChild(preview);
+      body.appendChild(actions);
+
+      card.appendChild(header);
+      card.appendChild(desc);
+      card.appendChild(body);
+
+      header.addEventListener('click', () => {
+        card.classList.toggle('expanded');
+      });
+
+      container.appendChild(card);
     }
   },
 
@@ -127,14 +211,19 @@ const AiStudioModule = {
 
       const actions = document.createElement('div');
       actions.className = 'prompt-card-actions';
+      const previewBtn = document.createElement('button');
+      previewBtn.className = 'btn btn-secondary';
+      previewBtn.textContent = '👁 Voir le prompt';
+      previewBtn.addEventListener('click', () => this.togglePreview(tmpl, card));
       const copyFilled = document.createElement('button');
       copyFilled.className = 'btn btn-primary';
-      copyFilled.textContent = '📋 Copier le prompt rempli';
+      copyFilled.textContent = '📋 Copier rempli';
       copyFilled.addEventListener('click', () => this.copyFilledPrompt(tmpl));
       const copyRaw = document.createElement('button');
       copyRaw.className = 'btn btn-secondary';
-      copyRaw.textContent = '📝 Copier avec les trous';
+      copyRaw.textContent = '📝 Copier avec trous';
       copyRaw.addEventListener('click', () => this.copyRawPrompt(tmpl));
+      actions.appendChild(previewBtn);
       actions.appendChild(copyFilled);
       actions.appendChild(copyRaw);
 
@@ -150,6 +239,41 @@ const AiStudioModule = {
       });
 
       container.appendChild(card);
+    }
+  },
+
+  /**
+   * Bascule l'affichage d'une zone de prévisualisation du prompt assemblé
+   * (avec les valeurs actuelles des champs) directement dans la carte.
+   */
+  async togglePreview(tmpl, card) {
+    let preview = card.querySelector('.prompt-preview-toggle');
+    if (preview) {
+      // Si déjà affiché, on le bascule (hide/show)
+      preview.style.display = preview.style.display === 'none' ? 'block' : 'none';
+      if (preview.style.display === 'none') return;
+    } else {
+      preview = document.createElement('pre');
+      preview.className = 'prompt-preview-toggle';
+      preview.style.cssText = 'white-space:pre-wrap;word-break:break-word;background:var(--header-bg,#1a1a2e);border:1px solid var(--border-color,#333);border-radius:6px;padding:10px;font-size:0.75rem;max-height:400px;overflow-y:auto;margin-top:10px;';
+      card.querySelector('.prompt-card-body').appendChild(preview);
+    }
+
+    // Récupère les valeurs actuelles et assemble le prompt
+    const values = {};
+    for (const ph of tmpl.placeholders) {
+      const input = $('pc_' + tmpl.id + '_' + ph.key);
+      if (input) values[ph.key] = input.value;
+    }
+    try {
+      const res = await window.api.buildPrompt(tmpl.id, values);
+      if (res && res.prompt) {
+        preview.textContent = res.prompt;
+      } else {
+        preview.textContent = 'Erreur : ' + (res && res.error ? res.error : 'prompt vide');
+      }
+    } catch (err) {
+      preview.textContent = 'Erreur : ' + (err.message || err);
     }
   },
 
@@ -179,15 +303,9 @@ const AiStudioModule = {
    * les remplisse directement dans AI Studio.
    */
   async copyRawPrompt(tmpl) {
-    const res = await window.api.buildPrompt(tmpl.id, {});
-    // buildPrompt avec values={} utilise les défauts — on veut les trous.
-    // On régénère le prompt brut en laissant les [PLACEHOLDERS] tels quels.
-    let raw = tmpl.template;
-    // buildPrompt remplace déjà par les défauts, donc on prend le template brut.
-    // res.prompt contient le prompt avec défauts. On préfère les trous : on
-    // récupère le template brut directement.
+    // On récupère le template brut directement (avec les [PLACEHOLDERS] intacts).
     const tmplObj = this.templates.find((t) => t.id === tmpl.id);
-    if (tmplObj) raw = tmplObj.template;
+    const raw = tmplObj ? tmplObj.template : tmpl.template || '';
     try {
       await this.copyToClipboard(raw);
       this.flashCard(tmpl.id, '✅ Prompt brut copié (avec trous) !');

@@ -410,4 +410,4 @@ class MarketValueAnalyzer {
   }
 }
 
-module.exports = { MarketValueAnalyzer, _computeVerdict: computeVerdict, _parseMarket: parseMarket };
+module.exports = { MarketValueAnalyzer, _computeVerdict: computeVerdict, _parseMarket: parseMarket, _getSystemPrompt: () => SYSTEM, _buildPrompt: buildPrompt };

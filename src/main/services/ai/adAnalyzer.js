@@ -225,7 +225,7 @@ class AdAnalyzer {
         if (failures.length > 0) {
           log({ level: 'debug', message: `[IA1] ${ad.id} — ${failures.length}/${imageUrls.length} image(s) en échec de téléchargement` });
         }
-        log({ level: 'debug', message: `[IA1] ${ad.id} — ${images.length} image(s) prêtes pour la vision (${images.reduce((s, img) => s + Math.round(img.length * 0.75 / 1024), 0)} Ko total)` });
+        log({ level: 'debug', message: `[IA1] ${ad.id} — ${images.length} image(s) prêtes pour la vision (${images.reduce((s, img) => s + Math.round((img.data ? img.data.length : 0) * 0.75 / 1024), 0)} Ko total)` });
       } catch (err) {
         visionError = err.message;
         log({ level: 'warn', message: `[IA1] ${ad.id} — erreur téléchargement images : ${err.message} — dégradation texte seul` });
@@ -332,4 +332,4 @@ class AdAnalyzer {
   }
 }
 
-module.exports = { AdAnalyzer };
+module.exports = { AdAnalyzer, _getSystemPrompt: () => SYSTEM, _buildPrompt: buildPrompt };

@@ -106,6 +106,14 @@ renderer/                    app.js, index.html, styles.css, widget.html, aiStud
 - **AdStats médiane** : pour un nombre pair de prix, moyenne des deux valeurs
   centrales (le renderer fait pareil dans renderStatsView). Ne pas reprendre
   `validPrices[Math.floor(n/2)]` qui est faux pour les longueurs paires.
+- **CAPTCHA détection** : le statut HTTP de la navigation initiale (`vStatus`)
+  ne doit JAMAIS être utilisé pour le polling de résolution — il reste figé à
+  403 même après résolution. Utiliser `_checkCaptcha(page)` (content-based) +
+  `latestHttpStatus` (response listener dynamique) + confirmation 2s anti-faux-positif.
+- **Pipeline exit code** : une erreur CLI doit faire `process.exit(1)` (pas 0).
+  Sinon le PipelineRunner voit code 0 et croit que le pipeline a réussi.
+- **Logs IA debug** : `images.reduce((s, img) => ... img.data.length)` — `img`
+  est `{ data, mimeType }`, pas une string. `img.length` est `undefined`.
 
 ## Pièges corrigés (audit 2026-08, 2e passe fiabilité) — à ne PAS réintroduire
 - **market:analyze concurrent** : le handler `market:analyze` doit être protégé par

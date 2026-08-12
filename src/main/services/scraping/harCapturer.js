@@ -195,9 +195,25 @@ class HarCapturer extends EventEmitter {
       const vOpts = this._baseContextOptions();
       if (fs.existsSync(GLOBAL_SESSION_PATH)) vOpts.storageState = GLOBAL_SESSION_PATH;
       const { ctx: vCtx, p: vPage } = await this._newStealthContext(visibleBrowser, vOpts);
+
+      // 🛑 FIX CRITIQUE : suivre le statut HTTP en temps réel via les responses.
+      // Avant, vStatus était figé à la navigation initiale (souvent 403) et jamais
+      // mis à jour → la détection ne détectait JAMAIS la résolution et attendait
+      // les 10 minutes complètes. Maintenant on track la dernière réponse HTTP
+      // document dynamiquement, ce qui permet de confirmer la résolution
+      // (redirection post-CAPTCHA → HTTP 200).
+      let latestHttpStatus = null;
+      vPage.on('response', (resp) => {
+        // Ne track que les réponses de navigation principale (document), pas les
+        // sous-ressources (CSS/JS/images) qui peuvent renvoyer des codes trompeurs.
+        if (resp.request().resourceType() === 'document') {
+          latestHttpStatus = resp.status();
+        }
+      });
+
       let vStatus = null;
       await vPage.goto(checkUrl, { waitUntil: 'networkidle', timeout: 60000 })
-        .then((resp) => { vStatus = resp ? resp.status() : null; })
+        .then((resp) => { vStatus = resp ? resp.status() : null; latestHttpStatus = vStatus; })
         .catch((e) => {
           this.emit('log', { level: 'warn', message: `[warmup] Navigation fenêtre visible échouée : ${e.message}` });
         });
@@ -205,28 +221,30 @@ class HarCapturer extends EventEmitter {
       // Attend que le CAPTCHA soit rendu avant de demander la résolution.
       await sleep(2000);
 
-      // Vérifie le blocage : CAPTCHA (texte/iframe/URL) OU HTTP >= 400.
+      // Vérifie le blocage : CAPTCHA (texte/iframe/URL) uniquement.
+      // 🛑 On NE vérifie PLUS le statut HTTP figé (vStatus) pendant le polling :
+      // il reste à 403 même après résolution car la navigation initiale est restée
+      // bloquée. On se fie au contenu (iframe/texte/URL) qui change quand
+      // l'utilisateur résout le CAPTCHA → la page se redirige vers les résultats.
       const checkVBlocked = async () => {
-        const captcha = await this._checkCaptcha(vPage);
-        const http = typeof vStatus === 'number' && vStatus >= 400;
-        return captcha || http;
+        return this._checkCaptcha(vPage);
       };
 
       let isBlocked = await checkVBlocked();
       let waitAttempts = 0;
-      const POLL_INTERVAL_MS = 3000;
-      const MIN_NO_RELOAD_SECONDS = 60;
-      const MAX_WAIT_MS = 10 * 60 * 1000; // 10 min max
+      const POLL_INTERVAL_MS = 2000; // 2s pour une détection rapide
+      const MAX_WAIT_MS = 10 * 60 * 1000; // 10 min max (sécurité)
       const startTime = Date.now();
 
-      this.emit('log', { level: 'info', message: `[warmup] Fenêtre CAPTCHA ouverte. Vous avez jusqu'à 10 min. Aucune actualisation pendant au moins ${MIN_NO_RELOAD_SECONDS}s.` });
+      this.emit('log', { level: 'info', message: `[warmup] Fenêtre CAPTCHA ouverte. Résolvez le défi — la détection est automatique (polling ${POLL_INTERVAL_MS / 1000}s). Maximum ${Math.round(MAX_WAIT_MS / 60000)} min.` });
 
       // 🛑 FIX CLEF : on NE RECHARGE PAS la page pendant la résolution.
       // L'ancien code faisait vPage.reload() toutes les 2s → l'utilisateur ne
       // pouvait pas résoudre le CAPTCHA (la page se réinitialisait en continu).
       // On se contente de POLLER le contenu de la page (innerText/URL/iframes)
       // sans recharger, pour détecter quand l'utilisateur a résolu le défi.
-      while (isBlocked && !this.isCancelled) {
+      let confirmedClear = false;
+      while (!confirmedClear && !this.isCancelled) {
         waitAttempts++;
         const elapsed = Date.now() - startTime;
         if (elapsed > MAX_WAIT_MS) {
@@ -235,14 +253,29 @@ class HarCapturer extends EventEmitter {
         }
         if (waitAttempts % 10 === 0) {
           const totalSec = Math.round((elapsed) / 1000);
-          this.emit('log', { level: 'debug', message: `[warmup] En attente de résolution... (${totalSec}s écoulées). Pas d'actualisation.` });
+          this.emit('log', { level: 'debug', message: `[warmup] En attente de résolution... (${totalSec}s écoulées).` });
         }
         await sleep(POLL_INTERVAL_MS);
 
         // Poll SANS reload : l'utilisateur résout le CAPTCHA → le DOM change
         // (les marqueurs disparaissent, l'iframe est retirée, ou l'URL change
         // suite à une redirection automatique).
-        isBlocked = await checkVBlocked();
+        const stillBlocked = await checkVBlocked();
+
+        if (!stillBlocked) {
+          // 🛑 FIX : confirmation pour éviter les faux positifs.
+          // Leboncoin peut brièvement retirer l'iframe CAPTCHA pendant une
+          // transition (animation, redirection intermédiaire). On attend 2s et
+          // on re-vérifie : si toujours non bloqué → résolution confirmée.
+          this.emit('log', { level: 'debug', message: '[warmup] CAPTCHA semble résolu — confirmation (2s)...' });
+          await sleep(2000);
+          const recheck = await checkVBlocked();
+          if (!recheck) {
+            confirmedClear = true;
+          } else {
+            this.emit('log', { level: 'debug', message: '[warmup] Faux positif — CAPTCHA toujours présent, reprise de l\'attente.' });
+          }
+        }
       }
 
       if (this.isCancelled) {
@@ -255,7 +288,7 @@ class HarCapturer extends EventEmitter {
         return;
       }
 
-      if (isBlocked) {
+      if (!confirmedClear) {
         // Timeout atteint sans résolution — on ne persiste pas la session.
         this.emit('log', { level: 'warn', message: '[warmup] CAPTCHA non résolu dans le délai — session non persistée.' });
         await vPage.close().catch(() => {});
@@ -264,18 +297,18 @@ class HarCapturer extends EventEmitter {
       }
 
       const elapsedSec = Math.round((Date.now() - startTime) / 1000);
-      this.emit('log', { level: 'info', message: `[warmup] ✅ CAPTCHA résolu après ${elapsedSec}s — stabilisation de la session...` });
+      this.emit('log', { level: 'info', message: `[warmup] ✅ CAPTCHA résolu après ${elapsedSec}s (HTTP ${latestHttpStatus || '?'}) — stabilisation de la session...` });
 
       // FIX POST-CAPTCHA : attendre que la page se stabilise complètement
       // avant de persister la session. Leboncoin redirige ou recharge la page
       // après résolution — si on sauvegarde trop tôt, on capture une session
       // incomplète (sans le cookie de validation) → erreur au prochain goto.
       try {
-        await vPage.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+        await vPage.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
       } catch { /* timeout networkidle acceptable */ }
-      // Grace period : Leboncoin peut définir des cookies supplémentaires après
-      // la redirection post-CAPTCHA. 2s pour laisser le temps au JS.
-      await sleep(2000);
+      // Grace period courte : Leboncoin peut définir des cookies supplémentaires
+      // après la redirection post-CAPTCHA.
+      await sleep(1500);
 
       // Re-vérifie une dernière fois : Leboncoin peut afficher un 2e CAPTCHA
       // consécutif (anti-bot agressif). Si oui, on ne persiste PAS.

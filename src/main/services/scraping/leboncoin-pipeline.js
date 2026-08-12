@@ -884,7 +884,9 @@ async function main() {
     opts = parseArgs(process.argv.slice(2));
   } catch (err) {
     console.error(`Erreur CLI : ${err.message}`);
-    process.exit(0);
+    // Exit code 1 (erreur) : le PipelineRunner doit savoir que le pipeline a
+    // échoué, sinon il voit code 0 et croit que tout s'est bien passé.
+    process.exit(1);
   }
 
   // Preset de vitesse : ajuste batchSize et délais selon le choix utilisateur

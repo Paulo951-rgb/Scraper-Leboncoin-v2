@@ -1119,6 +1119,43 @@ assert(/\.log-info/.test(cssCode2), 'styles.css: style log-info');
 assert(/\.log-warn/.test(cssCode2), 'styles.css: style log-warn');
 assert(/\.log-error/.test(cssCode2), 'styles.css: style log-error');
 
+// [9/9] suite — CAPTCHA + Prompts IA internes + bugs corrigés (audit complet)
+
+// CAPTCHA : détection de résolution (bug critique du vStatus figé)
+const harCode2 = fs.readFileSync(path.join(__dirname, '..', 'src/main/services/scraping/harCapturer.js'), 'utf8');
+assert(/latestHttpStatus/.test(harCode2), 'harCapturer: tracking dynamique latestHttpStatus (fix vStatus figé)');
+assert(/vPage\.on\('response'/.test(harCode2), 'harCapturer: écouteur response pour statut HTTP temps réel');
+assert(/resourceType\(\) === 'document'/.test(harCode2), 'harCapturer: filtre document sur resourceType (ignore sous-ressources)');
+assert(/checkVBlocked = async \(\) => \{[\s\S]*?return this\._checkCaptcha\(vPage\)/.test(harCode2), 'harCapturer: polling content-based (plus de vStatus figé)');
+assert(/confirmedClear/.test(harCode2), 'harCapturer: confirmation anti-faux-positif (confirmedClear)');
+assert(!/while \(isBlocked && !this\.isCancelled\)/.test(harCode2), 'harCapturer: ancienne boucle isBlocked remplacée par confirmedClear');
+assert(/POLL_INTERVAL_MS = 2000/.test(harCode2), 'harCapturer: polling 2s (detection rapide, plus 3s)');
+
+// Prompts IA internes (adAnalyzer + marketValueAnalyzer exposés)
+assert(/listInternalPrompts/.test(preloadCode), 'preload: listInternalPrompts exposé au renderer');
+assert(/prompt:internal:list/.test(ipcCode2), 'ipcHandlers: handler prompt:internal:list');
+assert(/ia-analyse/.test(ipcCode2), 'ipcHandlers: prompt IA Analyse (adAnalyzer) exposé');
+assert(/ia-marche/.test(ipcCode2), 'ipcHandlers: prompt IA Marché (marketValueAnalyzer) exposé');
+assert(/_getSystemPrompt/.test(adAnalyzerCode2), 'adAnalyzer: _getSystemPrompt exporté');
+assert(/_buildPrompt/.test(adAnalyzerCode2), 'adAnalyzer: _buildPrompt exporté');
+assert(/_getSystemPrompt/.test(marketCode2), 'marketValueAnalyzer: _getSystemPrompt exporté');
+assert(/_buildPrompt/.test(marketCode2), 'marketValueAnalyzer: _buildPrompt exporté');
+assert(/renderInternalCards/.test(aistudioModCode), 'aiStudioModule: renderInternalCards pour prompts IA internes');
+assert(/togglePreview/.test(aistudioModCode), 'aiStudioModule: togglePreview (bouton Voir le prompt)');
+assert(/prompt-preview/.test(aistudioModCode), 'aiStudioModule: zone de prévisualisation du prompt');
+
+// Bugs corrigés (audit complet)
+assert(/img\.data \? img\.data\.length/.test(adAnalyzerCode2), 'adAnalyzer: fix img.data.length (était img.length → toujours 0 Ko)');
+assert(!/const res = await window\.api\.buildPrompt\(tmpl\.id, \{\}\)/.test(aistudioModCode), 'aiStudioModule: copyRawPrompt nettoyé (variable res morte supprimée)');
+
+// Pipeline : exit code 1 sur erreur CLI (était 0 → runner croyait succès)
+const pipelineCode2 = fs.readFileSync(path.join(__dirname, '..', 'src/main/services/scraping/leboncoin-pipeline.js'), 'utf8');
+assert(/Erreur CLI[^\n]*\n[\s\S]*?process\.exit\(1\)/.test(pipelineCode2), 'pipeline: exit(1) sur erreur CLI (était exit(0) → faux succès)');
+
+// sessionStats.pagesScraped mis à jour dans le handler de progression
+assert(/pagesScraped/.test(ipcCode2), 'ipcHandlers: pagesScraped tracker présent');
+assert(/currentPage > sessionStats\.pagesScraped/.test(ipcCode2), 'ipcHandlers: pagesScraped mis à jour depuis la progression HAR');
+
 console.log(`\n=== RÉSULTAT : ${pass} réussis, ${fail} échoués ===`);
 process.exit(fail > 0 ? 1 : 0);
 }

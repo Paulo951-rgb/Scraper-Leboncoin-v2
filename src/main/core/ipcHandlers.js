@@ -202,6 +202,11 @@ function setupIpcHandlers(getMainWindow) {
       activeCapturer.on('log', sendLog);
       activeCapturer.on('progress', ({ currentPage, totalPages, percent, status }) => {
         sendProgress({ percent: Math.round(percent * 0.25), status: `[HAR] ${status}` });
+        // Met à jour pagesScraped pour le résumé de session (la dernière page
+        // réussie atteinte pendant la capture HAR).
+        if (typeof currentPage === 'number' && currentPage > sessionStats.pagesScraped) {
+          sessionStats.pagesScraped = currentPage;
+        }
       });
 
       await activeCapturer.capture({
@@ -570,6 +575,57 @@ function setupIpcHandlers(getMainWindow) {
       return { prompt: result.prompt };
     } catch (err) {
       return { prompt: '', error: err.message };
+    }
+  });
+
+  // ─── Prompts IA internes (adAnalyzer + marketValueAnalyzer) ──────────
+  // Expose les prompts réellement utilisés par les IA pendant le scraping,
+  // pour que l'utilisateur puisse les voir, les comprendre et les copier.
+  ipcMain.handle('prompt:internal:list', async () => {
+    try {
+      const { _getSystemPrompt: adSystem, _buildPrompt: adBuild } = require('../services/ai/adAnalyzer');
+      const { _getSystemPrompt: marketSystem, _buildPrompt: marketBuild } = require('../services/ai/marketValueAnalyzer');
+
+      // Prompt adAnalyzer avec une annonce fictive pour montrer le format
+      const sampleAd = {
+        id: 'EXEMPLE', title: 'Carte graphique RTX 3060', price: 250,
+        description: 'RTX 3060 12GB, très bon état, fonctionne parfaitement. Vendue avec boîte d\'origine.',
+        category: 'Informatique', seller: 'Jean', isPro: false, city: 'Paris', zipcode: '75001',
+        images: ['https://example.com/img1.jpg', 'https://example.com/img2.jpg'],
+      };
+      const adPrompt = adBuild(sampleAd);
+
+      // Prompt marketValueAnalyzer avec une annonce + sources fictives
+      const sampleMarketAd = {
+        id: 'EXEMPLE', price: 250, title: 'RTX 3060',
+        adAnalysis: { identifiedProduct: 'NVIDIA RTX 3060 12GB', attributes: { brand: 'NVIDIA', model: 'RTX 3060', condition: 'très bon état', defects: [], working: 'normal' } },
+      };
+      const sampleResults = [
+        { source: 'ebay', title: 'RTX 3060 12GB occasion', snippet: 'Prix moyen: 280-320€', url: 'https://ebay.fr/rtx3060' },
+        { source: 'amazon', title: 'RTX 3060 neuf', snippet: 'Neuf: 350€', url: 'https://amazon.fr/rtx3060' },
+      ];
+      const marketPrompt = marketBuild(sampleMarketAd, sampleResults);
+
+      return {
+        prompts: [
+          {
+            id: 'ia-analyse',
+            title: '🧠 IA Analyse (adAnalyzer)',
+            category: 'Prompts IA internes',
+            description: 'Prompt envoyé à l\'IA (Ollama) pendant le scraping pour analyser chaque annonce (texte + vision). Ce prompt est généré dynamiquement pour chaque annonce avec ses données réelles.',
+            template: `${adSystem()}\n\n--- EXEMPLE AVEC UNE ANNONCE FICTIVE ---\n${adPrompt}`,
+          },
+          {
+            id: 'ia-marche',
+            title: '📊 IA Marché (marketValueAnalyzer)',
+            category: 'Prompts IA internes',
+            description: 'Prompt envoyé à l\'IA (Ollama) pour estimer la valeur réelle d\'un produit à partir des sources Internet trouvées. Ce prompt est généré dynamiquement avec les résultats de recherche réels.',
+            template: `${marketSystem()}\n\n--- EXEMPLE AVEC UNE ANNONCE + SOURCES FICTIVES ---\n${marketPrompt}`,
+          },
+        ],
+      };
+    } catch (err) {
+      return { prompts: [], error: err.message };
     }
   });
 
