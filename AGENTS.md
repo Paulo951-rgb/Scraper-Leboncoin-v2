@@ -111,6 +111,28 @@ renderer/                    app.js, index.html, styles.css, widget.html, aiStud
   CAPTCHA (fenêtre visible), NE PAS persister `storageState` — la session est
   encore bloquée (cookies anti-bot). Persister reviendrait à empoisonner tous les
   jobs suivants. Fermer sans `storageState()`.
+- **harCapturer CAPTCHA — 4 pièges corrigés (5e passe)** :
+  1. **Détection précoce** : `domcontentloaded` + `sleep(1500)` était trop tôt pour
+     détecter le CAPTCHA au 1er scraping. Les iframes Arkose/Cloudflare chargent
+     en JS après `domcontentloaded`. Fix : `networkidle` + `sleep(3000)`.
+  2. **Détection mono-vecteur** : `_checkCaptcha` ne vérifiait que
+     `document.body.innerText` → ratait les CAPTCHA en iframe cross-origin
+     (Arkose/FunCaptcha/Cloudflare) et les redirections URL. Fix : vérifier aussi
+     les iframes (`src` Arkose/hCaptcha/reCaptcha/Cloudflare), les éléments DOM
+     (`#challenge-form`, `.cf-turnstile`) et l'URL (`/captcha`, `/challenge`).
+  3. **Reload pendant résolution** : la boucle de résolution faisait
+     `vPage.reload()` toutes les 2s → l'utilisateur ne pouvait pas résoudre le
+     CAPTCHA (page réinitialisée en continu). Fix : POLLER le contenu sans
+     recharger (l'utilisateur résout → le DOM change → les marqueurs disparaissent).
+     Timeout max 10 min, polling 3s.
+  4. **Post-CAPTCHA précipité** : la session était persistée immédiatement après
+     résolution → cookie de validation pas encore posé → erreur au prochain goto.
+     Fix : `waitForLoadState('networkidle')` + `sleep(2000)` grace period +
+     re-vérification (Leboncoin peut afficher un 2e CAPTCHA consécutif).
+  5. **CAPTCHA pendant capture = abandon** : si un CAPTCHA apparaissait pendant
+     la boucle de capture HAR, le code faisait `break` avec "Relancez manuellement".
+     Fix : fermer le contexte HAR, appeler `_warmupSession` (fenêtre visible),
+     puis relancer la capture depuis la page bloquée.
 - **Pipeline recyclage contexte** : `writeOutputs(ads)` DOIT être appelé AVANT
   `createStealthContext()` (recyclage). Si le recyclage échoue, les ads sont déjà
   sauvegardées. Le recyclage doit être dans un try/catch (ne pas perdre les ads
@@ -192,5 +214,5 @@ renderer/                    app.js, index.html, styles.css, widget.html, aiStud
 
 ## Commandes
 - Lancer l'app : `npm start` (electron --max-old-space-size=8192 .)
-- Tests : `npm test` (ou `node test/regression.test.js`) — 460 assertions
+- Tests : `npm test` (ou `node test/regression.test.js`) — 471 assertions
 - Branche stable : `refactor/professional-architecture`

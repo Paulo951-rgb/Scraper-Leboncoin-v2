@@ -846,6 +846,36 @@ assert(/https\?:\\\//.test(adAnalyzerCode), 'adAnalyzer: filtre images non-URL (
 const harCode = fs.readFileSync(path.join(base, 'services/scraping/harCapturer.js'), 'utf8');
 assert(/NE PAS persister la session/.test(harCode), 'harCapturer: annulation warmup ne persiste pas la session bloquée');
 
+// harCapturer : détection CAPTCHA multi-vecteurs (iframe, URL, Cloudflare)
+// L'ancienne version ne vérifiait que body.innerText → ratait les CAPTCHA en
+// iframe cross-origin (Arkose/FunCaptcha/Cloudflare) et les redirections URL.
+assert(/arkoselabs|funcaptcha/.test(harCode), 'harCapturer: détection iframe Arkose/FunCaptcha');
+assert(/challenges\.cloudflare|cf-turnstile|challenge-form/.test(harCode), 'harCapturer: détection challenge Cloudflare');
+assert(/captchaUrlMatch|URL suspecte/.test(harCode), 'harCapturer: détection CAPTCHA via URL (redirection)');
+
+// harCapturer : AUCUN reload pendant la résolution CAPTCHA
+// L'ancien code faisait vPage.reload() toutes les 2s → l'utilisateur ne pouvait
+// pas résoudre le CAPTCHA (page réinitialisée en continu).
+assert(!/vPage\.reload\(\{ waitUntil/.test(harCode), 'harCapturer: PAS de reload pendant résolution CAPTCHA (polling sans reload)');
+assert(/POLL SANS reload/.test(harCode) || /sans recharger/.test(harCode), 'harCapturer: polling sans reload documenté');
+
+// harCapturer : warmup utilise networkidle (pas domcontentloaded) pour laisser
+// le temps au JS de rendre le CAPTCHA (Arkose charge après domcontentloaded).
+assert(/waitUntil:\s*['"]networkidle['"]/.test(harCode), 'harCapturer: warmup utilise networkidle (CAPTCHA rendu après domcontentloaded)');
+// Le délai d'attente a été augmenté de 1.5s à 3s pour le rendu JS différé.
+assert(/sleep\(3000\)/.test(harCode), 'harCapturer: délai warmup 3s (rendu CAPTCHA différé)');
+
+// harCapturer : post-CAPTCHA — attend networkidle + grace period avant save
+// L'ancienne version sauvegardait la session immédiatement → session incomplète
+// (cookie de validation pas encore posé) → erreur au prochain goto.
+assert(/stabilisation de la session/.test(harCode), 'harCapturer: post-CAPTCHA attend stabilisation session');
+assert(/2e CAPTCHA consécutif/.test(harCode), 'harCapturer: re-vérification post-CAPTCHA (2e CAPTCHA possible)');
+
+// harCapturer : CAPTCHA pendant la capture → résolution interactive + reprise
+// L'ancienne version abandonnait (break) avec "Relancez après résolution".
+assert(/résolution interactive/.test(harCode), 'harCapturer: CAPTCHA pendant capture → résolution interactive (pas abandon)');
+assert(/Reprise après résolution CAPTCHA/.test(harCode), 'harCapturer: reprise capture après résolution CAPTCHA');
+
 // pipeline : recyclage de contexte résilient (sauvegarde préventive + try/catch)
 const pipeCode = fs.readFileSync(path.join(base, 'services/scraping/leboncoin-pipeline.js'), 'utf8');
 assert(/Recyclage contexte échoué/.test(pipeCode), 'pipeline: recyclage contexte a un catch (ne crash pas le job)');
