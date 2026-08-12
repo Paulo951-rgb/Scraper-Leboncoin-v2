@@ -342,10 +342,9 @@ function setupIpcHandlers(getMainWindow) {
         await ExcelExporter.exportToXlsx(adsWithAi, xlsxPath);
         sendLog({ level: 'info', message: '📊 Export Excel (.xlsx) généré avec succès !' });
 
-        // Note : la notification « Très bonne affaire » dépendait de l'ancien
-        // scoring marketAnalysis.classification. L'IA Marché est désormais une
-        // action manuelle (bouton « Analyse IA » dans l'Explorateur) qui produit
-        // le verdict en € — la notification sera déclenchée depuis ce flux manuel.
+        // Note : la notification « Très bonne affaire » est déclenchée par le
+        // handler market:analyze (IA Marché, action manuelle) — pas ici. Pendant
+        // le job:start, l'IA Marché n'est pas lancée (seule l'IA Analyse l'est).
         const analyzed = adsWithAi.filter((a) => a.adAnalysis && !a.adAnalysis._fallback).length;
         if (analyzed > 0) {
           sendLog({ level: 'debug', message: `[job:start] ${analyzed} annonce(s) analysée(s) par l'IA (résumés produits + attributs).` });

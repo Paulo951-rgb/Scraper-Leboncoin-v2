@@ -84,7 +84,7 @@ renderer/                    app.js, index.html, styles.css, widget.html, aiStud
   toujours passer par `getSearchProvider()` (abstraction DuckDuckGo/etc.).
 
 ## Tests
-- `node test/regression.test.js` → 318 assertions (syntaxe + stubs Electron).
+- `node test/regression.test.js` → 588 assertions (syntaxe + stubs Electron).
 - Le test stub `electron` : BrowserWindow a `webContents.send` mais PAS `isDestroyed`.
 - Avant tout commit : `node --check` sur les fichiers modifiés + lancer la suite.
 - aiCache est testé en isolation (variable `_aiCacheUnderTest` pour éviter la
@@ -250,5 +250,5 @@ renderer/                    app.js, index.html, styles.css, widget.html, aiStud
 
 ## Commandes
 - Lancer l'app : `npm start` (electron --max-old-space-size=8192 .)
-- Tests : `npm test` (ou `node test/regression.test.js`) — 504 assertions
+- Tests : `npm test` (ou `node test/regression.test.js`) — 588 assertions
 - Branche stable : `refactor/professional-architecture`

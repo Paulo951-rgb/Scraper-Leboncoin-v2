@@ -116,7 +116,7 @@ function _save() {
 const SecretStore = {
   /**
    * Récupère un secret chiffré et le déchiffre.
-   * @param {string} key  Nom du secret (ex: 'gemini-api-key')
+   * @param {string} key  Nom du secret (ex: 'search-api-key' pour Tavily)
    * @returns {string|null} Valeur en clair, ou null si absent/illisible.
    */
   get(key) {

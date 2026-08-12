@@ -159,19 +159,17 @@
             <summary>❓ Comment utiliser ce module ?</summary>
             <ol class="help-steps">
               <li><strong>Scraper</strong> les annonces depuis l'onglet « 🚀 Scraper ».</li>
-              <li><strong>Ouvrir les jobs</strong> (bouton 📂 Ouvrir le dossier des jobs) pour retrouver le fichier <code>.json</code>.</li>
-              <li><strong>Démarrer Ollama</strong> sur votre PC puis cliquer « 🔄 Lister » pour vérifier la connexion et choisir le modèle.</li>
-              <li><strong>Décrire</strong> l'objectif de l'analyse + choisir le domaine (hardware, livres, smartphones…).</li>
-              <li><strong>Générer</strong> le prompt par l'IA locale (bouton « ✨ Générer par IA locale ») puis le <strong>copier</strong>.</li>
+              <li><strong>Ouvrir les jobs</strong> (bouton 📂 Ouvrir le dossier des jobs) pour retrouver le fichier <code>.json</code> ou <code>.xlsx</code>.</li>
+              <li><strong>Choisir un prompt préfait</strong> dans une des cartes ci-dessous, remplir les champs à trous, puis cliquer « 📋 Copier rempli » (ou « 📝 Copier avec trous » pour remplir dans AI Studio). <strong>Aucune IA, aucune clé API.</strong></li>
               <li><strong>Envoyer</strong> le fichier <code>.json</code> et le prompt dans AI Studio : glisser-déposer le fichier dans le navigateur intégré (à droite), coller le prompt. Pour la connexion Google, utiliser 🔑 Se connecter ou ↗ (Chrome externe).</li>
               <li><strong>Récupérer</strong> les résultats directement dans AI Studio.</li>
             </ol>
-            <p class="text-muted font-small">Ce module ne remplace pas AI Studio : il facilite énormément la préparation des données, des prompts et leur utilisation.</p>
+            <p class="text-muted font-small">Ce module ne remplace pas AI Studio : il facilite énormément la préparation des données, des prompts et leur utilisation. Les prompts IA internes (utilisés pendant le scraping) sont aussi affichés et copiables pour comprendre ce que l'IA reçoit.</p>
           </details>
         </div>
 
         <div class="ai-studio-grid">
-          <!-- COLONNE GAUCHE : actions rapides + générateur de prompt IA -->
+          <!-- COLONNE GAUCHE : actions rapides + prompts préfaits -->
           <div class="ai-studio-side">
             <div class="card">
               <h3>📥 Envoyer le fichier .json à AI Studio</h3>
@@ -179,7 +177,7 @@
               <p class="text-muted font-small">🔑 <strong>Connexion Google :</strong> le navigateur intégré (webview) est bloqué par Google pour la connexion. Deux options :</p>
               <ul class="text-muted font-small" style="line-height:1.6;margin:6px 0 8px 18px;">
                 <li>cliquez <strong>🔑 Se connecter</strong> (fenêtre dédiée, masque Electron) — marche parfois ;</li>
-                <li>sinon cliquez <strong>↗</strong> dans la barre du navigateur pour ouvrir AI Studio dans votre <strong>Chrome externe</strong> (connexion garantie), puis revenez ici pour la génération du prompt.</li>
+                <li>sinon cliquez <strong>↗</strong> dans la barre du navigateur pour ouvrir AI Studio dans votre <strong>Chrome externe</strong> (connexion garantie), puis revenez ici pour préparer/coller votre prompt.</li>
               </ul>
             </div>
 

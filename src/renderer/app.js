@@ -273,10 +273,9 @@ if (aiVisionModelEl) {
   aiVisionModelEl.addEventListener('change', (e) => localStorage.setItem('ai-vision-model', e.target.value));
 }
 
-// OpenAI a été retiré de l'UI : il n'y a plus de champ clé API dans le scraper.
-// On expose un accesseur sûr (null-tolerant) pour ne pas casser les appels
-// existants (config scraping / analyse / scheduler) si l'élément vient à
-// disparaître — la clé vaut toujours '' (IA 100% locale via Ollama).
+// OpenAI a été retiré : l'IA est 100% locale via Ollama, aucun champ clé API
+// dans le scraper. On garde un accesseur sûr (null-tolerant) pour ne pas casser
+// les appels existants (config scraping / analyse) — la clé vaut toujours ''.
 const aiApiKeyEl = document.getElementById('aiApiKey');
 const getAiApiKey = () => (aiApiKeyEl && aiApiKeyEl.value ? aiApiKeyEl.value : '');
 

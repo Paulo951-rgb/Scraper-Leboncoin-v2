@@ -72,6 +72,7 @@ const FAQ_DATA = [
           <li><strong>🟢 Bonne affaire</strong> — prix en dessous de la valeur marché.</li>
           <li><strong>Prix correct</strong> — dans la moyenne du marché.</li>
           <li><strong>🔴 Trop cher</strong> — au-dessus du marché (perte si achat-revente).</li>
+          <li><strong>🔴🔴 Très cher</strong> — largement au-dessus du marché.</li>
         </ul>
         <p>Le <strong>bénéfice/perte en €</strong> = valeur marché estimée − prix demandé. Plus de score 0-100, plus de pourcentage : l'IA parle en euros réels.</p>`
   },
@@ -213,11 +214,12 @@ const HELP_SECTIONS = [
     icon: '🤖', title: '7. Le module AI Studio',
     body: `<p>Onglet <strong>🤖 Navigateur IA Studio</strong> : il intègre <strong>Google AI Studio directement dans le logiciel</strong> (via un navigateur embarqué).</p>
       <ul>
-        <li>Générez un <strong>prompt d'analyse personnalisé</strong> via Ollama (domaine, objectif, variables).</li>
-        <li>Utilisez ce prompt dans AI Studio sans quitter le logiciel.</li>
-        <li>Importez un fichier JSON de résultats pour le visualiser.</li>
+        <li><strong>Prompts préfaits à trous</strong> : 7 prompts longs et génériques. Remplissez les champs directement dans la carte, prévisualisez le prompt assemblé, puis copiez-le (rempli ou avec les trous).</li>
+        <li><strong>Prompts IA internes</strong> : les prompts réellement utilisés par l'IA Analyse et l'IA Marché sont affichés et copiables, pour comprendre ce que l'IA reçoit.</li>
+        <li>Utilisez le prompt dans AI Studio sans quitter le logiciel (navigateur intégré à droite).</li>
+        <li>Glissez-déposez un fichier <code>.json</code> d'annonces dans le chat AI Studio.</li>
       </ul>
-      <p>Connexion à votre compte Google requise (fenêtre dédiée avec anti-détection).</p>`
+      <p>Connexion à votre compte Google requise (fenêtre dédiée avec anti-détection, ou ouverture dans Chrome externe).</p>`
   },
   {
     icon: '⚠️', title: '8. Erreurs courantes et solutions',
