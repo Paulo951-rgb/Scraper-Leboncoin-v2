@@ -127,9 +127,33 @@ renderer/                    app.js, index.html, styles.css, widget.html, aiStud
   headless:true). Supprimé. Les valeurs par défaut des réglages vivent dans
   `core/settings.js` UNIQUEMENT.
 
+## Pièges corrigés (audit 2026-08, 3e passe — cohérence UI/docs/logique)
+- **Format date historique** : `jobHistory.js` ne doit PAS remplacer tous les `-`
+  par `:` dans le nom du dossier job-<ISO> → cela produisait « 2026:08:12 à 02:21 »
+  (deux-points dans la date, illisible). Utiliser un regex pour extraire les
+  composants et formater en `JJ/MM/AAAA à HH:MM`.
+- **rapport.txt mort** : `jobHistory.js` vérifiait l'existence d'un `rapport.txt`
+  que le pipeline ne crée JAMAIS. Retiré (chemin + champ `files.rapport`).
+- **Preset searchProvider** : `collectSearchConfig` doit capturer le moteur de
+  recherche (DuckDuckGo/Tavily) et `applySearchConfig` doit le restaurer + déclencher
+  l'événement `change` (pour masquer/afficher le champ clé API). Sans cela, un preset
+  sauvegardé avec Tavily se rechargeait en DuckDuckGo.
+- **IA Marché en mode hors-ligne** : `triggerMarketBtn` doit vérifier `isOffline`
+  avant de lancer (DuckDuckGo nécessite Internet). Sans ce garde, un batch complet
+  tombait en fallback inutile (0/N réussies) avec un message confus.
+- **FAQ/help incohérents** : la FAQ/help ne doivent PAS mentionner de contrôles UI
+  supprimés (checkbox « Analyser les images par IA Vision » → la vision est désormais
+  automatique si modèle + photos). Ne pas dire « Décochée par défaut » pour
+  `autoAiMarket` (elle est cochée). Ne pas mentionner la vitesse « Ultra » (non
+  exposée dans le select — seuls Rapide/Équilibré/Prudent le sont). La doc doit
+  refléter l'UI réelle, pas une version antérieure.
+
 ## Code mort retiré
 - `runWithConcurrency` et `formatDuration` (utils/helpers.js) n'étaient utilisés
   nulle part (les batchs IA utilisent leur propre queue de workers).
+- `rapport.txt` (jobHistory.js) : chemin + champ `files.rapport` vérifiaient un
+  fichier que le pipeline ne crée jamais. Retiré.
+- `DEFAULTS` (constants.js) : bloc mort conflictuel avec `SETTINGS_DEFAULTS`.
 
 ## Sécurité (déjà en place)
 - Renderer sandboxé (sandbox:true, contextIsolation:true, nodeIntegration:false)

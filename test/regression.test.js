@@ -853,6 +853,38 @@ assert(/pad\(d\.getDate\(\)\)/.test(excelCode2), 'excelExporter: date formatée 
 const constantsCode = fs.readFileSync(path.join(__dirname, '..', 'src/main/config/constants.js'), 'utf8');
 assert(!/DEFAULTS:\s*\{/.test(constantsCode), 'constants.js: DEFAULTS mort supprimé (valeurs conflictuelles)');
 
+console.log('\n[7/7] Audit fonctionnel A→Z (cohérence UI/logique/docs)');
+
+// jobHistory : format de date lisible (JJ/MM/AAAA au lieu de AAAA:MM:JJ avec
+// deux-points dans la date). L'ancien code remplaçait tous les '-' par ':' →
+// « 2026:08:12 à 02:21 » (illisible). Le nouveau utilise un regex pour extraire
+// les composants et formater en français.
+const jobHistoryCode = fs.readFileSync(path.join(__dirname, '..', 'src/main/services/jobs/jobHistory.js'), 'utf8');
+assert(/tsMatch\s*=\s*entry\.name\.match/.test(jobHistoryCode), 'jobHistory: format date via regex (extraction composants)');
+assert(/\$\{tsMatch\[3\]\}\/\$\{tsMatch\[2\]\}\/\$\{tsMatch\[1\]\}/.test(jobHistoryCode), 'jobHistory: date au format JJ/MM/AAAA (slashes)');
+assert(jobHistoryCode.indexOf("replace(/-/g") === -1, 'jobHistory: ne remplace plus les - par : dans la date (ancien pattern retire)');
+// rapport.txt est mort (jamais créé par le pipeline) → retiré de jobHistory
+assert(!/rapportPath|rapport:/.test(jobHistoryCode), 'jobHistory: rapport.txt mort retiré (jamais généré par le pipeline)');
+
+// app.js : preset sauvegarde le moteur de recherche (DuckDuckGo/Tavily)
+// Avant : un preset sauvegardé avec Tavily se rechargeait en DuckDuckGo.
+assert(/searchProvider:.*searchProviderSelect/.test(appCode), 'app.js: collectSearchConfig capture searchProvider');
+assert(/cfg\.searchProvider && searchProviderSelect/.test(appCode), 'app.js: applySearchConfig restaure searchProvider');
+assert(/dispatchEvent\(new Event\('change'\)\)/.test(appCode), 'app.js: applySearchConfig déclenche change (masque/affiche clé API)');
+
+// app.js : triggerMarketBtn vérifie isOffline (l'IA Marché a besoin d'Internet
+// pour DuckDuckGo). Sans ce garde, un batch complet tombait en fallback inutile.
+assert(/isOffline[\s\S]*triggerMarketBtn|triggerMarketBtn[\s\S]*isOffline/.test(appCode), 'app.js: triggerMarketBtn vérifie isOffline avant lancement');
+assert(/Mode hors-ligne actif.*analyse de marché.*DuckDuckGo/.test(appCode), 'app.js: message offline clair pour IA Marché');
+
+// helpModule : FAQ ne mentionne plus la checkbox « Analyser les images » supprimée
+// (la vision est désormais automatique si modèle + photos présents).
+assert(!/Cochez.*Analyser les images par IA Vision/.test(helpModCode), 'helpModule: FAQ ne mentionne plus la checkbox vision supprimée');
+assert(!/Décochée par défaut/.test(helpModCode), 'helpModule: FAQ ne dit plus « Décochée par défaut » (autoAiMarket est coché)');
+// helpModule : FAQ ne mentionne plus la vitesse « Ultra » (non exposée dans l'UI)
+assert(!/Ultra.*20 annonces en parallèle/.test(helpModCode), 'helpModule: FAQ ne mentionne plus vitesse Ultra (non exposée dans l\'UI select)');
+assert(/Rapide \/ Équilibré \/ Prudent/.test(helpModCode), 'helpModule: FAQ liste les 3 vitesses réellement exposées');
+
 console.log(`\n=== RÉSULTAT : ${pass} réussis, ${fail} échoués ===`);
 process.exit(fail > 0 ? 1 : 0);
 }

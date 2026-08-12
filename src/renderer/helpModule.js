@@ -42,14 +42,14 @@ const FAQ_DATA = [
         <p>Si Leboncoin détecte une activité robotique, un <strong>CAPTCHA peut apparaître</strong> : le navigateur devient alors visible pour que vous le résolviez manuellement, après quoi le scraping reprend tout seul.</p>`
   },
   {
-    q: 'À quoi servent les vitesses de scraping (Rapide / Équilibré / Prudent / Ultra) ?',
-    a: `<p>Elles contrôlent le compromis <strong>vitesse ↔ discrétion</strong> lors de l'enrichissement des descriptions :</p>
+    q: 'À quoi servent les vitesses de scraping (Rapide / Équilibré / Prudent) ?',
+    a: `<p>Elles contrôlent le compromis <strong>vitesse ↔ discrétion</strong> lors de l'enrichissement des descriptions (Paramètres ⚙️ → Vitesse de scraping) :</p>
         <ul>
-          <li><strong>Ultra</strong> — 20 annonces en parallèle, délais très courts. Très rapide mais risque élevé de blocage (403).</li>
-          <li><strong>Rapide</strong> — 10 parallèle, délais courts. <strong>N'extrait pas les descriptions détaillées</strong> (titre + prix suffisent).</li>
+          <li><strong>Rapide</strong> — 10 annonces en parallèle, délais courts. <strong>N'extrait pas les descriptions détaillées</strong> (titre + prix suffisent) si la case « Ignorer les descriptions » est cochée.</li>
           <li><strong>Équilibré</strong> — 5 parallèle, délais modérés. Bon compromis pour l'analyse IA.</li>
           <li><strong>Prudent</strong> — séquentiel, délais humains. Anti-blocage maximal, le plus discret.</li>
         </ul>
+        <p>Une case <strong>« Ignorer les descriptions (Mode Ultra-Rapide) »</strong> dans le formulaire de recherche permet de sauter l'enrichissement des descriptions pour aller encore plus vite (titre + prix seulement).</p>
         <p>Si vous voulez l'analyse de marché IA, préférez <strong>Équilibré</strong> ou <strong>Prudent</strong> (les descriptions aident l'IA à mieux évaluer).</p>`
   },
   {
@@ -101,8 +101,8 @@ const FAQ_DATA = [
   },
   {
     q: `Le mode Rapide n'a pas récupéré les descriptions, est-ce normal ?`,
-    a: `<p><strong>Oui</strong>. Le mode « Rapide » n'extrait volontairement que le titre et le prix (pas la description détaillée) pour aller plus vite. L'analyse de marché IA fonctionne quand même, mais avec moins de contexte.</p>
-        <p>Pour les descriptions complètes, utilisez <strong>Équilibré</strong>, <strong>Prudent</strong> ou <strong>Ultra</strong>.</p>`
+    a: `<p><strong>Oui</strong>. Le mode « Rapide » n'extrait volontairement que le titre et le prix (pas la description détaillée) si la case « Ignorer les descriptions » est cochée. L'analyse de marché IA fonctionne quand même, mais avec moins de contexte.</p>
+        <p>Pour les descriptions complètes, utilisez <strong>Équilibré</strong> ou <strong>Prudent</strong>, et décochez « Ignorer les descriptions ».</p>`
   },
   {
     q: 'J\'obtiens une erreur 403 / page blanche pendant le scraping, que faire ?',
@@ -132,8 +132,8 @@ const FAQ_DATA = [
   },
   {
     q: 'Puis-je analyser les images des annonces ?',
-    a: `<p>Oui, optionnellement. Cochez <strong>« Analyser les images par IA Vision »</strong> avant de lancer un scraping. Les <strong>3 premières photos</strong> de chaque annonce seront analysées (type de photo, état apparent, défauts, authenticité) par un modèle de vision Ollama (ex: <code>llava</code>).</p>
-        <p>Cela consomme plus de ressources (RAM/VRAM) et ralentit l'analyse.</p>`
+    a: `<p>Oui, automatiquement. Si des photos sont présentes et qu'un <strong>modèle vision</strong> Ollama (ex: <code>llava</code>) est configuré dans le formulaire de recherche, l'<strong>IA Analyse</strong> combine texte + vision en un seul appel : elle identifie le produit, son état, les défauts visibles et le type de photo (constructeur vs réelles) à partir des <strong>3 premières photos</strong>.</p>
+        <p>Cela consomme plus de ressources (RAM/VRAM) et ralentit l'analyse. Sans modèle vision ou sans photos, l'analyse se fait en texte seul (dégradation automatique).</p>`
   },
   {
     q: 'Où sont stockés mes fichiers exportés ?',
@@ -162,20 +162,20 @@ const HELP_SECTIONS = [
         <li><strong>Pages</strong> — combien de pages de résultats parcourir (attention : trop de pages = risque de blocage).</li>
         <li><strong>Limite</strong> — plafond d'annonces (vide = toutes).</li>
         <li><strong>Proxy</strong> — serveur HTTP/SOCKS5 pour masquer votre IP (optionnel, utile contre le blocage).</li>
-        <li><strong>Vitesse</strong> — voir la FAQ pour le détail (Ultra/Rapide/Équilibré/Prudent).</li>
+        <li><strong>Vitesse</strong> — voir la FAQ pour le détail (Rapide/Équilibré/Prudent), plus la case « Ignorer les descriptions » pour le mode ultra-rapide.</li>
       </ul>
       <p>Dans <strong>Paramètres ⚙️</strong> vous pouvez aussi régler : le thème, le délai entre les pages, le mode de capture (invisible / visible si CAPTCHA), le parallélisme IA, le nettoyage automatique.</p>`
   },
   {
     icon: '🤖', title: '3. Utiliser l\'IA (analyse de marché)',
-    body: `<p>L'analyse IA est <strong>100 % locale via Ollama</strong>. Deux options dans le Scraper :</p>
+    body: `<p>L'analyse IA est <strong>100 % locale via Ollama</strong>. Dans le formulaire de recherche :</p>
       <ul>
-        <li><strong>🧠 Analyser automatiquement le marché</strong> — lance l'analyse IA juste après le scraping. <em>Décochée par défaut</em> : à activer si vous voulez l'analyse tout de suite.</li>
-        <li><strong>🖼️ Analyser les images par IA Vision</strong> — analyse les 3 premières photos de chaque annonce (état, authenticité). Plus lent.</li>
+        <li><strong>🧠 Analyse IA pendant le scraping</strong> — cochée par défaut : lance l'IA Analyse (identification du produit + résumé + vision si photos) juste après le scraping. Décochez-la si vous voulez scraper sans analyse (plus rapide).</li>
+        <li><strong>Modèle texte</strong> (ex: <code>llama3</code>) et <strong>modèle vision</strong> (ex: <code>llava</code>) — indiquez les noms des modèles Ollama installés. La vision est automatique si des photos sont présentes et le modèle configuré.</li>
       </ul>
-      <p>Indiquez le <strong>moteur</strong> (Ollama) et le <strong>nom du modèle</strong> (ex: <code>llama3</code>). Le logiciel fait un health-check avant de démarrer.</p>
+      <p>Le logiciel fait un health-check avant de démarrer (serveur + modèle).</p>
       <div class="help-warn">⚠️ Si l'IA ne démarre pas : vérifiez qu'Ollama tourne (<code>ollama serve</code>) et que le modèle est installé (<code>ollama list</code>).</div>
-      <p>Vous pouvez aussi <strong>relancer l'analyse IA</strong> plus tard depuis l'Explorateur (bouton 🧠) sur un job déjà scrapé.</p>`
+      <p>L'<strong>IA Marché</strong> (estimation de la valeur réelle en € via recherche Internet) est une action manuelle : bouton <strong>🌐 IA Marché</strong> dans l'Explorateur, après le scraping. Elle utilise le moteur de recherche choisi (DuckDuckGo sans clé par défaut).</p>`
   },
   {
     icon: '🔍', title: '4. Explorer les résultats',

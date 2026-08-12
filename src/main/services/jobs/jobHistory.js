@@ -30,10 +30,16 @@ class JobHistoryManager {
       const xlsxPath = path.join(resultsDir, 'annonces.xlsx');
       const txtPath = path.join(resultsDir, 'annonces.txt');
       const resumesPath = path.join(resultsDir, 'resumes-ia.json');
-      const rapportPath = path.join(resultsDir, 'rapport.txt');
 
       let rawAds = [];
-      let dateFormatted = entry.name.replace('job-', '').replace(/T/, ' à ').replace(/-/g, ':').slice(0, 18);
+      // Formatage lisible : le nom du dossier est job-<ISO> (ex: job-2026-08-12T02-21-16-123Z).
+      // On veut afficher « 12/08/2026 à 02:21 » (date française HH:MM, sans les ms ni
+      // les secondes tronquées au milieu). L'ancien code remplaçait tous les '-' par
+      // ':' → « 2026:08:12 à 02:21 » (deux-points dans la date, illisible).
+      const tsMatch = entry.name.match(/^job-(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})/);
+      const dateFormatted = tsMatch
+        ? `${tsMatch[3]}/${tsMatch[2]}/${tsMatch[1]} à ${tsMatch[4]}:${tsMatch[5]}`
+        : entry.name.replace('job-', '');
       let integrityWarning = null;
 
       if (fs.existsSync(jsonPath)) {
@@ -65,7 +71,6 @@ class JobHistoryManager {
           xlsx: fs.existsSync(xlsxPath) ? xlsxPath : null,
           txt: fs.existsSync(txtPath) ? txtPath : null,
           resumes: fs.existsSync(resumesPath) ? resumesPath : null,
-          rapport: fs.existsSync(rapportPath) ? rapportPath : null,
         },
       });
     }

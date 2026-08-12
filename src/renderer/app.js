@@ -207,8 +207,10 @@ function renderPresets() {
 }
 
 // Capture l'intégralité de la configuration de recherche (URL + pages + limite
-// + options IA + proxy) afin qu'un preset soit réellement un restauration
-// « 1-clic » de la recherche, et pas seulement URL + pages.
+// + options IA + proxy + moteur de recherche IA Marché) afin qu'un preset soit
+// réellement une restauration « 1-clic » de la recherche, et pas seulement
+// URL + pages. Le moteur de recherche (DuckDuckGo/Tavily) est inclus pour
+// cohérence : un preset sauvegardé avec Tavily se recharge avec Tavily.
 function collectSearchConfig() {
   return {
     searchUrl: document.getElementById('searchUrl').value.trim(),
@@ -220,6 +222,7 @@ function collectSearchConfig() {
     aiProvider: aiProvider.value,
     aiModelName: aiModelName.value.trim() || 'llama3',
     aiVisionModel: localStorage.getItem('ai-vision-model') || 'llava',
+    searchProvider: (searchProviderSelect && searchProviderSelect.value) || 'duckduckgo',
   };
 }
 
@@ -244,6 +247,14 @@ function applySearchConfig(cfg) {
   if (cfg.aiVisionModel != null) {
     if (aiVisionModelEl) aiVisionModelEl.value = cfg.aiVisionModel;
     localStorage.setItem('ai-vision-model', cfg.aiVisionModel);
+  }
+  // Restaure le moteur de recherche IA Marché (DuckDuckGo/Tavily).
+  // On dispatch un événement 'change' pour que le handler existant masque/affiche
+  // le champ clé API si nécessaire.
+  if (cfg.searchProvider && searchProviderSelect) {
+    searchProviderSelect.value = cfg.searchProvider;
+    localStorage.setItem('search-provider', cfg.searchProvider);
+    searchProviderSelect.dispatchEvent(new Event('change'));
   }
 }
 
@@ -592,6 +603,16 @@ triggerMarketBtn.addEventListener('click', async () => {
   if (!jobId) {
     alert('Veuillez sélectionner un scraping dans le menu déroulant de l\'Explorateur avant de lancer l\'analyse de marché.');
     return;
+  }
+  // L'IA Marché a besoin d'Internet (recherche DuckDuckGo/Tavily). En mode
+  // hors-ligne, toutes les estimations tombent en fallback inutile — on bloque
+  // tôt avec un message clair au lieu de lancer un batch qui ne produira rien.
+  if (isOffline) {
+    const provider = (searchProviderSelect && searchProviderSelect.value) || 'duckduckgo';
+    if (provider === 'duckduckgo') {
+      alert('📶 Mode hors-ligne actif. L\'analyse de marché nécessite une recherche Internet (DuckDuckGo) qui est indisponible. Vérifiez votre connexion.');
+      return;
+    }
   }
   triggerMarketBtn.disabled = true;
   progressBar.style.width = '0%';
