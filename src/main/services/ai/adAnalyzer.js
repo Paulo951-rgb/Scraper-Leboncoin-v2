@@ -202,7 +202,13 @@ class AdAnalyzer {
     const t0 = Date.now();
 
     // 2. Préparer les images (3 premières)
-    const imageUrls = Array.isArray(ad.images) ? ad.images.slice(0, MAX_IMAGES) : [];
+    // On filtre les entrées invalides (null/undefined/non-string/URL vide) :
+    // Leboncoin renvoie parfois des tableaux d'images avec des trous, et un
+    // fetch(undefined/null) produit une erreur réseau bruyante (caught par
+    // allSettled mais pollue les logs) pour rien.
+    const imageUrls = Array.isArray(ad.images)
+      ? ad.images.slice(0, MAX_IMAGES).filter((u) => typeof u === 'string' && u.trim() !== '' && /^https?:\/\//i.test(u))
+      : [];
     let images = [];
     let visionError = null;
     if (imageUrls.length > 0 && ai.supportsVision() && aiConfig.visionModel) {

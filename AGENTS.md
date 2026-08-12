@@ -92,6 +92,41 @@ renderer/                    app.js, index.html, styles.css, widget.html, aiStud
   centrales (le renderer fait pareil dans renderStatsView). Ne pas reprendre
   `validPrices[Math.floor(n/2)]` qui est faux pour les longueurs paires.
 
+## Pièges corrigés (audit 2026-08, 2e passe fiabilité) — à ne PAS réintroduire
+- **market:analyze concurrent** : le handler `market:analyze` doit être protégé par
+  un verrou (`isMarketAnalyzing`) libéré dans `finally`. Sans cela, un double-clic
+  lançait deux batches IA + deux `writeWithChecksum` en parallèle sur le même job
+  → race sur annonces.json (dernier write gagne, ads perdues).
+- **Écriture résumés IA** : `writeSummaryFile` doit utiliser `atomicWriteFileSync`
+  (helpers.js), PAS `fs.writeFileSync` — ce dernier laissait `resumes-ia.json`
+  tronqué en cas de crash pendant l'écriture.
+- **Lecture annonces.json** : `job:start` et `market:analyze` doivent lire via
+  `readWithChecksum` (utils/integrity.js). Le pipeline écrit avec `writeWithChecksum`
+  (fichier `.sha256` adjacent). `readWithChecksum` valide l'intégrité et donne un
+  message clair si corrompu, au lieu d'un `JSON.parse` qui throw silencieusement.
+- **adAnalyzer images** : filtrer les URLs invalides (null/undefined/non-string/
+  non-http) AVANT `downloadImage`. Sinon `fetch(null)` polluait les logs d'erreurs
+  et pouvait faire échouer la vision IA sur une annonce entière.
+- **harCapturer warmup cancel** : si l'utilisateur annule pendant la résolution
+  CAPTCHA (fenêtre visible), NE PAS persister `storageState` — la session est
+  encore bloquée (cookies anti-bot). Persister reviendrait à empoisonner tous les
+  jobs suivants. Fermer sans `storageState()`.
+- **Pipeline recyclage contexte** : `writeOutputs(ads)` DOIT être appelé AVANT
+  `createStealthContext()` (recyclage). Si le recyclage échoue, les ads sont déjà
+  sauvegardées. Le recyclage doit être dans un try/catch (ne pas perdre les ads
+  sur une erreur de contexte Playwright).
+- **Renderer canvas null** : `renderCharts` doit vérifier l'existence des canvas
+  (`priceDistChart`, `sellerChart`, `topCitiesChart`) avant `getContext('2d')`.
+  Sans cela, un canvas absent faisait crasher `renderStatsView` ET `renderMap`
+  (appelée après) — la carte entière disparaissait.
+- **Renderer localStorage JSON** : `JSON.parse(cached)` sur un cache géocodage
+  doit être dans un try/catch. Un cache corrompu (donnée non-JSON) faisait crasher
+  tout le rendu de carte. En cas d'échec, `localStorage.removeItem` pour purger.
+- **constants.js DEFAULTS mort** : l'ancien bloc `DEFAULTS` (minDelay/maxDelay/
+  headless:false) était mort ET conflictuel avec `SETTINGS_DEFAULTS` (settings.js,
+  headless:true). Supprimé. Les valeurs par défaut des réglages vivent dans
+  `core/settings.js` UNIQUEMENT.
+
 ## Code mort retiré
 - `runWithConcurrency` et `formatDuration` (utils/helpers.js) n'étaient utilisés
   nulle part (les batchs IA utilisent leur propre queue de workers).

@@ -802,6 +802,57 @@ const { _parseMarket } = require(path.join(base, 'services/ai/marketValueAnalyze
   assert(md && md.realValue === 5000, 'parseMarket: extrait JSON entouré de markdown');
 }
 
+// --- 6. Audit fiabilité v2 : guards, robustesse fichiers, edge cases ---
+console.log('\n[6/6] Audit fiabilité (guards & robustesse)');
+
+// market:analyze : verrou dédié (isMarketAnalyzing) contre les lancements
+// concurrents. Sans lui, un double-clic sur « IA Marché » lançait deux batches
+// IA + deux writeWithChecksum en parallèle sur le même job (race sur le JSON).
+assert(/isMarketAnalyzing\s*=\s*false/.test(ipcCode), 'ipcHandlers: isMarketAnalyzing déclaré (verrou market)');
+assert(/if \(isMarketAnalyzing\) throw/.test(ipcCode), 'ipcHandlers: market:analyze rejette une 2e analyse concurrente');
+assert(/isMarketAnalyzing\s*=\s*false;\s*$|isMarketAnalyzing\s*=\s*false;\s*\/\/|finally\s*{[^}]*isMarketAnalyzing\s*=\s*false/s.test(ipcCode), 'ipcHandlers: isMarketAnalyzing libéré dans finally (même en cas d\'erreur)');
+// Le handler market:analyze lit annonces.json via readWithChecksum (intégrité)
+assert(/readWithChecksum\(targetJob\.files\.json\)/.test(ipcCode), 'ipcHandlers: market:analyze valide le checksum d\'annonces.json');
+// job:start lit aussi annonces.json via readWithChecksum (message clair si corrompu)
+assert(/readWithChecksum\(jsonPath\)/.test(ipcCode), 'ipcHandlers: job:start valide le checksum d\'annonces.json');
+
+// writeSummaryFile : écriture atomique (atomicWriteFileSync) — pas de fs.writeFileSync
+// qui laissait resumes-ia.json tronqué en cas de crash.
+assert(/atomicWriteFileSync\(summaryPath/.test(ipcCode), 'ipcHandlers: writeSummaryFile atomique (atomicWriteFileSync)');
+assert(!/fs\.writeFileSync\(summaryPath/.test(ipcCode), 'ipcHandlers: writeSummaryFile n\'utilise plus fs.writeFileSync (non-atomique)');
+
+// adAnalyzer : filtre les images invalides (null/undefined/non-http) avant
+// le téléchargement — évite fetch(null) qui polluait les logs d'erreurs.
+const adAnalyzerCode = fs.readFileSync(path.join(base, 'services/ai/adAnalyzer.js'), 'utf8');
+assert(/typeof u === 'string'/.test(adAnalyzerCode), 'adAnalyzer: filtre images non-string');
+assert(/https\?:\\\//.test(adAnalyzerCode), 'adAnalyzer: filtre images non-URL (http/https)');
+
+// harCapturer : annulation pendant CAPTCHA ne persiste PAS une session bloquée
+// (sinon cookies anti-bot empoisonnaient tous les jobs suivants).
+const harCode = fs.readFileSync(path.join(base, 'services/scraping/harCapturer.js'), 'utf8');
+assert(/NE PAS persister la session/.test(harCode), 'harCapturer: annulation warmup ne persiste pas la session bloquée');
+
+// pipeline : recyclage de contexte résilient (sauvegarde préventive + try/catch)
+const pipeCode = fs.readFileSync(path.join(base, 'services/scraping/leboncoin-pipeline.js'), 'utf8');
+assert(/Recyclage contexte échoué/.test(pipeCode), 'pipeline: recyclage contexte a un catch (ne crash pas le job)');
+assert(/Sauvegarde préventive AVANT le recyclage/.test(pipeCode), 'pipeline: writeOutputs avant recyclage (pas de perte)');
+
+// renderer : renderCharts garde contre les canvas absents (sinon crash → carte cassée)
+assert(/priceDistCanvas \|\| !sellerCanvas \|\| !citiesCanvas/.test(appCode), 'app.js: renderCharts garde contre canvas absents');
+// renderer : cache géocodage tolérant au JSON corrompu
+assert(/try \{ return JSON\.parse\(cached\); \} catch/.test(appCode), 'app.js: cache géocodage tolérant au JSON corrompu');
+// renderer : mapHandDeliveryOnly null-safe
+assert(/mapHandDeliveryEl && mapHandDeliveryEl\.checked/.test(appCode), 'app.js: mapHandDeliveryOnly null-safe');
+
+// excelExporter : date formatée lisible (pas d'ISO brute)
+const excelCode2 = fs.readFileSync(path.join(__dirname, '..', 'src/main/infrastructure/excelExporter.js'), 'utf8');
+assert(/Number\.isFinite\(d\.getTime\(\)\)/.test(excelCode2), 'excelExporter: date validée (Number.isFinite)');
+assert(/pad\(d\.getDate\(\)\)/.test(excelCode2), 'excelExporter: date formatée JJ/MM/AAAA HH:mm');
+
+// constants.js : DEFAULTS mort supprimé (valeurs conflictuelles avec settings)
+const constantsCode = fs.readFileSync(path.join(__dirname, '..', 'src/main/config/constants.js'), 'utf8');
+assert(!/DEFAULTS:\s*\{/.test(constantsCode), 'constants.js: DEFAULTS mort supprimé (valeurs conflictuelles)');
+
 console.log(`\n=== RÉSULTAT : ${pass} réussis, ${fail} échoués ===`);
 process.exit(fail > 0 ? 1 : 0);
 }

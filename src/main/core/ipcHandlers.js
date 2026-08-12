@@ -16,7 +16,8 @@ const { checkOllamaHealth, checkModelAvailable } = require('../services/ai/ollam
 const { Notifier } = require('../infrastructure/notifications');
 const { JOBS_DIR, BASE_OUT_DIR } = require('../config/constants');
 const { redact, summarizeAds, formatBytes, describeError } = require('../utils/diagnostics');
-const { writeWithChecksum } = require('../utils/integrity');
+const { writeWithChecksum, readWithChecksum } = require('../utils/integrity');
+const { atomicWriteFileSync } = require('../utils/helpers');
 const { loadSettings, saveSettings } = require('./settings');
 const { listSearchProviders } = require('../services/ai/search/searchProviderRegistry');
 
@@ -25,6 +26,10 @@ const { listSearchProviders } = require('../services/ai/search/searchProviderReg
  * pour analyse externe. Contient uniquement : numéro, titre, URL, prix, résumé IA.
  * Exclut volontairement la description complète, les photos, la date et les autres
  * infos inutiles — pour garder le fichier léger.
+ *
+ * Écriture atomique : un crash pendant l'écriture laissait un resumes-ia.json
+ * tronvé/corrompu (fs.writeFileSync n'est pas atomique). On passe par
+ * atomicWriteFileSync (tmp + rename) — cohérent avec les autres écritures JSON.
  */
 function writeSummaryFile(ads, summaryPath) {
   try {
@@ -35,7 +40,7 @@ function writeSummaryFile(ads, summaryPath) {
       prix: a.price != null ? a.price : null,
       resume_ia: (a.adAnalysis && a.adAnalysis.summary) || null,
     }));
-    fs.writeFileSync(summaryPath, JSON.stringify(summary, null, 2), 'utf8');
+    atomicWriteFileSync(summaryPath, JSON.stringify(summary, null, 2));
   } catch (err) {
     console.warn('[writeSummaryFile] Écriture du résumé impossible :', err.message);
   }
@@ -45,6 +50,12 @@ function setupIpcHandlers(getMainWindow) {
   let activeCapturer = null;
   let activeRunner = null;
   let isRunning = false;
+  // Verrou dédié à l'analyse de marché (market:analyze). isRunning ne couvre
+  // QUE le cycle job:start ; sans ce second verrou, deux invocations concurrentes
+  // de market:analyze (ex: double-clic sur « IA Marché » avant que le bouton ne
+  // se désactive) lançaient deux batches IA + deux writeWithChecksum en parallèle
+  // sur le MÊME job → race sur le fichier annonces.json et appels IA dupliqués.
+  let isMarketAnalyzing = false;
 
   // Getter de fenêtre principale : renvoie null si détruite/fichermée,
   // évitant les crashes "Cannot read properties of null" sur webContents.send.
@@ -171,7 +182,15 @@ function setupIpcHandlers(getMainWindow) {
       const xlsxPath = path.join(resultsDir, 'annonces.xlsx');
 
       if (fs.existsSync(jsonPath)) {
-        let ads = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+        // Lecture via checksum : le pipeline écrit annonces.json avec
+        // writeWithChecksum. readWithChecksum valide l'intégrité (SHA-256) et
+        // donne un message clair si le fichier est corrompu (crash pendant
+        // l'écriture, disque défaillant) au lieu d'un JSON.parse qui throw
+        // silencieusement et fait tomber le job en erreur générique.
+        const { data: ads, valid, reason } = readWithChecksum(jsonPath);
+        if (!valid || !Array.isArray(ads)) {
+          sendLog({ level: 'warn', message: `[job:start] annonces.json illisible (${reason || 'format inattendu'}) — étapes suivantes (IA/Excel) ignorées pour ce job.` });
+        } else {
         sendLog({ level: 'debug', message: `[job:start] annonces.json lu : ${summarizeAds(ads)}.` });
 
         // 🧠 IA ANALYSE (Texte + Vision) — uniquement si « Analyse IA » cochée.
@@ -234,6 +253,7 @@ function setupIpcHandlers(getMainWindow) {
         if (analyzed > 0) {
           sendLog({ level: 'debug', message: `[job:start] ${analyzed} annonce(s) analysée(s) par l'IA (résumés produits + attributs).` });
         }
+        } // fin du else (annonces.json lisible)
       } else {
         sendLog({ level: 'warn', message: `[job:start] annonces.json introuvable après pipeline : ${jsonPath} — le scraping a peut-être échoué silencieusement.` });
       }
@@ -282,13 +302,23 @@ function setupIpcHandlers(getMainWindow) {
   // Résultat stocké dans ad.marketAnalysis : { realValue, verdict, deltaEur, sources[], rationale }.
   ipcMain.handle('market:analyze', async (event, { jobId, aiConfig, searchConfig, adIds }) => {
     if (isRunning) throw new Error('Un job de scraping est en cours — attendez la fin avant d\'analyser le marché.');
+    if (isMarketAnalyzing) throw new Error('Une analyse de marché est déjà en cours — attendez la fin avant d\'en lancer une autre.');
+    isMarketAnalyzing = true;
+    try {
     const jobs = JobHistoryManager.listAllJobs();
     const targetJob = jobs.find((j) => j.id === jobId);
 
     if (!targetJob) throw new Error(`Job introuvable (id: ${jobId}). Aucune analyse possible.`);
     if (!targetJob.files.json) throw new Error('Aucun fichier de résultats trouvé pour ce job.');
 
-    let ads = JSON.parse(fs.readFileSync(targetJob.files.json, 'utf8'));
+    // Lecture via checksum : valide l'intégrité (le fichier a pu être réécrit par
+    // un job:start ou une précédente analyse marché) et donne un message clair
+    // en cas de corruption au lieu d'un JSON.parse qui ferait échouer toute l'analyse.
+    const { data: adsRead, valid: adsValid, reason: adsReason } = readWithChecksum(targetJob.files.json);
+    if (!adsValid || !Array.isArray(adsRead)) {
+      throw new Error(`annonces.json illisible pour ce job (${adsReason || 'format inattendu'}).`);
+    }
+    let ads = adsRead;
 
     // Filtrer aux annonces sélectionnées si adIds fourni (analyse ciblée).
     let targetAds = ads;
@@ -391,6 +421,11 @@ function setupIpcHandlers(getMainWindow) {
     }
 
     return JobHistoryManager.getLatestJob();
+    } finally {
+      // Toujours libérer le verrou, même en cas d'erreur fatale : sinon une
+      // analyse échouée bloquait définitivement toute analyse de marché future.
+      isMarketAnalyzing = false;
+    }
   });
 
   // 🔍 Liste les moteurs de recherche disponibles (pour l'UI de l'IA Marché).

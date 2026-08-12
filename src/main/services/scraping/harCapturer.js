@@ -177,9 +177,14 @@ class HarCapturer extends EventEmitter {
       }
       if (this.isCancelled) {
         this.emit('log', { level: 'warn', message: '[warmup] Résolution annulée par lutilisateur.' });
-      } else {
-        this.emit('log', { level: 'debug', message: `[warmup] Blocage résolu après ${waitAttempts * 2}s d'attente.` });
+        // NE PAS persister la session : on est encore bloqué (CAPTCHA non résolu),
+        // persister reviendrait à sauvegarder une session avec des cookies anti-bot
+        // qui empoisonneraient tous les jobs suivants. On ferme sans storageState.
+        await vPage.close().catch(() => {});
+        await vCtx.close().catch(() => {});
+        return;
       }
+      this.emit('log', { level: 'debug', message: `[warmup] Blocage résolu après ${waitAttempts * 2}s d'attente.` });
 
       // Persiste la session validée pour les jobs suivants (plus de fenêtre visible).
       await vCtx.storageState({ path: GLOBAL_SESSION_PATH });

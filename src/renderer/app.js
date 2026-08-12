@@ -1140,9 +1140,12 @@ async function geocodeCityGov(cityName, zipcode) {
   const cleanCity = cityName.toLowerCase().trim();
   const cacheKey = `geo-cache-${cleanCity}-${zipcode || ''}`;
   
-  // Lecture du cache local
+  // Lecture du cache local (tolérant aux données corrompues : un cache mal
+  // écrit ne doit pas faire crasher tout le rendu de carte).
   const cached = localStorage.getItem(cacheKey);
-  if (cached) return JSON.parse(cached);
+  if (cached) {
+    try { return JSON.parse(cached); } catch { localStorage.removeItem(cacheKey); }
+  }
 
   try {
     let url = `https://geo.api.gouv.fr/communes?nom=${encodeURIComponent(cleanCity)}&fields=centre&limit=1`;
@@ -1198,7 +1201,8 @@ async function renderMap(ads) {
       if (layer instanceof L.Marker) mapInstance.removeLayer(layer);
     });
 
-    const mapHandDeliveryOnly = document.getElementById('mapHandDeliveryOnly').checked;
+    const mapHandDeliveryEl = document.getElementById('mapHandDeliveryOnly');
+    const mapHandDeliveryOnly = !!(mapHandDeliveryEl && mapHandDeliveryEl.checked);
 
     // Déduplication : une même annonce peut apparaître dans plusieurs sessions
     // de scraping (ex. « tous les scrapings combinés »). On ne l'affiche qu'une
@@ -1276,9 +1280,17 @@ async function renderMap(ads) {
 function renderCharts(ads) {
   if (typeof Chart === 'undefined' || ads.length === 0) return;
 
+  // Garde contre les canvas absents du DOM (ex: onglet Stats jamais ouvert
+  // mais renderStatsView appelé indirectement) : sans cela, getContext('2d')
+  // sur null faisait crasher renderStatsView ET renderMap (appelée après).
+  const priceDistCanvas = document.getElementById('priceDistChart');
+  const sellerCanvas = document.getElementById('sellerChart');
+  const citiesCanvas = document.getElementById('topCitiesChart');
+  if (!priceDistCanvas || !sellerCanvas || !citiesCanvas) return;
+
   // 1) Distribution des prix (histogramme)
   const prices = ads.map((a) => Number(a.price)).filter((p) => Number.isFinite(p) && p > 0).sort((a, b) => a - b);
-  const priceDistCtx = document.getElementById('priceDistChart').getContext('2d');
+  const priceDistCtx = priceDistCanvas.getContext('2d');
   if (priceDistChartInstance) priceDistChartInstance.destroy();
 
   if (prices.length > 0) {
@@ -1312,7 +1324,7 @@ function renderCharts(ads) {
   // 2) Vendeurs particuliers vs pros
   const proCount = ads.filter((a) => a.isPro).length;
   const partCount = ads.length - proCount;
-  const sellerCtx = document.getElementById('sellerChart').getContext('2d');
+  const sellerCtx = sellerCanvas.getContext('2d');
   if (sellerChartInstance) sellerChartInstance.destroy();
 
   sellerChartInstance = new Chart(sellerCtx, {
@@ -1363,7 +1375,7 @@ function renderCharts(ads) {
     cityCounts[c] = (cityCounts[c] || 0) + 1;
   }
   const topCities = Object.entries(cityCounts).sort((a, b) => b[1] - a[1]).slice(0, 10);
-  const citiesCtx = document.getElementById('topCitiesChart').getContext('2d');
+  const citiesCtx = citiesCanvas.getContext('2d');
   if (topCitiesChartInstance) topCitiesChartInstance.destroy();
 
   topCitiesChartInstance = new Chart(citiesCtx, {
@@ -1459,6 +1471,6 @@ clearLogsBtn.addEventListener('click', () => {
 });
 
 // Écouteur pour rafraîchir la carte si on coche/décoche la remise en main propre
-document.getElementById('mapHandDeliveryOnly').addEventListener('change', () => {
+document.getElementById('mapHandDeliveryOnly')?.addEventListener('change', () => {
   renderStatsView();
 });

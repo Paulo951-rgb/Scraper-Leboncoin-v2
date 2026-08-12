@@ -21,13 +21,11 @@ module.exports = {
   APP_NAME: 'Leboncoin Scraper Pro',
   BASE_OUT_DIR,
   JOBS_DIR,
-  DEFAULTS: {
-    minDelayMs: 1200,
-    maxDelayMs: 2500,
-    headless: false,
-    outDir: BASE_OUT_DIR,
-    autoAiMarket: true,
-  },
+  // Note: les valeurs par défaut des réglages utilisateur (vitesse, headless,
+  // délais, concurrence IA, rétention…) vivent dans core/settings.js
+  // (SETTINGS_DEFAULTS). L'ancien bloc DEFAULTS ici était mort ET conflictuel
+  // (headless:false ici vs headless:true dans settings) — supprimé pour éviter
+  // toute confusion.
   THEMES: ['theme-dark', 'theme-light', 'theme-oled', 'theme-violet', 'theme-green', 'theme-sunset', 'theme-carbon', 'theme-rose', 'theme-amber', 'theme-mint', 'theme-slate', 'theme-crimson', 'theme-nordic'],
   GLOBAL_SESSION_PATH,
 };

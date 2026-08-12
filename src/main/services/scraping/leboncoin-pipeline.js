@@ -711,12 +711,28 @@ class DescriptionEnricher {
 
       if (done > 0 && done % this.opts.recycleContextEvery === 0 && i + batchSize < targets.length) {
         this.logger.info(`🔄 Purge mémoire RAM (${done} items)...`);
+        // Sauvegarde préventive AVANT le recyclage : si createStealthContext()
+        // échoue pendant le recyclage (contexte Playwright instable après un
+        // long run), on ne perd pas les descriptions déjà récupérées depuis le
+        // dernier writeOutputs.
+        writeOutputs(ads);
         await page.close().catch(() => {});
         await context.close().catch(() => {});
         await sleep(1000);
-        setup = await createStealthContext();
-        context = setup.ctx;
-        page = setup.p;
+        try {
+          setup = await createStealthContext();
+          context = setup.ctx;
+          page = setup.p;
+        } catch (recycleErr) {
+          // Recyclage impossible : on ne peut pas continuer à enrichir (le
+          // navigateur est dans un état instable). On sauvegarde ce qu'on a et
+          // on sort proprement plutôt que de crasher et perdre le job entier.
+          this.logger.warn(`🛑 Recyclage contexte échoué : ${recycleErr.message} — arrêt de l'enrichissement, données sauvegardées.`);
+          this.logger.debug(`[DescriptionEnricher] Détail échec recyclage : ${describeError(recycleErr)}`);
+          context = null;
+          page = null;
+          break;
+        }
       }
     }
 

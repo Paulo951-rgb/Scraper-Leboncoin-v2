@@ -62,6 +62,18 @@ class ExcelExporter {
         if (ad.sellerRatingCount != null) ratingText += ` (${ad.sellerRatingCount} avis)`;
       }
 
+      // Date lisible : Leboncoin renvoie une ISO (ex: 2024-01-15T10:30:00+00:00).
+      // On formate en JJ/MM/AAAA HH:mm pour l'export, en gardant '-' si absente/
+      // invalide (Date invalide → NaN, vérifié via Number.isFinite).
+      let dateText = '-';
+      if (ad.date) {
+        const d = new Date(ad.date);
+        if (Number.isFinite(d.getTime())) {
+          const pad = (n) => String(n).padStart(2, '0');
+          dateText = `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        }
+      }
+
       const row = sheet.addRow({
         id: ad.id || '-',
         title: ad.title || '-',
@@ -78,7 +90,7 @@ class ExcelExporter {
         seller: `${ad.seller || 'Particulier'}${ad.isPro ? ' (Pro)' : ''}`,
         sellerRating: ratingText,
         deliveryMode: deliveryText,
-        date: ad.date || '-',
+        date: dateText,
         url: { text: 'Ouvrir l\'annonce', hyperlink: ad.url || '#' },
       });
 
