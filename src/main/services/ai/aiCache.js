@@ -7,6 +7,7 @@
  */
 const path = require('path');
 const fs = require('fs');
+const { atomicWriteFileSync } = require('../../utils/helpers');
 
 let _cachePath = null;
 function getCachePath() {
@@ -34,7 +35,9 @@ function _saveNow() {
   if (!_cache) return; // rien à écrire si jamais chargé
   try {
     fs.mkdirSync(path.dirname(getCachePath()), { recursive: true });
-    fs.writeFileSync(getCachePath(), JSON.stringify(_cache, null, 2), 'utf8');
+    // Écriture atomique : un crash pendant fs.writeFileSync laissait
+    // ai-cache.json tronqué → tout le cache IA perdu (re-analyses coûteuses).
+    atomicWriteFileSync(getCachePath(), JSON.stringify(_cache, null, 2), 'utf8');
   } catch (err) {
     console.warn('[AiCache] Sauvegarde impossible :', err.message);
   }

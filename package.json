@@ -4,7 +4,8 @@
   "description": "Application de scraping Leboncoin semi-automatisée",
   "main": "src/main/main.js",
   "scripts": {
-    "start": "electron --max-old-space-size=8192 ."
+    "start": "electron --max-old-space-size=8192 .",
+    "test": "node test/regression.test.js"
   },
   "dependencies": {
     "exceljs": "^4.4.0",

@@ -7,6 +7,7 @@
  */
 const path = require('path');
 const fs = require('fs');
+const { atomicWriteFileSync } = require('../utils/helpers');
 
 let _settingsPath = null;
 function getSettingsPath() {
@@ -46,7 +47,9 @@ function saveSettings(patch) {
   const merged = { ...loadSettings(), ...(patch && typeof patch === 'object' ? patch : {}) };
   try {
     fs.mkdirSync(path.dirname(getSettingsPath()), { recursive: true });
-    fs.writeFileSync(getSettingsPath(), JSON.stringify(merged, null, 2), 'utf8');
+    // Écriture atomique : un crash pendant fs.writeFileSync laissait
+    // user-settings.json tronqué → tous les réglages perdus au redémarrage.
+    atomicWriteFileSync(getSettingsPath(), JSON.stringify(merged, null, 2), 'utf8');
   } catch (err) {
     console.warn('Sauvegarde paramètres impossible :', err.message);
   }

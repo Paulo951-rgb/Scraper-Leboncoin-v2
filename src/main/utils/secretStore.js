@@ -16,6 +16,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { app, safeStorage } = require('electron');
+const { atomicWriteFileSync } = require('./helpers');
 
 const ALGO = 'aes-256-gcm';
 const FALLBACK_KEY_SALT = 'leboncoin-scraper-v1';
@@ -104,7 +105,9 @@ function _save() {
   const p = _getSecretsPath();
   try {
     fs.mkdirSync(path.dirname(p), { recursive: true });
-    fs.writeFileSync(p, JSON.stringify(_cache, null, 2), 'utf8');
+    // Écriture atomique : un crash pendant fs.writeFileSync laissait
+    // secrets.enc.json tronqué → tous les secrets définitivement perdus.
+    atomicWriteFileSync(p, JSON.stringify(_cache, null, 2), 'utf8');
   } catch (err) {
     console.error('[SecretStore] Erreur sauvegarde secrets :', err.message);
   }

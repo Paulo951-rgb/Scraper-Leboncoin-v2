@@ -150,7 +150,30 @@ const getAiApiKey = () => (aiApiKeyEl && aiApiKeyEl.value ? aiApiKeyEl.value : '
 // Peuple dynamiquement la liste via le registre côté main process.
 const searchProviderSelect = document.getElementById('searchProvider');
 const searchApiKeyEl = document.getElementById('searchApiKey');
+const SEARCH_KEY_SECRET = 'search-api-key';
 const getSearchApiKey = () => (searchApiKeyEl && searchApiKeyEl.value ? searchApiKeyEl.value : '');
+
+// Persiste/charge la clé API du moteur de recherche via le secretStore chiffré
+// (safeStorage OS) plutôt qu'en clair dans localStorage. Sans cela, la clé Tavily
+// disparaissait à chaque redémarrage (non persistée), rendant le moteur à clé
+// inutilisable entre sessions.
+async function loadSearchApiKey() {
+  try {
+    const stored = await window.api.getSecret(SEARCH_KEY_SECRET);
+    if (stored && searchApiKeyEl) searchApiKeyEl.value = stored;
+  } catch (err) {
+    console.warn('[search] Chargement clé API moteur échoué :', err.message);
+  }
+}
+async function saveSearchApiKey(value) {
+  try {
+    if (value) await window.api.setSecret(SEARCH_KEY_SECRET, value);
+    else await window.api.removeSecret(SEARCH_KEY_SECRET);
+  } catch (err) {
+    console.warn('[search] Sauvegarde clé API moteur échouée :', err.message);
+  }
+}
+
 if (searchProviderSelect) {
   searchProviderSelect.value = localStorage.getItem('search-provider') || 'duckduckgo';
   searchProviderSelect.addEventListener('change', (e) => {
@@ -159,6 +182,7 @@ if (searchProviderSelect) {
     if (searchApiKeyEl && searchApiKeyEl.parentElement) {
       const needsKey = e.target.value !== 'duckduckgo';
       searchApiKeyEl.parentElement.classList.toggle('hidden', !needsKey);
+      if (needsKey) loadSearchApiKey();
     }
   });
   // Charge la liste des moteurs disponibles depuis le main process.
@@ -171,8 +195,15 @@ if (searchProviderSelect) {
     if (searchApiKeyEl && searchApiKeyEl.parentElement) {
       const needsKey = searchProviderSelect.value !== 'duckduckgo';
       searchApiKeyEl.parentElement.classList.toggle('hidden', !needsKey);
+      // Charge la clé persistée si le moteur courant en nécessite une.
+      if (needsKey) loadSearchApiKey();
     }
   }).catch(() => { /* liste non disponible — fallback duckduckgo */ });
+}
+
+// Persiste la clé API quand l'utilisateur la saisit (chiffrée via secretStore).
+if (searchApiKeyEl) {
+  searchApiKeyEl.addEventListener('change', () => saveSearchApiKey(searchApiKeyEl.value));
 }
 
 aiModelName.value = localStorage.getItem('ai-model-name') || 'llama3';
@@ -250,7 +281,7 @@ function applySearchConfig(cfg) {
   }
   // Restaure le moteur de recherche IA Marché (DuckDuckGo/Tavily).
   // On dispatch un événement 'change' pour que le handler existant masque/affiche
-  // le champ clé API si nécessaire.
+  // le champ clé API et charge la clé persistée (secretStore) si nécessaire.
   if (cfg.searchProvider && searchProviderSelect) {
     searchProviderSelect.value = cfg.searchProvider;
     localStorage.setItem('search-provider', cfg.searchProvider);
@@ -609,10 +640,8 @@ triggerMarketBtn.addEventListener('click', async () => {
   // tôt avec un message clair au lieu de lancer un batch qui ne produira rien.
   if (isOffline) {
     const provider = (searchProviderSelect && searchProviderSelect.value) || 'duckduckgo';
-    if (provider === 'duckduckgo') {
-      alert('📶 Mode hors-ligne actif. L\'analyse de marché nécessite une recherche Internet (DuckDuckGo) qui est indisponible. Vérifiez votre connexion.');
-      return;
-    }
+    alert(`📶 Mode hors-ligne actif. L'analyse de marché nécessite une recherche Internet (${provider}) qui est indisponible. Vérifiez votre connexion.`);
+    return;
   }
   triggerMarketBtn.disabled = true;
   progressBar.style.width = '0%';
@@ -1472,7 +1501,24 @@ modalConfirmBtn.addEventListener('click', async () => {
     await window.api.deleteJob(jobId);
     confirmModal.classList.add('hidden');
     pendingDeleteJobId = null;
+    // Rafraîchit l'onglet de données actif (Historique, Explorateur ou Stats).
+    // Avant, seul l'historique était rafraîchi ; si l'utilisateur supprimait un
+    // job depuis l'historique puis allait sur l'Explorateur, le sessionSelect
+    // pouvait encore référencer le job supprimé (phantom) jusqu'au prochain
+    // getHistory. refreshActiveDataTab couvre les 3 onglets de données.
     await loadHistoryPage();
+    // Nettoie le comparateur : les ads du job supprimé ne sont plus dans
+    // allJobsCache. Sans cela, compareCount affichait un nombre supérieur aux
+    // colonnes réellement affichables (IDs fantômes).
+    if (compareSet.size > 0) {
+      const validIds = new Set();
+      allJobsCache.forEach((j) => {
+        if (Array.isArray(j.ads)) j.ads.forEach((a) => validIds.add(String(a.id)));
+      });
+      compareSet = new Set([...compareSet].filter((id) => validIds.has(id)));
+      compareCount.textContent = compareSet.size;
+    }
+    refreshActiveDataTab();
   } catch (err) {
     console.error('[confirmDelete] Échec suppression :', err);
     confirmModal.classList.add('hidden');

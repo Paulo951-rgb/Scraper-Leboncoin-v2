@@ -286,14 +286,13 @@ assert(/listSearchProviders/.test(preloadCode), 'preload.js: expose listSearchPr
 // --- 5. Nouvelle architecture (refactor structure) ---
 console.log('\n[5/5] Architecture restructurée');
 const { existsSync } = fs;
-const { RISK_KEYWORDS } = require('../src/main/config/risk-keywords');
 const base = path.join(__dirname, '..', 'src/main');
 
 // Structure par couches
 assert(existsSync(path.join(base, 'core/ipcHandlers.js')), 'core/ipcHandlers.js present');
 assert(existsSync(path.join(base, 'core/settings.js')), 'core/settings.js (extrait) present');
 assert(existsSync(path.join(base, 'config/constants.js')), 'config/constants.js present');
-assert(existsSync(path.join(base, 'config/risk-keywords.js')), 'config/risk-keywords.js (extrait) present');
+assert(!existsSync(path.join(base, 'config/risk-keywords.js')), 'config/risk-keywords.js supprimé (code mort — IA remplace les mots-clés)');
 assert(existsSync(path.join(base, 'services/scraping/harCapturer.js')), 'services/scraping/harCapturer.js present');
 assert(existsSync(path.join(base, 'services/scraping/pipelineRunner.js')), 'services/scraping/pipelineRunner.js present');
 assert(existsSync(path.join(base, 'services/scraping/leboncoin-pipeline.js')), 'services/scraping/leboncoin-pipeline.js (déplacé du vendor/) present');
@@ -330,8 +329,8 @@ assert(typeof Notifier.isSupported === 'function', 'Notifier.isSupported present
 assert(typeof loadSettings === 'function', 'loadSettings extracted to core/settings');
 assert(typeof saveSettings === 'function', 'saveSettings extracted to core/settings');
 
-// risk-keywords extrait de constants
-assert(Array.isArray(RISK_KEYWORDS) && RISK_KEYWORDS.length > 0, 'RISK_KEYWORDS in config/risk-keywords.js');
+// risk-keywords supprimé (code mort : jamais importé, l'IA Analyse remplace
+// la correspondance de mots-clés). constants.js ne doit plus le référencer.
 assert(!/RISK_KEYWORDS/.test(fs.readFileSync(path.join(base, 'config/constants.js'), 'utf8')), 'RISK_KEYWORDS removed from constants.js');
 
 // ipcHandlers ne contient plus loadSettings/saveSettings inline
@@ -875,7 +874,7 @@ assert(/dispatchEvent\(new Event\('change'\)\)/.test(appCode), 'app.js: applySea
 // app.js : triggerMarketBtn vérifie isOffline (l'IA Marché a besoin d'Internet
 // pour DuckDuckGo). Sans ce garde, un batch complet tombait en fallback inutile.
 assert(/isOffline[\s\S]*triggerMarketBtn|triggerMarketBtn[\s\S]*isOffline/.test(appCode), 'app.js: triggerMarketBtn vérifie isOffline avant lancement');
-assert(/Mode hors-ligne actif.*analyse de marché.*DuckDuckGo/.test(appCode), 'app.js: message offline clair pour IA Marché');
+assert(/Mode hors-ligne actif.*analyse de marché.*recherche Internet/.test(appCode), 'app.js: message offline clair pour IA Marché (tous providers)');
 
 // helpModule : FAQ ne mentionne plus la checkbox « Analyser les images » supprimée
 // (la vision est désormais automatique si modèle + photos présents).
@@ -884,6 +883,41 @@ assert(!/Décochée par défaut/.test(helpModCode), 'helpModule: FAQ ne dit plus
 // helpModule : FAQ ne mentionne plus la vitesse « Ultra » (non exposée dans l'UI)
 assert(!/Ultra.*20 annonces en parallèle/.test(helpModCode), 'helpModule: FAQ ne mentionne plus vitesse Ultra (non exposée dans l\'UI select)');
 assert(/Rapide \/ Équilibré \/ Prudent/.test(helpModCode), 'helpModule: FAQ liste les 3 vitesses réellement exposées');
+
+// [7/7] suite — code mort & persistance
+// risk-keywords.js supprimé (code mort : jamais importé dans l'app, l'IA remplace)
+assert(!existsSync(path.join(base, 'config/risk-keywords.js')), 'config/risk-keywords.js supprimé (code mort)');
+
+// app.js : clé API moteur de recherche persistée via secretStore (chiffré)
+// Avant : la clé Tavily disparaissait à chaque redémarrage (non persistée).
+assert(/SEARCH_KEY_SECRET/.test(appCode), 'app.js: constante SEARCH_KEY_SECRET pour clé moteur');
+assert(/loadSearchApiKey/.test(appCode), 'app.js: fonction loadSearchApiKey (charge depuis secretStore)');
+assert(/saveSearchApiKey/.test(appCode), 'app.js: fonction saveSearchApiKey (persiste via secretStore)');
+assert(/getSecret\(SEARCH_KEY_SECRET\)/.test(appCode), 'app.js: charge clé via secretStore.get');
+assert(/setSecret\(SEARCH_KEY_SECRET/.test(appCode), 'app.js: sauve clé via secretStore.set');
+assert(/removeSecret\(SEARCH_KEY_SECRET\)/.test(appCode), 'app.js: supprime clé via secretStore.remove');
+// Le champ clé déclenche la persistance sur change
+assert(/searchApiKeyEl.addEventListener\('change'/.test(appCode), 'app.js: searchApiKeyEl persiste sur change');
+
+// app.js : suppression de job nettoie le comparateur (IDs fantômes)
+// Avant : compareCount affichait un nombre > aux colonnes réelles après suppression.
+assert(/compareSet = new Set\(\[\.\.\.compareSet\]\.filter/.test(appCode), 'app.js: compareSet nettoyé après suppression job (IDs fantômes)');
+assert(/refreshActiveDataTab\(\)/.test(appCode.replace(/\/\/[^\n]*\n/g, '')), 'app.js: suppression déclenche refreshActiveDataTab');
+
+// [7/7] suite — écritures atomiques (anti-corruption de fichiers critiques)
+// secretStore, settings et aiCache utilisaient fs.writeFileSync (non-atomique) :
+// un crash pendant l'écriture corrompait le fichier → secrets/réglages/cache perdus.
+const secretStoreCode2 = fs.readFileSync(path.join(base, 'utils/secretStore.js'), 'utf8');
+assert(/atomicWriteFileSync\(p,/.test(secretStoreCode2), 'secretStore: _save atomique (atomicWriteFileSync)');
+assert(!/fs\.writeFileSync\(p,/.test(secretStoreCode2), 'secretStore: _save n\'utilise plus fs.writeFileSync');
+
+const settingsCode2 = fs.readFileSync(path.join(base, 'core/settings.js'), 'utf8');
+assert(/atomicWriteFileSync\(getSettingsPath\(\)/.test(settingsCode2), 'settings: saveSettings atomique (atomicWriteFileSync)');
+assert(!/fs\.writeFileSync\(getSettingsPath\(\)/.test(settingsCode2), 'settings: saveSettings n\'utilise plus fs.writeFileSync');
+
+const aiCacheCode2 = fs.readFileSync(path.join(base, 'services/ai/aiCache.js'), 'utf8');
+assert(/atomicWriteFileSync\(getCachePath\(\)/.test(aiCacheCode2), 'aiCache: _saveNow atomique (atomicWriteFileSync)');
+assert(!/fs\.writeFileSync\(getCachePath\(\)/.test(aiCacheCode2), 'aiCache: _saveNow n\'utilise plus fs.writeFileSync');
 
 console.log(`\n=== RÉSULTAT : ${pass} réussis, ${fail} échoués ===`);
 process.exit(fail > 0 ? 1 : 0);
