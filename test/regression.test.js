@@ -533,37 +533,36 @@ assert(/tab-ai-studio/.test(htmlCode), 'index.html: onglet tab-ai-studio présen
 assert(/aistudioWebview/.test(htmlCode), 'index.html: webview navigateur intégré');
 assert(/aistudio\.google\.com/.test(htmlCode), 'index.html: URL AI Studio par défaut');
 assert(/aistudioOpenJobsBtn/.test(htmlCode), 'index.html: bouton ouvrir dossier des jobs');
-assert(/aistudioTemplateSelect/.test(htmlCode), 'index.html: sélecteur de prompts préfaits (V2)');
-assert(/aistudioFieldsContainer/.test(htmlCode), 'index.html: conteneur champs dynamiques (placeholders)');
-assert(/aistudioApplyBtn/.test(htmlCode), 'index.html: bouton « Assembler le prompt » (V2, remplace génération IA)');
-assert(/aistudioCopyBtn/.test(htmlCode), 'index.html: bouton copier le prompt');
-assert(/aistudioPromptOutput/.test(htmlCode), 'index.html: textarea de sortie du prompt assemblé');
-assert(!/aistudioOllamaUrl/.test(htmlCode), 'index.html: V2 — champ URL Ollama supprimé (plus de génération IA)');
-assert(!/aistudioGenerateBtn/.test(htmlCode), 'index.html: V2 — bouton « Générer par IA » supprimé');
-assert(!/aistudioDomainSelect/.test(htmlCode), 'index.html: V2 — sélecteur de domaine supprimé (remplacé par templates)');
-assert(!/aistudioObjective/.test(htmlCode), 'index.html: V2 — champ objectif supprimé (intégré aux templates)');
+assert(/aistudioCardsContainer/.test(htmlCode), 'index.html: conteneur cartes de prompts (V3)');
+assert(/prompt-cards-grid/.test(htmlCode), 'index.html: grille cartes prompts (V3)');
+assert(!/aistudioTemplateSelect/.test(htmlCode), 'index.html: V3 — dropdown sélecteur supprimé (cartes directes)');
+assert(!/aistudioFieldsContainer/.test(htmlCode), 'index.html: V3 — conteneur champs unique supprimé (champs par carte)');
+assert(!/aistudioApplyBtn/.test(htmlCode), 'index.html: V3 — bouton « Assembler » supprimé (copier par carte)');
+assert(!/aistudioPromptOutput/.test(htmlCode), 'index.html: V3 — textarea de sortie supprimé (copier direct)');
+assert(!/aistudioOllamaUrl/.test(htmlCode), 'index.html: V3 — champ URL Ollama supprimé');
+assert(!/aistudioGenerateBtn/.test(htmlCode), 'index.html: V3 — bouton « Générer par IA » supprimé');
 assert(/Comment utiliser ce module/.test(htmlCode), 'index.html: panneau explicatif');
 assert(existsSync(path.join(__dirname, '..', 'src/renderer/aiStudioModule.js')), 'renderer/aiStudioModule.js present');
 const aistudioModCode = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/aiStudioModule.js'), 'utf8');
 assert(/window\.aiStudioModule/.test(aistudioModCode), 'aiStudioModule: exposé sur window.aiStudioModule');
-assert(/loadTemplates/.test(aistudioModCode), 'aiStudioModule: loadTemplates (charge les prompts préfaits via IPC)');
-assert(/window\.api\.listPromptTemplates/.test(aistudioModCode), 'aiStudioModule: appel IPC listPromptTemplates');
+assert(/renderCards/.test(aistudioModCode), 'aiStudioModule: renderCards (génère les cartes V3)');
+assert(/copyFilledPrompt/.test(aistudioModCode), 'aiStudioModule: copyFilledPrompt (copie le prompt rempli)');
+assert(/copyRawPrompt/.test(aistudioModCode), 'aiStudioModule: copyRawPrompt (copie le prompt avec trous)');
 assert(/window\.api\.buildPrompt/.test(aistudioModCode), 'aiStudioModule: appel IPC buildPrompt (assemblage)');
-assert(/applyPrompt/.test(aistudioModCode), 'aiStudioModule: applyPrompt (assemble le prompt sélectionné)');
-assert(/renderFields/.test(aistudioModCode), 'aiStudioModule: renderFields (génère les champs dynamiquement)');
-assert(/selectTemplate/.test(aistudioModCode), 'aiStudioModule: selectTemplate (change de template)');
-assert(!/generatePrompt/.test(aistudioModCode), 'aiStudioModule: V2 — generatePrompt supprimé (plus d\'IA Ollama)');
-assert(!/testOllama/.test(aistudioModCode), 'aiStudioModule: V2 — testOllama supprimé (plus de config Ollama)');
-assert(!/DOMAINS/.test(aistudioModCode), 'aiStudioModule: V2 — DOMAINS supprimé (remplacé par templates)');
+assert(/window\.api\.listPromptTemplates/.test(aistudioModCode), 'aiStudioModule: appel IPC listPromptTemplates');
+assert(/prompt-card/.test(aistudioModCode), 'aiStudioModule: classe CSS prompt-card utilisée');
+assert(!/generatePrompt/.test(aistudioModCode), 'aiStudioModule: V3 — generatePrompt supprimé (plus d\'IA Ollama)');
+assert(!/testOllama/.test(aistudioModCode), 'aiStudioModule: V3 — testOllama supprimé');
+assert(!/DOMAINS/.test(aistudioModCode), 'aiStudioModule: V3 — DOMAINS supprimé');
 assert(!/MASTER_PROMPT/.test(aistudioModCode), 'aiStudioModule: prompts statiques supprimés');
-assert(!/renderPrompt/.test(aistudioModCode), 'aiStudioModule: renderPrompt supprimé');
 assert(/aistudioOpenJobsBtn/.test(aistudioModCode), 'aiStudioModule: bouton ouvrir jobs branché');
+assert(/openJobsFolder/.test(aistudioModCode), 'aiStudioModule: utilise openJobsFolder (V3, ouvre JOBS_DIR)');
 assert(/aistudio\.google\.com/.test(aistudioModCode), 'aiStudioModule: URL AI Studio par défaut');
 assert(!/require\('electron'\)/.test(aistudioModCode), 'aiStudioModule: pas de require(electron) (renderer sandboxé)');
 assert(/aiStudioModule\.js/.test(htmlCode), 'index.html: inclut aiStudioModule.js');
 
-// promptTemplates.js : bibliothèque de prompts préfaits (V2)
-assert(existsSync(path.join(base, 'services/ai/promptTemplates.js')), 'promptTemplates.js: fichier présent (bibliothèque V2)');
+// promptTemplates.js : bibliothèque de prompts préfaits (V3)
+assert(existsSync(path.join(base, 'services/ai/promptTemplates.js')), 'promptTemplates.js: fichier présent (bibliothèque V3)');
 const promptTmplCode = fs.readFileSync(path.join(base, 'services/ai/promptTemplates.js'), 'utf8');
 assert(/listTemplates/.test(promptTmplCode), 'promptTemplates: listTemplates (expose les templates pour l\'UI)');
 assert(/getTemplate/.test(promptTmplCode), 'promptTemplates: getTemplate (récupère un template par id)');
@@ -574,21 +573,22 @@ assert(/BUDGET_MIN/.test(promptTmplCode), 'promptTemplates: placeholder [BUDGET_
 assert(/BUDGET_MAX/.test(promptTmplCode), 'promptTemplates: placeholder [BUDGET_MAX]');
 assert(/CRITERES_CLASSEMENT/.test(promptTmplCode), 'promptTemplates: placeholder [CRITERES_CLASSEMENT]');
 // Vérifie qu'aucun template n'est spécifique à une catégorie (hardware, voiture, etc.)
-// Les exemples dans les placeholders (Ex : PC fixes, voitures…) sont OK — ils guident
-// l'utilisateur. Ce qu'on vérifie, c'est que le CORPS des prompts (template:) reste
-// générique et utilise des [PLACEHOLDERS] au lieu de catégories codées en dur.
 const promptBodies = promptTmplCode.split(/template:\s*`/).slice(1).map((s) => s.split('`')[0]);
 const hasHardcodedCategory = promptBodies.some((body) => /cartes? graphiques?|SSD|GPU|llava|hardware pc/i.test(body));
 assert(!hasHardcodedCategory, 'promptTemplates: corps des prompts génériques (pas de catégorie hardware/PC codée en dur)');
 // Compter les templates (au moins 6)
 const tmplCount = (promptTmplCode.match(/id:\s*'[^']+',\s*\n\s*title:/g) || []).length;
 assert(tmplCount >= 6, `promptTemplates: au moins 6 templates (trouvé: ${tmplCount})`);
+// listTemplates doit renvoyer le corps du template (pour copie brute V3)
+assert(/template:\s*t\.template/.test(promptTmplCode), 'promptTemplates: listTemplates renvoie le corps (template) pour copie brute V3');
 
-// IPC prompt:templates:list + prompt:templates:build (V2) + legacy handlers conservés
+// IPC prompt:templates:list + prompt:templates:build (V3) + jobs:openFolder
 const ipcHandlersCode = fs.readFileSync(path.join(base, 'core/ipcHandlers.js'), 'utf8');
-assert(/prompt:templates:list/.test(ipcHandlersCode), 'ipcHandlers: handler prompt:templates:list (V2)');
-assert(/prompt:templates:build/.test(ipcHandlersCode), 'ipcHandlers: handler prompt:templates:build (V2)');
+assert(/prompt:templates:list/.test(ipcHandlersCode), 'ipcHandlers: handler prompt:templates:list (V3)');
+assert(/prompt:templates:build/.test(ipcHandlersCode), 'ipcHandlers: handler prompt:templates:build (V3)');
 assert(/listTemplates/.test(ipcHandlersCode), 'ipcHandlers: import listTemplates depuis promptTemplates');
+assert(/jobs:openFolder/.test(ipcHandlersCode), 'ipcHandlers: handler jobs:openFolder (V3, ouvre JOBS_DIR)');
+assert(/JOBS_DIR/.test(ipcHandlersCode), 'ipcHandlers: utilise JOBS_DIR pour openFolder');
 assert(/prompt:generate/.test(ipcHandlersCode), 'ipcHandlers: handler prompt:generate conservé (legacy)');
 assert(/ollama:models/.test(ipcHandlersCode), 'ipcHandlers: handler ollama:models (liste modèles installés)');
 
@@ -597,8 +597,19 @@ const preloadCodeV2 = fs.readFileSync(path.join(base, 'preload.js'), 'utf8');
 assert(/listPromptTemplates/.test(preloadCodeV2), 'preload: listPromptTemplates exposé');
 assert(/buildPrompt/.test(preloadCodeV2), 'preload: buildPrompt exposé');
 assert(/prompt:templates:list/.test(preloadCodeV2), 'preload: IPC prompt:templates:list');
+assert(/openJobsFolder/.test(preloadCodeV2), 'preload: openJobsFolder exposé (V3)');
+assert(/jobs:openFolder/.test(preloadCodeV2), 'preload: IPC jobs:openFolder (V3)');
 assert(/generatePrompt/.test(preloadCodeV2), 'preload.js: expose generatePrompt (legacy conservé)');
 assert(/listOllamaModels/.test(preloadCodeV2), 'preload.js: expose listOllamaModels (legacy conservé)');
+
+// FileManager : openFolder crée le dossier s'il n'existe pas (fix bouton jobs)
+const fileMgrCode = fs.readFileSync(path.join(base, 'infrastructure/fileManager.js'), 'utf8');
+assert(/mkdirSync/.test(fileMgrCode), 'fileManager: openFolder crée le dossier (mkdirSync recursive) — fix bouton jobs');
+// openFolder ne jette plus si le dossier n'existe pas — il le crée (mkdirSync recursive).
+// openFile jette toujours (normal, on ne crée pas un fichier inexistant).
+const openFolderMatch = fileMgrCode.match(/static openFolder\(folderPath\) \{[\s\S]*?\n  \}/);
+assert(openFolderMatch, 'fileManager: méthode openFolder trouvée');
+assert(!/fs\.existsSync\(folderPath\)/.test(openFolderMatch[0]), 'fileManager: openFolder n\'utilise plus fs.existsSync (crée le dossier au lieu de vérifier)');
 
 // F5 : fenêtre de connexion Google dédiée (le webview est bloqué par Google pour l'OAuth)
 assert(/aistudioLoginBtn/.test(htmlCode), 'index.html: bouton 🔑 Se connecter (ouverture fenêtre dédiée)');
@@ -942,6 +953,10 @@ assert(/Sauvegarde préventive AVANT le recyclage/.test(pipeCode), 'pipeline: wr
 
 // renderer : renderCharts garde contre les canvas absents (sinon crash → carte cassée)
 assert(/priceDistCanvas \|\| !sellerCanvas \|\| !citiesCanvas/.test(appCode), 'app.js: renderCharts garde contre canvas absents');
+// V3 : graphique vendeur en barres horizontales (remplace le doughnut/camembert)
+assert(/indexAxis:\s*'y'/.test(appCode), 'app.js: graphique vendeur en barres horizontales (V3, remplace doughnut)');
+assert(!/type:\s*'doughnut'/.test(appCode), 'app.js: V3 — plus de doughnut pour le graphique vendeur');
+assert(!/cutout:\s*'62%'/.test(appCode), 'app.js: V3 — cutout doughnut supprimé');
 // renderer : cache géocodage tolérant au JSON corrompu
 assert(/try \{ return JSON\.parse\(cached\); \} catch/.test(appCode), 'app.js: cache géocodage tolérant au JSON corrompu');
 // renderer : mapHandDeliveryOnly null-safe
@@ -951,6 +966,28 @@ assert(/mapHandDeliveryEl && mapHandDeliveryEl\.checked/.test(appCode), 'app.js:
 const excelCode2 = fs.readFileSync(path.join(__dirname, '..', 'src/main/infrastructure/excelExporter.js'), 'utf8');
 assert(/Number\.isFinite\(d\.getTime\(\)\)/.test(excelCode2), 'excelExporter: date validée (Number.isFinite)');
 assert(/pad\(d\.getDate\(\)\)/.test(excelCode2), 'excelExporter: date formatée JJ/MM/AAAA HH:mm');
+
+// --- 8. Détection remise en main propre (v3) ---
+// L'ancien extractDeliveryInfo regardait seulement has_option.shipping / options.shipping /
+// delivery.shipping. Sur l'API Leboncoin récente, le shipping est dans le tableau attributes[]
+// avec des paires {key:"shippable", value:true/false}. La nouvelle version vérifie aussi
+// les attributes, le texte de description ("remise en main propre"), et les libellés de carrier.
+const pipeCodeDelivery = fs.readFileSync(path.join(base, 'services/scraping/leboncoin-pipeline.js'), 'utf8');
+// Vérifie les nouveaux chemins d'extraction
+assert(/raw\.attributes/.test(pipeCodeDelivery), 'pipeline: extractDeliveryInfo vérifie raw.attributes[] (API récente)');
+assert(/shippable|is_shippable/.test(pipeCodeDelivery), 'pipeline: extractDeliveryInfo cherche clé "shippable" dans attributes');
+assert(/raw\.is_shippable|raw\.shippable|raw\.is_shipping/.test(pipeCodeDelivery), 'pipeline: extractDeliveryInfo vérifie is_shippable/shippable (variantes récentes)');
+// Détection depuis le texte de la description
+assert(/remise\\s\+en\\s\+main\\s\+propre/.test(pipeCodeDelivery), 'pipeline: extractDeliveryInfo détecte "remise en main propre" dans le body');
+assert(/pas\\s\+d/.test(pipeCodeDelivery), 'pipeline: extractDeliveryInfo détecte "pas d\'envoi" dans le body');
+assert(/retrait/.test(pipeCodeDelivery), 'pipeline: extractDeliveryInfo détecte "retrait" dans le body (main propre)');
+// Heuristique : si attributes existe mais pas de shipping trouvé → main propre
+assert(/Array\.isArray\(raw\.attributes\) && raw\.attributes\.length > 0/.test(pipeCodeDelivery), 'pipeline: extractDeliveryInfo default main_propre quand attributes présent sans shipping');
+// Enrichissement appliqué même sans description (fix crucial : avant, shipping était
+// skipé si parsed.description était null)
+assert(!/if \(parsed\.description\) \{[^}]*if \(parsed\.shipping/.test(pipeCodeDelivery.replace(/\s+/g, ' ')), 'pipeline: enrichissement delivery n\'est PLUS conditionnel à parsed.description');
+// libellé de carrier → shipping=true (livraison)
+assert(/shipping = true/.test(pipeCodeDelivery), 'pipeline: deliveryLabel trouvé → shipping=true (livraison)');
 
 // constants.js : DEFAULTS mort supprimé (valeurs conflictuelles avec settings)
 const constantsCode = fs.readFileSync(path.join(__dirname, '..', 'src/main/config/constants.js'), 'utf8');

@@ -600,6 +600,19 @@ function setupIpcHandlers(getMainWindow) {
     }
   });
 
+  // Handler dédié pour ouvrir le dossier des jobs (JOBS_DIR). Le bouton
+  // "Ouvrir les jobs" de l'IA Studio passait null/'' → ouvrait BASE_OUT_DIR
+  // (le parent) au lieu de JOBS_DIR. Ce handler ouvre directement le bon
+  // dossier et le crée s'il n'existe pas.
+  ipcMain.handle('jobs:openFolder', async () => {
+    try {
+      FileManager.openFolder(JOBS_DIR);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
   ipcMain.handle('file:openFile', async (event, filePath) => {
     try {
       if (!isPathAllowed(filePath)) return { success: false, error: 'Chemin non autorisé.' };

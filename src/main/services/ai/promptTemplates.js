@@ -415,8 +415,9 @@ Format : tableau Markdown classé avec colonnes (Rang | Titre | Prix | Score | C
 // ─────────────────────────────────────────────────────────────────────────
 
 /**
- * Retourne tous les templates (sans le corps du prompt, pour l'UI).
- * @returns {Array<{id,title,category,description,placeholders}>}
+ * Retourne tous les templates (avec le corps du prompt, pour l'UI V3
+ * qui copie le prompt brut avec les trous).
+ * @returns {Array<{id,title,category,description,placeholders,template}>}
  */
 function listTemplates() {
   return TEMPLATES.map((t) => ({
@@ -425,6 +426,7 @@ function listTemplates() {
     category: t.category,
     description: t.description,
     placeholders: t.placeholders,
+    template: t.template,
   }));
 }
 

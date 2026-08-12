@@ -248,6 +248,9 @@ function _normalizeBool(val) {
  *   - has_option.shipping / options.shipping / has_shipping (bool livraison)
  *   - delivery.shipping / delivery_option (livraison Chronopost/Mondial Relay)
  *   - shipping_option.shipping / shippingOptions (variantes récentes)
+ *   - attributes[] : tableau clé-valeur avec {key:"shippable", value:true/false}
+ *   - is_shippable / shippable (variantes récentes)
+ *   - texte de description : "remise en main propre", "main propre", "pas d'envoi"
  *
  * On retourne un objet structuré :
  *   { shipping: bool|null,          // true = livraison possible, false = main propre
@@ -256,6 +259,7 @@ function _normalizeBool(val) {
  *     deliveryLabel: string|null } // libellé humain si dispo
  */
 function extractDeliveryInfo(raw) {
+  // 1) Recherche dans les champs directs (anciennes et nouvelles variantes).
   const shippingVal = firstDefined(
     raw.has_option?.shipping,
     raw.options?.shipping,
@@ -264,10 +268,30 @@ function extractDeliveryInfo(raw) {
     raw.delivery?.shipping,
     raw.shipping_option?.shipping,
     raw.shippingOptions,
+    raw.is_shippable,
+    raw.shippable,
+    raw.is_shipping,
     null
   );
-  const shipping = _normalizeBool(shippingVal);
+  let shipping = _normalizeBool(shippingVal);
 
+  // 2) Recherche dans le tableau attributes (API Leboncoin récente).
+  // Leboncoin stocke les options de livraison sous forme de paires
+  // {key, value} dans un tableau attributes. Les clés possibles :
+  // "shippable", "shipping_fee", "shipping_label", "delivery_mode", etc.
+  if (shipping === null && Array.isArray(raw.attributes)) {
+    for (const attr of raw.attributes) {
+      if (!attr || typeof attr !== 'object') continue;
+      const key = String(attr.key || attr.name || '').toLowerCase();
+      const val = attr.value;
+      if (key === 'shippable' || key === 'is_shippable' || key === 'shipping' || key === 'is_shipping') {
+        shipping = _normalizeBool(val);
+        if (shipping !== null) break;
+      }
+    }
+  }
+
+  // 3) Recherche via le libellé de livraison (deliveryLabel).
   const deliveryOption = firstDefined(
     raw.delivery?.delivery_option,
     raw.delivery_option,
@@ -276,6 +300,57 @@ function extractDeliveryInfo(raw) {
     null
   );
 
+  // 4) Détection depuis les attributes (libellés/carrier).
+  let attrDeliveryLabel = null;
+  if (Array.isArray(raw.attributes)) {
+    for (const attr of raw.attributes) {
+      if (!attr || typeof attr !== 'object') continue;
+      const key = String(attr.key || attr.name || '').toLowerCase();
+      if (key === 'shipping_label' || key === 'delivery_mode' || key === 'carrier') {
+        attrDeliveryLabel = firstNonNull(attr.value, attrDeliveryLabel);
+      }
+    }
+  }
+
+  // 5) Si on n'a toujours pas trouvé shipping mais qu'on a un libellé de
+  //    livraison (carrier/label), c'est que la livraison est proposée.
+  const deliveryLabel = firstNonNull(
+    deliveryOption,
+    raw.delivery?.carrier,
+    raw.delivery?.label,
+    raw.shipping_option?.carrier,
+    raw.shipping_option?.label,
+    attrDeliveryLabel,
+    null
+  );
+  if (shipping === null && deliveryLabel) {
+    shipping = true;
+  }
+
+  // 6) Détection depuis le texte de la description. Sur Leboncoin, "remise
+  //    en main propre" est souvent mentionnée dans le body quand l'envoi
+  //    n'est pas proposé. On cherche des marqueurs explicites.
+  if (shipping === null) {
+    const body = firstDefined(raw.body, raw.description, raw.text, null);
+    if (body && typeof body === 'string') {
+      const lowerBody = body.toLowerCase();
+      if (/remise\s+en\s+main\s+propre|main\s+propre\s+uniquement|pas\s+d['\s]+envoi|retrait\s+uniquement|retrait\s+en\s+main\s+propre/.test(lowerBody)) {
+        shipping = false;
+      }
+    }
+  }
+
+  // 7) Sur Leboncoin, l'ABSENCE d'option de livraison signifie que le
+  //    vendeur ne propose PAS d'envoi → c'est une remise en main propre.
+  //    On ne peut pas deviner pour les annonces sans description ni
+  //    attributs, donc on laisse inconnu uniquement si on n'a vraiment
+  //    rien trouvé. MAIS si on a des attributs (le tableau existe) et
+  //    qu'aucun shipping n'est trouvé, c'est que la livraison n'est PAS
+  //    proposée → main propre.
+  if (shipping === null && Array.isArray(raw.attributes) && raw.attributes.length > 0) {
+    shipping = false;
+  }
+
   let handDelivery = null;
   if (shipping === false) handDelivery = true;
   else if (shipping === true) handDelivery = false;
@@ -283,15 +358,6 @@ function extractDeliveryInfo(raw) {
   let deliveryMode = 'inconnu';
   if (shipping === true) deliveryMode = 'livraison';
   else if (shipping === false) deliveryMode = 'main_propre';
-
-  const deliveryLabel = firstNonNull(
-    deliveryOption,
-    raw.delivery?.carrier,
-    raw.delivery?.label,
-    raw.shipping_option?.carrier,
-    raw.shipping_option?.label,
-    null
-  );
 
   return { shipping, handDelivery, deliveryMode, deliveryLabel };
 }
@@ -647,23 +713,36 @@ class DescriptionEnricher {
 
         if (res && res.html) {
           const parsed = this.parseHtmlDescription(res.html, ad.id);
+          // Enrichissement des champs extraits de la page de détail.
+          // IMPORTANT : on applique les infos de livraison (shipping, deliveryMode,
+          // etc.) MÊME si la description n'a pas été trouvée — sur la page de
+          // détail, les __NEXT_DATA__ contiennent souvent les attributs de
+          // livraison dans un objet séparé du body. Avant, on skipait TOUT
+          // l'enrichissement quand parsed.description était null, ce qui
+          // laissait shipping=null (inconnu) même quand la page de détail
+          // avait l'info → la "remise en main propre" n'était jamais détectée.
+          let enriched = false;
+          if (parsed.shipping != null && ad.shipping == null) { ad.shipping = parsed.shipping; enriched = true; }
+          if (parsed.handDelivery != null && ad.handDelivery == null) { ad.handDelivery = parsed.handDelivery; enriched = true; }
+          if (parsed.deliveryMode && parsed.deliveryMode !== 'inconnu' && (!ad.deliveryMode || ad.deliveryMode === 'inconnu')) {
+            ad.deliveryMode = parsed.deliveryMode; enriched = true;
+          }
+          if (parsed.deliveryLabel && !ad.deliveryLabel) { ad.deliveryLabel = parsed.deliveryLabel; enriched = true; }
+          if (parsed.category && !ad.category) { ad.category = parsed.category; enriched = true; }
+          if (parsed.sellerRating != null && ad.sellerRating == null) { ad.sellerRating = parsed.sellerRating; enriched = true; }
+          if (parsed.sellerRatingCount != null && ad.sellerRatingCount == null) { ad.sellerRatingCount = parsed.sellerRatingCount; enriched = true; }
+
           if (parsed.description) {
             ad.description = parsed.description;
             successCount++;
             this.consecutiveBlocks = 0;
-            // Enrichissement des champs extraits de la page de détail.
-            // On ne remplace QUE si la valeur courante est absente (null) :
-            // on ne perd jamais une donnée déjà acquise sur la liste.
-            if (parsed.shipping != null && ad.shipping == null) ad.shipping = parsed.shipping;
-            if (parsed.handDelivery != null && ad.handDelivery == null) ad.handDelivery = parsed.handDelivery;
-            if (parsed.deliveryMode && parsed.deliveryMode !== 'inconnu' && (!ad.deliveryMode || ad.deliveryMode === 'inconnu')) {
-              ad.deliveryMode = parsed.deliveryMode;
-            }
-            if (parsed.deliveryLabel && !ad.deliveryLabel) ad.deliveryLabel = parsed.deliveryLabel;
-            if (parsed.category && !ad.category) ad.category = parsed.category;
-            if (parsed.sellerRating != null && ad.sellerRating == null) ad.sellerRating = parsed.sellerRating;
-            if (parsed.sellerRatingCount != null && ad.sellerRatingCount == null) ad.sellerRatingCount = parsed.sellerRatingCount;
             this.logger.info(`✅ [${done}/${targets.length}] ${(ad.title || '').slice(0, 50)}`);
+          } else if (enriched) {
+            // Pas de description, mais on a quand même enrichi des attributs
+            // (livraison, catégorie, note vendeur) depuis les __NEXT_DATA__.
+            successCount++;
+            this.consecutiveBlocks = 0;
+            this.logger.info(`✅ [${done}/${targets.length}] ${(ad.title || '').slice(0, 50)} (attributs enrichis, description absente)`);
           } else {
             notFoundCount++;
             this.logger.warn(`⚠️ [${done}/${targets.length}] Description non trouvée sur ${ad.id}`);

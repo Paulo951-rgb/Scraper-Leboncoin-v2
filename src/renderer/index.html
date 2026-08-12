@@ -190,22 +190,10 @@
             </div>
 
             <div class="card">
-              <h3>🤖 Bibliothèque de prompts préfaits</h3>
-              <p class="text-muted mb-15 font-small">Sélectionnez un prompt générique, remplissez les champs, et le prompt est assemblé instantanément. <strong>Aucune IA, aucun serveur, aucune clé API</strong> — les prompts sont à trous et réutilisables pour n'importe quel type de produit.</p>
-
-              <div class="form-group">
-                <label for="aistudioTemplateSelect">Choisir un prompt :</label>
-                <select id="aistudioTemplateSelect" class="filter-select"></select>
-                <p id="aistudoTemplateDesc" class="text-muted font-small" style="margin-top:6px;"></p>
-              </div>
-
-              <div id="aistudioFieldsContainer">
-                <!-- Champs générés dynamiquement selon le template sélectionné -->
-              </div>
-
-              <div class="actions">
-                <button id="aistudioApplyBtn" class="btn btn-primary">✨ Assembler le prompt</button>
-                <button id="aistudioCopyBtn" class="btn btn-secondary">📋 Copier le prompt</button>
+              <h3>🤖 Prompts préfaits à trous</h3>
+              <p class="text-muted mb-15 font-small">7 prompts longs, complets et génériques. Pour chacun : remplissez les champs directement dans la carte puis cliquez « Copier », ou copiez le prompt <strong>avec les trous</strong> et remplissez-les dans AI Studio. <strong>Aucune IA, aucune clé API.</strong></p>
+              <div id="aistudioCardsContainer" class="prompt-cards-grid">
+                <!-- Cartes de prompts générées dynamiquement -->
               </div>
               <p id="aistudioGenStatus" class="text-muted font-small" style="margin-top:8px;"></p>
             </div>
@@ -227,11 +215,6 @@
                 <webview id="aistudioWebview" src="https://aistudio.google.com/" allowpopups partition="persist:aistudio" preload="../main/aistudioLoginPreload.js" webpreferences="contextIsolation=no,nodeIntegration=no"></webview>
                 <div id="aistudioWebviewLoading" class="browser-loading-badge">⏳ Chargement…</div>
               </div>
-            </div>
-
-            <div class="card">
-              <h3>📝 Prompt assemblé</h3>
-              <textarea id="aistudioPromptOutput" rows="10" class="prompt-output" placeholder="Sélectionnez un prompt, remplissez les champs, puis cliquez sur « Assembler le prompt ». Le texte apparaîtra ici, prêt à copier dans AI Studio."></textarea>
             </div>
           </div>
         </div>

@@ -1371,48 +1371,59 @@ function renderCharts(ads) {
     });
   }
 
-  // 2) Vendeurs particuliers vs pros
+  // 2) Vendeurs particuliers vs pros — barres horizontales comparatives
+  // (remplace le camembert/doughnut peu lisible pour comparer 2 valeurs).
   const proCount = ads.filter((a) => a.isPro).length;
   const partCount = ads.length - proCount;
+  const total = partCount + proCount;
+  const partPct = total ? Math.round((partCount / total) * 100) : 0;
+  const proPct = total ? 100 - partPct : 0;
   const sellerCtx = sellerCanvas.getContext('2d');
   if (sellerChartInstance) sellerChartInstance.destroy();
 
   sellerChartInstance = new Chart(sellerCtx, {
-    type: 'doughnut',
+    type: 'bar',
     data: {
       labels: ['Particuliers', 'Professionnels'],
       datasets: [{
+        label: 'Nombre d\'annonces',
         data: [partCount, proCount],
         backgroundColor: ['#38bdf8', '#8b5cf6'],
-        // Chart.js dessine sur un canvas : les variables CSS ne sont pas
-        // résolues et rendent la bordure invisible/noire. On lit la valeur
-        // réellement calculée par le navigateur via getComputedStyle.
-        borderColor: getComputedStyle(document.body).getPropertyValue('--card-bg').trim() || '#1e293b',
-        borderWidth: 3,
-        hoverOffset: 8,
+        borderRadius: 8,
+        borderSkipped: false,
+        barPercentage: 0.65,
+        categoryPercentage: 0.7,
       }],
     },
     options: {
-      responsive: true, maintainAspectRatio: false,
-      cutout: '62%',
+      indexAxis: 'y',
+      responsive: true,
+      maintainAspectRatio: false,
       plugins: {
-        title: { display: true, text: 'Vendeurs Particuliers vs Pros', padding: { bottom: 12 } },
-        legend: {
-          position: 'bottom',
-          labels: { usePointStyle: true, pointStyle: 'circle', padding: 18, boxWidth: 10 },
-        },
+        title: { display: true, text: 'Vendeurs Particuliers vs Pros', padding: { bottom: 10 } },
+        legend: { display: false },
         tooltip: {
           backgroundColor: 'rgba(15,23,42,0.95)',
           padding: 12,
           cornerRadius: 8,
           callbacks: {
             label: (ctx) => {
-              const total = partCount + proCount;
-              const v = ctx.parsed;
+              const v = ctx.parsed.x;
               const pct = total ? Math.round((v / total) * 100) : 0;
               return `${ctx.label}: ${v.toLocaleString('fr-FR')} (${pct}%)`;
             },
           },
+        },
+      },
+      scales: {
+        x: {
+          beginAtZero: true,
+          ticks: { precision: 0, color: getComputedStyle(document.body).getPropertyValue('--text-muted').trim() || '#94a3b8' },
+          grid: { color: 'rgba(148,163,184,0.12)' },
+        },
+        y: {
+          ticks: { color: getComputedStyle(document.body).getPropertyValue('--text-muted').trim() || '#94a3b8' },
+          grid: { display: false },
         },
       },
     },
