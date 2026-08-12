@@ -12,6 +12,7 @@ const { ExcelExporter } = require('../infrastructure/excelExporter');
 const { AdAnalyzer } = require('../services/ai/adAnalyzer');
 const { MarketValueAnalyzer } = require('../services/ai/marketValueAnalyzer');
 const { PromptGenerator } = require('../services/ai/promptGenerator');
+const { listTemplates, buildPrompt } = require('../services/ai/promptTemplates');
 const { checkOllamaHealth, checkModelAvailable } = require('../services/ai/ollamaHealth');
 const { Notifier } = require('../infrastructure/notifications');
 const { JOBS_DIR, BASE_OUT_DIR } = require('../config/constants');
@@ -452,6 +453,27 @@ function setupIpcHandlers(getMainWindow) {
       locale: app.getLocale(),
       timestamp: new Date().toISOString(),
     };
+  });
+
+  // ─── Bibliothèque de prompts préfaits (IA Studio V2) ──────────────────
+  // Remplace l'ancien générateur IA par des templates statiques à trous.
+  // Aucune IA, aucun serveur : assemblage instantané.
+  ipcMain.handle('prompt:templates:list', async () => {
+    try {
+      return { templates: listTemplates() };
+    } catch (err) {
+      return { templates: [], error: err.message };
+    }
+  });
+
+  ipcMain.handle('prompt:templates:build', async (event, { templateId, values }) => {
+    try {
+      const result = buildPrompt(templateId, values || {});
+      if (result.error) return { prompt: '', error: result.error };
+      return { prompt: result.prompt };
+    } catch (err) {
+      return { prompt: '', error: err.message };
+    }
   });
 
   // Génération de prompt personnalisé via Ollama LOCAL (module AI Studio).

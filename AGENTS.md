@@ -18,6 +18,11 @@ services/ai/
                          → marketAnalysis { verdict, verdictLabel, deltaEur, realValue,
                            marketMin/Max, sources[], rationale, _fallback }
   promptGenerator.js     IA 3 — Prompt (~50 lignes, tout produit) via getAIProvider
+                         (LEGACY — conservé pour compat, plus utilisé par l'UI IA Studio)
+  promptTemplates.js    Bibliothèque de prompts préfaits (V2, remplace promptGenerator
+                         dans l'UI IA Studio). 7 templates génériques à trous
+                         ([TYPE_DE_PRODUIT], [BUDGET_MIN], etc.). Aucune IA, assemblage
+                         instantané. API : listTemplates() / getTemplate() / buildPrompt().
   providers/             interface AIProvider + OllamaProvider + aiProviderRegistry
   search/                interface SearchProvider + DuckDuckGoSearchProvider (keyless) + registry
   aiCache.js             cache préfixé (analyse: / market:) — MAX 5000 entrées
@@ -46,7 +51,7 @@ services/analysis/adStats.js statistiques de prix (sans scoring — remplace dea
 services/maintenance/storageCleaner
 infrastructure/              excelExporter, fileManager, notifications
 utils/                      helpers, diagnostics, integrity, rateLimiter, logger, secretStore
-renderer/                    app.js, index.html, styles.css, widget.html, aiStudioModule.js, helpModule.js (FAQ/Help/Feedback)
+renderer/                    app.js, index.html, styles.css, widget.html, aiStudioModule.js (V2: prompts préfaits à trous, plus de génération IA), helpModule.js (FAQ/Help/Feedback)
 ```
 
 ## Conventions clés
@@ -227,5 +232,5 @@ renderer/                    app.js, index.html, styles.css, widget.html, aiStud
 
 ## Commandes
 - Lancer l'app : `npm start` (electron --max-old-space-size=8192 .)
-- Tests : `npm test` (ou `node test/regression.test.js`) — 479 assertions
+- Tests : `npm test` (ou `node test/regression.test.js`) — 504 assertions
 - Branche stable : `refactor/professional-architecture`

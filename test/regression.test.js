@@ -533,34 +533,72 @@ assert(/tab-ai-studio/.test(htmlCode), 'index.html: onglet tab-ai-studio présen
 assert(/aistudioWebview/.test(htmlCode), 'index.html: webview navigateur intégré');
 assert(/aistudio\.google\.com/.test(htmlCode), 'index.html: URL AI Studio par défaut');
 assert(/aistudioOpenJobsBtn/.test(htmlCode), 'index.html: bouton ouvrir dossier des jobs');
-assert(/aistudioObjective/.test(htmlCode), 'index.html: champ objectif d\'analyse');
-assert(/aistudioCustomHints/.test(htmlCode), 'index.html: champ consignes supplémentaires');
-assert(/aistudioOllamaUrl/.test(htmlCode), 'index.html: champ URL serveur Ollama');
-assert(/aistudioOllamaModel/.test(htmlCode), 'index.html: select modèle Ollama');
-assert(/aistudioOllamaTestBtn/.test(htmlCode), 'index.html: bouton tester Ollama (lister modèles)');
-assert(/aistudioGenerateBtn/.test(htmlCode), 'index.html: bouton génération prompt par IA locale');
+assert(/aistudioTemplateSelect/.test(htmlCode), 'index.html: sélecteur de prompts préfaits (V2)');
+assert(/aistudioFieldsContainer/.test(htmlCode), 'index.html: conteneur champs dynamiques (placeholders)');
+assert(/aistudioApplyBtn/.test(htmlCode), 'index.html: bouton « Assembler le prompt » (V2, remplace génération IA)');
+assert(/aistudioCopyBtn/.test(htmlCode), 'index.html: bouton copier le prompt');
+assert(/aistudioPromptOutput/.test(htmlCode), 'index.html: textarea de sortie du prompt assemblé');
+assert(!/aistudioOllamaUrl/.test(htmlCode), 'index.html: V2 — champ URL Ollama supprimé (plus de génération IA)');
+assert(!/aistudioGenerateBtn/.test(htmlCode), 'index.html: V2 — bouton « Générer par IA » supprimé');
+assert(!/aistudioDomainSelect/.test(htmlCode), 'index.html: V2 — sélecteur de domaine supprimé (remplacé par templates)');
+assert(!/aistudioObjective/.test(htmlCode), 'index.html: V2 — champ objectif supprimé (intégré aux templates)');
 assert(/Comment utiliser ce module/.test(htmlCode), 'index.html: panneau explicatif');
 assert(existsSync(path.join(__dirname, '..', 'src/renderer/aiStudioModule.js')), 'renderer/aiStudioModule.js present');
 const aistudioModCode = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/aiStudioModule.js'), 'utf8');
 assert(/window\.aiStudioModule/.test(aistudioModCode), 'aiStudioModule: exposé sur window.aiStudioModule');
-assert(/generatePrompt/.test(aistudioModCode), 'aiStudioModule: generatePrompt appelle l\'IA locale via IPC');
-assert(/window\.api\.generatePrompt/.test(aistudioModCode), 'aiStudioModule: appel IPC prompt:generate');
-assert(/testOllama/.test(aistudioModCode), 'aiStudioModule: testOllama (vérifie la connexion + liste les modèles)');
-assert(/listOllamaModels/.test(aistudioModCode), 'aiStudioModule: appel IPC ollama:models');
+assert(/loadTemplates/.test(aistudioModCode), 'aiStudioModule: loadTemplates (charge les prompts préfaits via IPC)');
+assert(/window\.api\.listPromptTemplates/.test(aistudioModCode), 'aiStudioModule: appel IPC listPromptTemplates');
+assert(/window\.api\.buildPrompt/.test(aistudioModCode), 'aiStudioModule: appel IPC buildPrompt (assemblage)');
+assert(/applyPrompt/.test(aistudioModCode), 'aiStudioModule: applyPrompt (assemble le prompt sélectionné)');
+assert(/renderFields/.test(aistudioModCode), 'aiStudioModule: renderFields (génère les champs dynamiquement)');
+assert(/selectTemplate/.test(aistudioModCode), 'aiStudioModule: selectTemplate (change de template)');
+assert(!/generatePrompt/.test(aistudioModCode), 'aiStudioModule: V2 — generatePrompt supprimé (plus d\'IA Ollama)');
+assert(!/testOllama/.test(aistudioModCode), 'aiStudioModule: V2 — testOllama supprimé (plus de config Ollama)');
+assert(!/DOMAINS/.test(aistudioModCode), 'aiStudioModule: V2 — DOMAINS supprimé (remplacé par templates)');
 assert(!/MASTER_PROMPT/.test(aistudioModCode), 'aiStudioModule: prompts statiques supprimés');
-assert(!/renderPrompt/.test(aistudioModCode), 'aiStudioModule: renderPrompt supprimé (génération IA)');
+assert(!/renderPrompt/.test(aistudioModCode), 'aiStudioModule: renderPrompt supprimé');
 assert(/aistudioOpenJobsBtn/.test(aistudioModCode), 'aiStudioModule: bouton ouvrir jobs branché');
 assert(/aistudio\.google\.com/.test(aistudioModCode), 'aiStudioModule: URL AI Studio par défaut');
 assert(!/require\('electron'\)/.test(aistudioModCode), 'aiStudioModule: pas de require(electron) (renderer sandboxé)');
 assert(/aiStudioModule\.js/.test(htmlCode), 'index.html: inclut aiStudioModule.js');
 
-// IPC prompt:generate + ollama:models exposés
+// promptTemplates.js : bibliothèque de prompts préfaits (V2)
+assert(existsSync(path.join(base, 'services/ai/promptTemplates.js')), 'promptTemplates.js: fichier présent (bibliothèque V2)');
+const promptTmplCode = fs.readFileSync(path.join(base, 'services/ai/promptTemplates.js'), 'utf8');
+assert(/listTemplates/.test(promptTmplCode), 'promptTemplates: listTemplates (expose les templates pour l\'UI)');
+assert(/getTemplate/.test(promptTmplCode), 'promptTemplates: getTemplate (récupère un template par id)');
+assert(/buildPrompt/.test(promptTmplCode), 'promptTemplates: buildPrompt (assemble prompt + valeurs)');
+assert(/TYPE_DE_PRODUIT/.test(promptTmplCode), 'promptTemplates: placeholder [TYPE_DE_PRODUIT] (générique)');
+assert(/NOMBRE_ANNONCES/.test(promptTmplCode), 'promptTemplates: placeholder [NOMBRE_ANNONCES]');
+assert(/BUDGET_MIN/.test(promptTmplCode), 'promptTemplates: placeholder [BUDGET_MIN]');
+assert(/BUDGET_MAX/.test(promptTmplCode), 'promptTemplates: placeholder [BUDGET_MAX]');
+assert(/CRITERES_CLASSEMENT/.test(promptTmplCode), 'promptTemplates: placeholder [CRITERES_CLASSEMENT]');
+// Vérifie qu'aucun template n'est spécifique à une catégorie (hardware, voiture, etc.)
+// Les exemples dans les placeholders (Ex : PC fixes, voitures…) sont OK — ils guident
+// l'utilisateur. Ce qu'on vérifie, c'est que le CORPS des prompts (template:) reste
+// générique et utilise des [PLACEHOLDERS] au lieu de catégories codées en dur.
+const promptBodies = promptTmplCode.split(/template:\s*`/).slice(1).map((s) => s.split('`')[0]);
+const hasHardcodedCategory = promptBodies.some((body) => /cartes? graphiques?|SSD|GPU|llava|hardware pc/i.test(body));
+assert(!hasHardcodedCategory, 'promptTemplates: corps des prompts génériques (pas de catégorie hardware/PC codée en dur)');
+// Compter les templates (au moins 6)
+const tmplCount = (promptTmplCode.match(/id:\s*'[^']+',\s*\n\s*title:/g) || []).length;
+assert(tmplCount >= 6, `promptTemplates: au moins 6 templates (trouvé: ${tmplCount})`);
+
+// IPC prompt:templates:list + prompt:templates:build (V2) + legacy handlers conservés
 const ipcHandlersCode = fs.readFileSync(path.join(base, 'core/ipcHandlers.js'), 'utf8');
-assert(/prompt:generate/.test(ipcHandlersCode), 'ipcHandlers: handler prompt:generate (Ollama local)');
+assert(/prompt:templates:list/.test(ipcHandlersCode), 'ipcHandlers: handler prompt:templates:list (V2)');
+assert(/prompt:templates:build/.test(ipcHandlersCode), 'ipcHandlers: handler prompt:templates:build (V2)');
+assert(/listTemplates/.test(ipcHandlersCode), 'ipcHandlers: import listTemplates depuis promptTemplates');
+assert(/prompt:generate/.test(ipcHandlersCode), 'ipcHandlers: handler prompt:generate conservé (legacy)');
 assert(/ollama:models/.test(ipcHandlersCode), 'ipcHandlers: handler ollama:models (liste modèles installés)');
-const preloadCodeFull = fs.readFileSync(path.join(base, 'preload.js'), 'utf8');
-assert(/generatePrompt/.test(preloadCodeFull), 'preload.js: expose generatePrompt');
-assert(/listOllamaModels/.test(preloadCodeFull), 'preload.js: expose listOllamaModels');
+
+// preload : nouvelles API exposées au renderer
+const preloadCodeV2 = fs.readFileSync(path.join(base, 'preload.js'), 'utf8');
+assert(/listPromptTemplates/.test(preloadCodeV2), 'preload: listPromptTemplates exposé');
+assert(/buildPrompt/.test(preloadCodeV2), 'preload: buildPrompt exposé');
+assert(/prompt:templates:list/.test(preloadCodeV2), 'preload: IPC prompt:templates:list');
+assert(/generatePrompt/.test(preloadCodeV2), 'preload.js: expose generatePrompt (legacy conservé)');
+assert(/listOllamaModels/.test(preloadCodeV2), 'preload.js: expose listOllamaModels (legacy conservé)');
 
 // F5 : fenêtre de connexion Google dédiée (le webview est bloqué par Google pour l'OAuth)
 assert(/aistudioLoginBtn/.test(htmlCode), 'index.html: bouton 🔑 Se connecter (ouverture fenêtre dédiée)');
@@ -579,7 +617,7 @@ assert(/window\.chrome/.test(loginPreloadCode), 'aistudioLoginPreload: window.ch
 // Le webview de l'onglet reçoit aussi le preload + contextIsolation désactivé
 assert(/aistudioLoginPreload\.js/.test(htmlCode), 'index.html: webview reçoit le preload anti-détection Google');
 assert(/contextIsolation=no/.test(htmlCode), 'index.html: webview contextIsolation=no (override navigator côté page)');
-assert(/openAiStudioLogin/.test(preloadCodeFull), 'preload.js: expose openAiStudioLogin');
+assert(/openAiStudioLogin/.test(preloadCodeV2), 'preload.js: expose openAiStudioLogin');
 
 // === MODULE D'AIDE : FAQ / Help / Feedback ===
 assert(/openFaqBtn/.test(htmlCode), 'index.html: bouton FAQ présent');
@@ -599,7 +637,7 @@ assert(/window\.helpModule/.test(helpModCode), 'helpModule: exposé sur window.h
 assert(/class="help-btn"/.test(htmlCode), 'index.html: boutons aide discrets (class help-btn)');
 // IPC diagnostic non sensible pour le feedback
 assert(/app:getDiagnostics/.test(ipcHandlersCode), 'ipcHandlers: handler app:getDiagnostics (diagnostic feedback)');
-assert(/getDiagnostics/.test(preloadCodeFull), 'preload.js: expose getDiagnostics');
+assert(/getDiagnostics/.test(preloadCodeV2), 'preload.js: expose getDiagnostics');
 // Le feedback n'envoie rien sur le réseau tant que l'API n'est pas branchée (V2).
 // On vérifie l'absence de fetch ACTIF (hors commentaires) et la présence de
 // l'archive locale (comportement réel tant que le backend n'existe pas).

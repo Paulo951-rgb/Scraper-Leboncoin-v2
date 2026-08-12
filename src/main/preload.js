@@ -23,6 +23,8 @@ contextBridge.exposeInMainWorld('api', {
 
   analyzeMarket: (data) => ipcRenderer.invoke('market:analyze', data),
   generatePrompt: (data) => ipcRenderer.invoke('prompt:generate', data),
+  listPromptTemplates: () => ipcRenderer.invoke('prompt:templates:list'),
+  buildPrompt: (templateId, values) => ipcRenderer.invoke('prompt:templates:build', { templateId, values }),
   listOllamaModels: (data) => ipcRenderer.invoke('ollama:models', data),
   listSearchProviders: () => ipcRenderer.invoke('search:providers'),
 

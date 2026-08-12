@@ -190,95 +190,21 @@
             </div>
 
             <div class="card">
-              <h3>🤖 Générateur de prompt (IA)</h3>
-              <p class="text-muted mb-15 font-small">Plus de prompts statiques pré-enregistrés. Une IA <strong>locale</strong> (Ollama, sur votre PC) génère un prompt d'analyse complet adapté à votre domaine et vos variables. Aucune IA sur le web, aucune clé API.</p>
+              <h3>🤖 Bibliothèque de prompts préfaits</h3>
+              <p class="text-muted mb-15 font-small">Sélectionnez un prompt générique, remplissez les champs, et le prompt est assemblé instantanément. <strong>Aucune IA, aucun serveur, aucune clé API</strong> — les prompts sont à trous et réutilisables pour n'importe quel type de produit.</p>
 
               <div class="form-group">
-                <label for="aistudioDomainSelect">Domaine / type de données :</label>
-                <select id="aistudioDomainSelect" class="filter-select"></select>
+                <label for="aistudioTemplateSelect">Choisir un prompt :</label>
+                <select id="aistudioTemplateSelect" class="filter-select"></select>
+                <p id="aistudoTemplateDesc" class="text-muted font-small" style="margin-top:6px;"></p>
               </div>
 
-              <div class="form-group">
-                <label for="aistudioObjective">Objectif de l'analyse</label>
-                <textarea id="aistudioObjective" class="filter-input" rows="3" placeholder="Ex : Trouve les meilleures affaires et opportunités d'achat-revente, estime la valeur marché de chaque annonce (recherche Web + IA locale) et calcule l'écart de prix en €."></textarea>
-              </div>
-
-              <div class="form-group">
-                <label for="aistudioCustomHints">Consignes supplémentaires (optionnel)</label>
-                <textarea id="aistudioCustomHints" class="filter-input" rows="2" placeholder="Ex : ignore les annonces &gt; 500€, privilégie les PC fixes avec GPU dédié…"></textarea>
-              </div>
-
-              <div class="form-row">
-                <div class="form-group">
-                  <label for="varSearchContext">Recherche initiale</label>
-                  <input type="text" id="varSearchContext" class="filter-input" placeholder="ex : PC fixes">
-                </div>
-                <div class="form-group">
-                  <label for="varProductFamily">Famille de produits</label>
-                  <input type="text" id="varProductFamily" class="filter-input" placeholder="ex : PC fixes">
-                </div>
-              </div>
-
-              <div class="form-row">
-                <div class="form-group">
-                  <label for="varComponent">Composant clé</label>
-                  <input type="text" id="varComponent" class="filter-input" placeholder="ex : SSD / GPU">
-                </div>
-                <div class="form-group">
-                  <label for="varCapacity">Capacité / variante 1</label>
-                  <input type="text" id="varCapacity" class="filter-input" placeholder="ex : 500 Go">
-                </div>
-                <div class="form-group">
-                  <label for="varCapacity2">Capacité / variante 2</label>
-                  <input type="text" id="varCapacity2" class="filter-input" placeholder="ex : 1 To">
-                </div>
-                <div class="form-group">
-                  <label for="varDealThreshold">Seuil « bonne affaire »</label>
-                  <input type="text" id="varDealThreshold" class="filter-input" placeholder="ex : 30 €">
-                </div>
-              </div>
-
-              <div class="form-row">
-                <div class="form-group">
-                  <label for="varTopN">Top meilleures affaires</label>
-                  <input type="number" id="varTopN" class="filter-input" min="1" max="500">
-                </div>
-                <div class="form-group">
-                  <label for="varFlipN">Top achat-revente</label>
-                  <input type="number" id="varFlipN" class="filter-input" min="1" max="500">
-                </div>
-                <div class="form-group">
-                  <label for="varCompN">Top composants</label>
-                  <input type="number" id="varCompN" class="filter-input" min="1" max="500">
-                </div>
-                <div class="form-group">
-                  <label for="varNuggetN">Top pépites</label>
-                  <input type="number" id="varNuggetN" class="filter-input" min="1" max="500">
-                </div>
-                <div class="form-group">
-                  <label for="varAvoidN">Top à éviter</label>
-                  <input type="number" id="varAvoidN" class="filter-input" min="1" max="500">
-                </div>
-              </div>
-
-              <div class="form-group">
-                <label for="aistudioOllamaUrl">URL du serveur Ollama (local)</label>
-                <input type="text" id="aistudioOllamaUrl" class="filter-input" value="http://127.0.0.1:11434" placeholder="http://127.0.0.1:11434">
-              </div>
-
-              <div class="form-group">
-                <label for="aistudioOllamaModel">Modèle Ollama (local)</label>
-                <div class="form-row" style="align-items:flex-end;gap:6px;">
-                  <select id="aistudioOllamaModel" class="filter-select" style="flex:1;">
-                    <option value="llama3">llama3 (défaut)</option>
-                  </select>
-                  <button id="aistudioOllamaTestBtn" class="btn btn-secondary btn-small" title="Vérifier qu'Ollama est démarré et lister les modèles installés">🔄 Lister</button>
-                </div>
-                <p id="aistudioOllamaStatus" class="text-muted font-small" style="margin-top:6px;"></p>
+              <div id="aistudioFieldsContainer">
+                <!-- Champs générés dynamiquement selon le template sélectionné -->
               </div>
 
               <div class="actions">
-                <button id="aistudioGenerateBtn" class="btn btn-primary">✨ Générer par IA locale</button>
+                <button id="aistudioApplyBtn" class="btn btn-primary">✨ Assembler le prompt</button>
                 <button id="aistudioCopyBtn" class="btn btn-secondary">📋 Copier le prompt</button>
               </div>
               <p id="aistudioGenStatus" class="text-muted font-small" style="margin-top:8px;"></p>
@@ -304,8 +230,8 @@
             </div>
 
             <div class="card">
-              <h3>📝 Prompt généré</h3>
-              <textarea id="aistudioPromptOutput" rows="10" class="prompt-output" placeholder="Sélectionnez un prompt et un domaine, puis cliquez sur « Générer le prompt »."></textarea>
+              <h3>📝 Prompt assemblé</h3>
+              <textarea id="aistudioPromptOutput" rows="10" class="prompt-output" placeholder="Sélectionnez un prompt, remplissez les champs, puis cliquez sur « Assembler le prompt ». Le texte apparaîtra ici, prêt à copier dans AI Studio."></textarea>
             </div>
           </div>
         </div>
