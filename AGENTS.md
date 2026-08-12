@@ -178,8 +178,19 @@ renderer/                    app.js, index.html, styles.css, widget.html, aiStud
 - `file:openFolder/openFile` validés contre BASE_OUT_DIR (anti path-traversal)
 - Clés API via `safeStorage` (secretStore.js), pas en clair
 - Clé API recherche via secretStore (4e passe), pas en clair localStorage
+- **XSS attribut HTML (4e passe)** : `escapePath()` échappe désormais `"` → `&quot;`
+  et `&` → `&amp;` en plus de `\` et `'`. Les données scrapées (URLs, images,
+  a.id) injectées dans des attributs HTML (`src=`, `onclick=`) sont maintenant
+  échappées via `escapeHtml()` (src) ou `escapePath()` (onclick double-contexte
+  HTML+JS). `escapeHtml` ne convient PAS pour `onclick="func('...')"` car le
+  navigateur décode `&#39;` en `'` avant d'exécuter le JS → casserait la chaîne.
+- **Hardening webview (4e passe)** : handler `will-attach-webview` sur
+  `web-contents-created` — verrouille `nodeIntegration:false`,
+  `contextIsolation:true`, `sandbox:true`, supprime tout preload injecté,
+  isole la session. Empêche un renderer compromis de créer un `<webview>`
+  avec des webpreferences permissives.
 
 ## Commandes
 - Lancer l'app : `npm start` (electron --max-old-space-size=8192 .)
-- Tests : `npm test` (ou `node test/regression.test.js`) — 451 assertions
+- Tests : `npm test` (ou `node test/regression.test.js`) — 460 assertions
 - Branche stable : `refactor/professional-architecture`

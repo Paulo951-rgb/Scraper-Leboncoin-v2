@@ -265,3 +265,23 @@ app.on('window-all-closed', () => {
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
+
+// Verrouille les <webview> créés dynamiquement par le renderer. webviewTag:true
+// est activé sur la fenêtre principale, donc sans ce handler un renderer
+// compromis pourrait créer un <webview> avec nodeIntegration:true et contourner
+// tout le sandboxing. On force les webpreferences sûres sur TOUS les webview.
+app.on('web-contents-created', (_event, contents) => {
+  contents.on('will-attach-webview', (_e, webPreferences, params) => {
+    // Supprime tout preload injecté par le renderer — seul le preload app est autorisé.
+    delete webPreferences.preload;
+    // Verrouille le sandbox : pas de Node.js dans le webview.
+    webPreferences.nodeIntegration = false;
+    webPreferences.contextIsolation = true;
+    webPreferences.sandbox = true;
+    webPreferences.webSecurity = true;
+    // Isole chaque webview dans sa propre session (pas d'accès au cache/cookies app).
+    if (!params.partition || params.partition === 'persist:default') {
+      webPreferences.partition = 'webview-sandbox';
+    }
+  });
+});

@@ -346,7 +346,7 @@ openCompareModalBtn.addEventListener('click', () => {
       const sign = ma.deltaEur > 0 ? '+' : '';
       return `
       <div class="compare-col">
-        <img src="${a.images?.[0] || noPhotoUrl()}" style="width:100%; height:140px; object-fit:cover; border-radius:6px;">
+        <img src="${escapeHtml(a.images?.[0] || noPhotoUrl())}" style="width:100%; height:140px; object-fit:cover; border-radius:6px;">
         <strong>${escapeHtml(identifiedName(a))}</strong>
         <div style="font-size:1.2rem; font-weight:bold; color:var(--primary-color);">${a.price} €</div>
         <div style="font-size:0.8rem; color:var(--text-muted);">Valeur marché : ${ma.realValue != null ? ma.realValue + ' €' : '-'}</div>
@@ -898,7 +898,7 @@ function renderExplorerAds() {
         const badgeHtml = renderMarketBadge(ma);
 
         const isStarred = starredAds.has(String(a.id));
-        const starIcon = `<span class="star-icon ${isStarred ? 'starred' : ''}" onclick="toggleStar('${a.id}')">★</span>`;
+        const starIcon = `<span class="star-icon ${isStarred ? 'starred' : ''}" onclick="toggleStar('${escapePath(a.id)}')">★</span>`;
         const isChecked = compareSet.has(String(a.id));
 
         const nameHtml = (a.adAnalysis && !a.adAnalysis._fallback && a.adAnalysis.identifiedProduct)
@@ -921,7 +921,7 @@ function renderExplorerAds() {
           <td>${summaryHtml}</td>
           <td>
             <div style="display:flex; gap:4px;">
-              <button class="btn btn-secondary btn-small" onclick="openAdDetail('${a.id}')">👁️ Fiche</button>
+              <button class="btn btn-secondary btn-small" onclick="openAdDetail('${escapePath(a.id)}')">👁️ Fiche</button>
               <button class="btn btn-secondary btn-small" onclick="openUrl('${escapePath(a.url)}')">🔗</button>
             </div>
           </td>
@@ -943,16 +943,16 @@ function renderExplorerAds() {
         return `
         <div class="ad-card">
           <div class="ad-card-thumb-box">
-            <img src="${thumbUrl}" alt="Photo" class="ad-card-thumb" onclick="openAdDetail('${a.id}')">
+            <img src="${escapeHtml(thumbUrl)}" alt="Photo" class="ad-card-thumb" onclick="openAdDetail('${escapePath(a.id)}')">
             <div class="ad-card-badge-box">${badgeHtml}</div>
-            <div class="ad-card-star"><span class="star-icon ${isStarred ? 'starred' : ''}" onclick="toggleStar('${a.id}')">★</span></div>
+            <div class="ad-card-star"><span class="star-icon ${isStarred ? 'starred' : ''}" onclick="toggleStar('${escapePath(a.id)}')">★</span></div>
           </div>
           <div class="ad-card-body">
             <div class="ad-card-title">${escapeHtml(identifiedName(a))}</div>
             <div class="ad-card-price">${a.price != null ? a.price + ' €' : '-'}</div>
             <div class="ad-card-city">📍 ${escapeHtml(a.city || 'Inconnue')}</div>
             <div class="ad-card-footer">
-              <button class="btn btn-secondary btn-small" style="flex:1;" onclick="openAdDetail('${a.id}')">👁️ Fiche Détaillée</button>
+              <button class="btn btn-secondary btn-small" style="flex:1;" onclick="openAdDetail('${escapePath(a.id)}')">👁️ Fiche Détaillée</button>
               <button class="btn btn-primary btn-small" onclick="openUrl('${escapePath(a.url)}')">🔗 Voir</button>
             </div>
           </div>
@@ -1103,7 +1103,7 @@ window.openAdDetail = (adId) => {
 
   galleryThumbnails.innerHTML = images
     .map(
-      (img, i) => `<img src="${img}" alt="Thumb" class="thumb-img ${i === 0 ? 'active' : ''}" onclick="switchGalleryImg('${img}', this)">`
+      (img, i) => `<img src="${escapeHtml(img)}" alt="Thumb" class="thumb-img ${i === 0 ? 'active' : ''}" onclick="switchGalleryImg('${escapePath(img)}', this)">`
     )
     .join('');
 
@@ -1464,9 +1464,18 @@ const PLACEHOLDER_SVG = (label) =>
   )}`;
 const noPhotoUrl = () => PLACEHOLDER_SVG('Pas de photo');
 
+// Échappe une valeur injectée dans un attribut HTML contenant du JS
+// (ex: onclick="func('VALUE')"). Double contexte : attribut HTML (") +
+// chaîne JS ('\). escapeHtml ne convient PAS ici car il transformerait ' en
+// &#39; que le navigateur décode en ' avant d'exécuter le JS → casserait la
+// chaîne JS. On échappe donc \ et ' pour le JS, puis " et & pour le HTML.
 function escapePath(pathStr) {
   if (!pathStr) return '';
-  return String(pathStr).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  return String(pathStr)
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;');
 }
 
 window.openUrl = (urlStr) => {

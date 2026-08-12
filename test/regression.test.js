@@ -258,6 +258,17 @@ assert(!/let\s+priceChartInstance\b/.test(appCode), 'app.js: priceChartInstance 
 assert(/if \(viewMode === 'table'\) viewGridBtn\.click\(\);\s*else viewTableBtn\.click\(\);/.test(appCode), 'app.js: Spacebar toggles table<->grid');
 assert(/replace\(\/&\/g, '&amp;'\)/.test(appCode) && /replace\(\/"\/g, '&quot;'\)/.test(appCode), 'app.js: escapeHtml escapes & " < >');
 assert(/window\.api\.openExternal\(urlStr\)/.test(appCode), 'app.js: openUrl uses openExternal');
+
+// XSS : escapePath doit échapper " (breakout d'attribut HTML) en plus de \ et '
+assert(/escapePath[\s\S]*?replace\(\/&\/g, '&amp;'\)/.test(appCode), 'app.js: escapePath échappe & (anti-double-encoding)');
+assert(/escapePath[\s\S]*?replace\(\/"\/g, '&quot;'\)/.test(appCode), 'app.js: escapePath échappe " (XSS attribut HTML)');
+// XSS : les src= d'images scrapées doivent passer par escapeHtml
+assert(/src="\$\{escapeHtml\(/.test(appCode), 'app.js: img src utilise escapeHtml (XSS src attribute)');
+// XSS : les a.id dans onclick doivent être échappés (defense in depth)
+assert(!/openAdDetail\('\$\{a\.id\}'\)/.test(appCode), 'app.js: a.id échappé dans openAdDetail onclick');
+assert(!/toggleStar\('\$\{a\.id\}'\)/.test(appCode), 'app.js: a.id échappé dans toggleStar onclick');
+// XSS : switchGalleryImg doit échapper l'URL image
+assert(/switchGalleryImg\('\$\{escapePath\(img\)\}'/.test(appCode), 'app.js: switchGalleryImg échappe img (XSS onclick)');
 assert(/openFolder\(''\)/.test(appCode) && !/openFolder\('output'\)/.test(appCode), 'app.js: output button passes empty string');
 // « main propre » = livraison explicitement indisponible (shipping === false).
 // shipping=null (info non extraite) ne doit PAS être compté comme main propre.
@@ -499,6 +510,10 @@ assert(/stat-card-accent/.test(htmlCode), 'index.html: stat-cards accentuées');
 console.log('\n[7/7] Module Navigateur IA Studio');
 const mainCode4 = fs.readFileSync(path.join(base, 'main.js'), 'utf8');
 assert(/webviewTag:\s*true/.test(mainCode4), 'main.js: webviewTag activé pour le navigateur intégré');
+// Hardening webview : handler will-attach-webview verrouille les webpreferences
+assert(/will-attach-webview/.test(mainCode4), 'main.js: handler will-attach-webview (verrouille nodeIntegration sur webview dynamiques)');
+assert(/webPreferences\.nodeIntegration\s*=\s*false/.test(mainCode4), 'main.js: webview nodeIntegration forcé à false');
+assert(/delete\s+webPreferences\.preload/.test(mainCode4), 'main.js: webview preload injecté supprimé');
 
 // Générateur de prompt IA locale (Ollama, remplace les prompts statiques)
 assert(existsSync(path.join(base, 'services/ai/promptGenerator.js')), 'services/ai/promptGenerator.js present');
