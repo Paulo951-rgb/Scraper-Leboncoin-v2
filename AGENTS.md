@@ -133,6 +133,19 @@ renderer/                    app.js, index.html, styles.css, widget.html, aiStud
      la boucle de capture HAR, le code faisait `break` avec "Relancez manuellement".
      Fix : fermer le contexte HAR, appeler `_warmupSession` (fenêtre visible),
      puis relancer la capture depuis la page bloquée.
+  6. **UA différent entre warmup et capture (403 au 1er scrape)** : chaque
+     `_newStealthContext` appelait `getRandomUserAgent()` → UA différent entre le
+     warmup et la capture. Leboncoin détectait l'incohérence (mêmes cookies +
+     UA différent) → HTTP 403 au 1er scraping. Fix : UA fixe choisi une fois dans
+     le constructeur (`this._userAgent`), réutilisé par `_baseContextOptions`.
+  7. **Pas de délai warmup→capture (rate-limit Leboncoin)** : le warmup (200) et
+     la capture (403) arrivaient dans la même seconde → Leboncoin rate-limitait.
+     Fix : `sleep(2000)` après warmup avant de créer le contexte HAR.
+- **ipcHandlers const ads reassignment (crash IA)** : `const { data: ads } =
+  readWithChecksum(...)` puis `ads = await AdAnalyzer.analyzeAds(ads)` →
+  `TypeError: Assignment to constant variable`. L'IA tournait 40s puis crashait
+  à l'assignation du résultat. Fix : `let adsWithAi = ads` + remplacer toutes les
+  réf. à `ads` dans le bloc par `adsWithAi`.
 - **Pipeline recyclage contexte** : `writeOutputs(ads)` DOIT être appelé AVANT
   `createStealthContext()` (recyclage). Si le recyclage échoue, les ads sont déjà
   sauvegardées. Le recyclage doit être dans un try/catch (ne pas perdre les ads
@@ -214,5 +227,5 @@ renderer/                    app.js, index.html, styles.css, widget.html, aiStud
 
 ## Commandes
 - Lancer l'app : `npm start` (electron --max-old-space-size=8192 .)
-- Tests : `npm test` (ou `node test/regression.test.js`) — 471 assertions
+- Tests : `npm test` (ou `node test/regression.test.js`) — 479 assertions
 - Branche stable : `refactor/professional-architecture`

@@ -30,6 +30,12 @@ class HarCapturer extends EventEmitter {
     this.minPageDelayMs = options.minPageDelayMs || 800;
     this.maxPageDelayMs = options.maxPageDelayMs || 1500;
     this.isCancelled = false;
+    // 🛑 FIX CRITIQUE : UA FIXE pour toute la durée de la capture.
+    // Avant, chaque _newStealthContext() appelait getRandomUserAgent() → UA
+    // différent entre le warmup et la capture. Leboncoin détectait l'incohérence
+    // (mêmes cookies + UA différent) → HTTP 403 au 1er scraping.
+    // Un UA unique, choisi une fois, garantit la cohérence de l'empreinte.
+    this._userAgent = getRandomUserAgent();
   }
 
   stop() {
@@ -44,7 +50,7 @@ class HarCapturer extends EventEmitter {
 
   _baseContextOptions(extras = {}) {
     return {
-      userAgent: getRandomUserAgent(),
+      userAgent: this._userAgent,
       locale: 'fr-FR',
       viewport: { width: 1366, height: 850 },
       ...extras,
@@ -318,6 +324,13 @@ class HarCapturer extends EventEmitter {
         await browser.close().catch(() => {});
         return outputHarPath;
       }
+
+      // 🛑 FIX : délai entre warmup et capture. Les logs montraient que le
+      // warmup (HTTP 200) et la capture (HTTP 403) arrivaient dans la même
+      // seconde → Leboncoin rate-limitait la requête trop rapide. Un délai de
+      // 2s laisse le temps au rate-limiter de Leboncoin de se réinitialiser.
+      this.emit('log', { level: 'debug', message: '[capture] Délai de sécurité (2s) après warmup pour éviter le rate-limit Leboncoin.' });
+      await sleep(2000);
 
       const contextOptions = this._baseContextOptions({
         recordHar: {

@@ -876,6 +876,27 @@ assert(/2e CAPTCHA consécutif/.test(harCode), 'harCapturer: re-vérification po
 assert(/résolution interactive/.test(harCode), 'harCapturer: CAPTCHA pendant capture → résolution interactive (pas abandon)');
 assert(/Reprise après résolution CAPTCHA/.test(harCode), 'harCapturer: reprise capture après résolution CAPTCHA');
 
+// harCapturer : UA FIXE pour toute la capture (cause racine du 403 au 1er scrape)
+// Avant, chaque _newStealthContext appelait getRandomUserAgent() → UA différent
+// entre warmup et capture → Leboncoin détectait l'incohérence (mêmes cookies +
+// UA différent) → HTTP 403. Fix : UA choisi une fois dans le constructeur, réutilisé.
+assert(/this\._userAgent\s*=\s*getRandomUserAgent\(\)/.test(harCode), 'harCapturer: UA fixe choisi une fois dans le constructeur');
+assert(/userAgent:\s*this\._userAgent/.test(harCode), 'harCapturer: _baseContextOptions réutilise this._userAgent (UA cohérent)');
+assert(!/userAgent:\s*getRandomUserAgent\(\)/.test(harCode), 'harCapturer: PAS de getRandomUserAgent() dans _baseContextOptions (UA fixe)');
+
+// harCapturer : délai entre warmup et capture (anti rate-limit Leboncoin)
+// Les logs montraient warmup (200) puis capture (403) dans la même seconde.
+assert(/rate-limit Leboncoin/i.test(harCode), 'harCapturer: délai 2s après warmup (anti rate-limit Leboncoin)');
+
+// ipcHandlers : PAS de réassignation de const ads (crash "Assignment to constant variable")
+// const { data: ads } = readWithChecksum(...) puis ads = await analyzeAds(ads) → TypeError.
+// Les logs du 2e scrape montraient : 40s d'IA, puis crash "Assignment to constant variable".
+const ipcCodeAds = fs.readFileSync(path.join(base, 'core/ipcHandlers.js'), 'utf8');
+assert(/let adsWithAi = ads/.test(ipcCodeAds), 'ipcHandlers: adsWithAi (let) au lieu de réassigner const ads');
+assert(/adsWithAi = await AdAnalyzer\.analyzeAds/.test(ipcCodeAds), 'ipcHandlers: analyzeAds assigne à adsWithAi (let, pas const)');
+assert(/writeWithChecksum\(jsonPath, adsWithAi/.test(ipcCodeAds), 'ipcHandlers: writeWithChecksum utilise adsWithAi');
+assert(/ExcelExporter\.exportToXlsx\(adsWithAi/.test(ipcCodeAds), 'ipcHandlers: ExcelExporter utilise adsWithAi');
+
 // pipeline : recyclage de contexte résilient (sauvegarde préventive + try/catch)
 const pipeCode = fs.readFileSync(path.join(base, 'services/scraping/leboncoin-pipeline.js'), 'utf8');
 assert(/Recyclage contexte échoué/.test(pipeCode), 'pipeline: recyclage contexte a un catch (ne crash pas le job)');

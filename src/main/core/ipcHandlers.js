@@ -191,7 +191,8 @@ function setupIpcHandlers(getMainWindow) {
         if (!valid || !Array.isArray(ads)) {
           sendLog({ level: 'warn', message: `[job:start] annonces.json illisible (${reason || 'format inattendu'}) — étapes suivantes (IA/Excel) ignorées pour ce job.` });
         } else {
-        sendLog({ level: 'debug', message: `[job:start] annonces.json lu : ${summarizeAds(ads)}.` });
+        let adsWithAi = ads;
+        sendLog({ level: 'debug', message: `[job:start] annonces.json lu : ${summarizeAds(adsWithAi)}.` });
 
         // 🧠 IA ANALYSE (Texte + Vision) — uniquement si « Analyse IA » cochée.
         // L'IA Analyse reconstitue ce qu'est réellement l'objet vendu en croisant
@@ -224,7 +225,7 @@ function setupIpcHandlers(getMainWindow) {
             ...(aiConfig?.model ? { textModel: aiConfig.model } : {}),
             ...(visionModel ? { visionModel } : {}),
           };
-          ads = await AdAnalyzer.analyzeAds(ads, analysisConfig, {
+          adsWithAi = await AdAnalyzer.analyzeAds(adsWithAi, analysisConfig, {
             concurrency: userSettings.aiConcurrency || 4,
             onProgress: (prog) => sendProgress({
               percent: 75 + Math.round((prog.percent / 100) * 25),
@@ -232,24 +233,24 @@ function setupIpcHandlers(getMainWindow) {
             }),
           });
           const aiElapsed = Math.round((Date.now() - t0Ai) / 1000);
-          const analyzedCount = ads.filter((a) => a.adAnalysis && !a.adAnalysis._fallback).length;
-          sendLog({ level: 'info', message: `✅ IA Analyse terminée en ${aiElapsed}s (${analyzedCount}/${ads.length} annonces analysées, ${ads.length - analyzedCount} fallback).` });
+          const analyzedCount = adsWithAi.filter((a) => a.adAnalysis && !a.adAnalysis._fallback).length;
+          sendLog({ level: 'info', message: `✅ IA Analyse terminée en ${aiElapsed}s (${analyzedCount}/${adsWithAi.length} annonces analysées, ${adsWithAi.length - analyzedCount} fallback).` });
           sendLog({ level: 'debug', message: `[job:start] Phase IA Analyse terminée en ${aiElapsed}s.` });
 
-          writeWithChecksum(jsonPath, ads, null, 2);
-          writeSummaryFile(ads, path.join(path.dirname(jsonPath), 'resumes-ia.json'));
+          writeWithChecksum(jsonPath, adsWithAi, null, 2);
+          writeSummaryFile(adsWithAi, path.join(path.dirname(jsonPath), 'resumes-ia.json'));
         } else {
           sendLog({ level: 'debug', message: '[job:start] IA Analyse ignorée (autoAiMarket=false).' });
         }
 
-        await ExcelExporter.exportToXlsx(ads, xlsxPath);
+        await ExcelExporter.exportToXlsx(adsWithAi, xlsxPath);
         sendLog({ level: 'info', message: '📊 Export Excel (.xlsx) généré avec succès !' });
 
         // Note : la notification « Très bonne affaire » dépendait de l'ancien
         // scoring marketAnalysis.classification. L'IA Marché est désormais une
         // action manuelle (bouton « Analyse IA » dans l'Explorateur) qui produit
         // le verdict en € — la notification sera déclenchée depuis ce flux manuel.
-        const analyzed = ads.filter((a) => a.adAnalysis && !a.adAnalysis._fallback).length;
+        const analyzed = adsWithAi.filter((a) => a.adAnalysis && !a.adAnalysis._fallback).length;
         if (analyzed > 0) {
           sendLog({ level: 'debug', message: `[job:start] ${analyzed} annonce(s) analysée(s) par l'IA (résumés produits + attributs).` });
         }
