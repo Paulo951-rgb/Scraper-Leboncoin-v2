@@ -1060,6 +1060,65 @@ const aiCacheCode2 = fs.readFileSync(path.join(base, 'services/ai/aiCache.js'), 
 assert(/atomicWriteFileSync\(getCachePath\(\)/.test(aiCacheCode2), 'aiCache: _saveNow atomique (atomicWriteFileSync)');
 assert(!/fs\.writeFileSync\(getCachePath\(\)/.test(aiCacheCode2), 'aiCache: _saveNow n\'utilise plus fs.writeFileSync');
 
+// [8/8] suite — Onglet Logs amélioré (auto-scroll, copie, mode debug, résumé, logs IA)
+const htmlCode2 = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/index.html'), 'utf8');
+assert(/autoScrollToggleBtn/.test(htmlCode2), 'logs: bouton auto-scroll présent dans HTML');
+assert(/copyLogsBtn/.test(htmlCode2), 'logs: bouton copier présent dans HTML');
+assert(/logModeToggleBtn/.test(htmlCode2), 'logs: bouton mode normal/debug présent dans HTML');
+assert(/logs-toolbar/.test(htmlCode2), 'logs: toolbar de boutons présente');
+assert(/logStats/.test(htmlCode2), 'logs: compteur de logs affichés présent');
+
+assert(/_logBuffer/.test(appCode), 'app.js: buffer de logs en mémoire (_logBuffer)');
+assert(/_logMode/.test(appCode) && /'normal'/.test(appCode) && /'debug'/.test(appCode), 'app.js: mode normal/debug (_logMode)');
+assert(/_autoScroll\s*=\s*true/.test(appCode), 'app.js: auto-scroll activé par défaut (_autoScroll=true)');
+assert(/_logLevelVisible/.test(appCode), 'app.js: fonction de filtrage par niveau (_logLevelVisible)');
+assert(/_renderLogs/.test(appCode), 'app.js: fonction de re-render (_renderLogs) pour filtrage rétroactif');
+assert(/navigator\.clipboard\.writeText/.test(appCode), 'app.js: copie des logs via clipboard API');
+assert(/MAX_LOG_BUFFER/.test(appCode), 'app.js: plafond mémoire du buffer (MAX_LOG_BUFFER)');
+
+// Mode normal cache les debug, mode debug affiche tout
+assert(/level !== 'debug'/.test(appCode), 'app.js: mode normal filtre les logs debug');
+assert(/_logMode === 'debug'/.test(appCode), 'app.js: mode debug affiche tous les logs');
+
+// Résumé de session (ipcHandlers)
+const ipcCode2 = fs.readFileSync(path.join(__dirname, '..', 'src/main/core/ipcHandlers.js'), 'utf8');
+assert(/sessionStats/.test(ipcCode2), 'ipcHandlers: sessionStats tracker présent');
+assert(/sendSessionSummary/.test(ipcCode2), 'ipcHandlers: fonction sendSessionSummary présente');
+assert(/RÉSUMÉ DE SESSION/.test(ipcCode2), 'ipcHandlers: résumé de session formaté');
+assert(/pagesRequested/.test(ipcCode2) && /adsFound/.test(ipcCode2) && /adsKept/.test(ipcCode2), 'ipcHandlers: compteurs pages/annonces');
+assert(/aiAnalyzed/.test(ipcCode2) && /aiFallback/.test(ipcCode2), 'ipcHandlers: compteurs IA');
+assert(/errors/.test(ipcCode2) && /warnings/.test(ipcCode2) && /debugs/.test(ipcCode2), 'ipcHandlers: compteurs erreurs/warnings/debugs');
+
+// Logs IA détaillés (adAnalyzer + marketValueAnalyzer)
+const adAnalyzerCode2 = fs.readFileSync(path.join(__dirname, '..', 'src/main/services/ai/adAnalyzer.js'), 'utf8');
+assert(/\[IA1\]/.test(adAnalyzerCode2), 'adAnalyzer: logs IA1 préfixés');
+assert(/_onLog/.test(adAnalyzerCode2), 'adAnalyzer: callback _onLog injecté');
+assert(/onLog/.test(adAnalyzerCode2), 'adAnalyzer: paramètre onLog dans analyzeAds');
+assert(/début analyse/.test(adAnalyzerCode2), 'adAnalyzer: log début analyse');
+assert(/appel IA Vision/.test(adAnalyzerCode2), 'adAnalyzer: log appel vision');
+assert(/appel IA Texte/.test(adAnalyzerCode2), 'adAnalyzer: log appel texte');
+assert(/réponse IA reçue/.test(adAnalyzerCode2), 'adAnalyzer: log réponse reçue');
+assert(/JSON invalide/.test(adAnalyzerCode2), 'adAnalyzer: log JSON invalide (diagnostic échec)');
+assert(!/console\.warn\(\`\[AdAnalyzer\] IA échouée/.test(adAnalyzerCode2), 'adAnalyzer: ancien console.warn remplacé par onLog');
+
+const marketCode2 = fs.readFileSync(path.join(__dirname, '..', 'src/main/services/ai/marketValueAnalyzer.js'), 'utf8');
+assert(/\[IA2\]/.test(marketCode2), 'marketValueAnalyzer: logs IA2 préfixés');
+assert(/_onLog/.test(marketCode2), 'marketValueAnalyzer: callback _onLog injecté');
+assert(/onLog/.test(marketCode2), 'marketValueAnalyzer: paramètre onLog dans analyzeMarketBatch');
+assert(/recherche Internet/.test(marketCode2), 'marketValueAnalyzer: log recherche Internet');
+assert(/source\(s\) trouvée\(s\)/.test(marketCode2), 'marketValueAnalyzer: log sources trouvées');
+assert(/appel IA synthèse/.test(marketCode2), 'marketValueAnalyzer: log appel synthèse IA');
+assert(/marché estimé/.test(marketCode2), 'marketValueAnalyzer: log estimation finale');
+assert(!/console\.warn\(\`\[MarketValueAnalyzer\] moteur de recherche échoué/.test(marketCode2), 'marketValueAnalyzer: ancien console.warn remplacé par onLog');
+
+// CSS pour les logs
+const cssCode2 = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/styles.css'), 'utf8');
+assert(/\.logs-toolbar/.test(cssCode2), 'styles.css: styles de la toolbar logs');
+assert(/\.log-debug/.test(cssCode2), 'styles.css: style log-debug (mode debug)');
+assert(/\.log-info/.test(cssCode2), 'styles.css: style log-info');
+assert(/\.log-warn/.test(cssCode2), 'styles.css: style log-warn');
+assert(/\.log-error/.test(cssCode2), 'styles.css: style log-error');
+
 console.log(`\n=== RÉSULTAT : ${pass} réussis, ${fail} échoués ===`);
 process.exit(fail > 0 ? 1 : 0);
 }

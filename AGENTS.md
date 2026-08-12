@@ -14,9 +14,11 @@ Repository knowledge for AI agents working on this codebase.
 services/ai/
   adAnalyzer.js          IA 1 — Analyse pendant le scraping (texte + vision)
                          → adAnalysis { identifiedName, summary, vision{...}, _fallback }
+                         → onLog callback (opts.onLog) pour logs détaillés [IA1] dans l'onglet Logs
   marketValueAnalyzer.js IA 2 — Marché : recherche Internet + verdict en €
                          → marketAnalysis { verdict, verdictLabel, deltaEur, realValue,
                            marketMin/Max, sources[], rationale, _fallback }
+                         → onLog callback (opts.onLog) pour logs détaillés [IA2] dans l'onglet Logs
   promptGenerator.js     IA 3 — Prompt (~50 lignes, tout produit) via getAIProvider
                          (LEGACY — conservé pour compat, plus utilisé par l'UI IA Studio)
   promptTemplates.js    Bibliothèque de prompts préfaits (V2, remplace promptGenerator
@@ -60,6 +62,14 @@ renderer/                    app.js, index.html, styles.css, widget.html, aiStud
   la fenêtre est détruite — ne JAMAIS capturer `mainWindow` par closure.
 - `sendLog/sendProgress/sendStatus` (ipcHandlers) utilisent `getWin()` qui garde
   contre les fenêtres détruites. Ne pas remettre d'appels directs `mainWindow.webContents.send`.
+- **Logs IA** : AdAnalyzer/MarketValueAnalyzer acceptent `opts.onLog` pour envoyer
+  leurs logs détaillés (préfixe `[IA1]`/`[IA2]`) vers le renderer via sendLog.
+  Ne PAS utiliser `console.log/warn` direct dans ces services — invisible dans l'UI.
+  Niveaux : `debug` (étapes détaillées, cachées en mode normal), `info` (début/fin
+  de lot), `warn` (échecs avec fallback, JSON invalide).
+- **Onglet Logs (renderer)** : buffer mémoire `_logBuffer` (MAX 3000) + filtrage
+  rétroactif par mode (normal=info/warn/error, debug=tout). Auto-scroll ON par
+  défaut. `sendSessionSummary()` en fin de job envoie un résumé formaté.
 - Écriture JSON avec intégrité : `writeWithChecksum(path, data, replacer, space)`
   (src/main/utils/integrity.js). NE PAS utiliser `fs.writeFileSync` pour les
   fichiers d'annonces — cela casse la validation SHA-256.

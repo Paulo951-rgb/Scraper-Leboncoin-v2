@@ -96,12 +96,77 @@ function setupIpcHandlers(getMainWindow) {
   const sendProgress = (data) => { const w = getWin(); if (w) w.webContents.send('progress', data); };
   const sendStatus = (status) => { const w = getWin(); if (w) w.webContents.send('status', status); };
 
+  // ─── Suivi de session pour le résumé de fin de scraping ────────────────────
+  // Les compteurs sont incrémentés au fil du job (via l'écoute des logs du
+  // pipeline et des phases IA). À la fin, un résumé formaté est envoyé.
+  function newSessionStats() {
+    return {
+      t0: 0, pagesRequested: 0, pagesScraped: 0,
+      adsFound: 0, adsKept: 0, adsDuplicates: 0,
+      descriptionsExtracted: 0, descriptionsBlocked: 0,
+      aiAnalyzed: 0, aiFallback: 0, aiErrors: 0,
+      marketAnalyzed: 0, marketFallback: 0,
+      errors: 0, warnings: 0, debugs: 0,
+      stoppedEarly: false,
+    };
+  }
+  let sessionStats = newSessionStats();
+  // Wrapper autour de sendLog qui compte les niveaux pour le résumé.
+  const sessionLog = (data) => {
+    const level = data.level || 'info';
+    if (level === 'error') sessionStats.errors++;
+    else if (level === 'warn') sessionStats.warnings++;
+    else if (level === 'debug') sessionStats.debugs++;
+    sendLog(data);
+  };
+
+  function formatDuration(seconds) {
+    if (seconds < 60) return `${seconds}s`;
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}m ${s}s`;
+  }
+
+  function sendSessionSummary() {
+    const dur = Math.round((Date.now() - sessionStats.t0) / 1000);
+    const lines = [
+      '',
+      '═══════════════════════════════════════════════════════════',
+      '📋 RÉSUMÉ DE SESSION',
+      '═══════════════════════════════════════════════════════════',
+      `  ⏱  Durée totale        : ${formatDuration(dur)}`,
+      `  📄 Pages demandées      : ${sessionStats.pagesRequested}`,
+      `  📄 Pages scrapées      : ${sessionStats.pagesScraped}`,
+      `  🔍 Annonces trouvées    : ${sessionStats.adsFound}`,
+      `  ✅ Annonces conservées  : ${sessionStats.adsKept}`,
+      `  🔄 Doublons fusionnés   : ${sessionStats.adsDuplicates}`,
+      `  📝 Descriptions extraites: ${sessionStats.descriptionsExtracted}`,
+      `  🛑 Pages bloquées (403) : ${sessionStats.descriptionsBlocked}`,
+      `  🧠 IA Analyse — OK      : ${sessionStats.aiAnalyzed}`,
+      `  🧠 IA Analyse — fallback: ${sessionStats.aiFallback}`,
+      `  🧠 IA Analyse — erreurs: ${sessionStats.aiErrors}`,
+      `  📊 IA Marché — OK       : ${sessionStats.marketAnalyzed}`,
+      `  📊 IA Marché — fallback : ${sessionStats.marketFallback}`,
+      `  ❌ Erreurs              : ${sessionStats.errors}`,
+      `  ⚠️  Avertissements      : ${sessionStats.warnings}`,
+      `  🐛 Logs debug           : ${sessionStats.debugs}`,
+      sessionStats.stoppedEarly ? '  ⚠️  Terminé en avance (interruption IP/CAPTCHA)' : '  ✅ Terminé normalement',
+      '═══════════════════════════════════════════════════════════',
+    ];
+    for (const line of lines) {
+      sendLog({ level: 'info', message: line });
+    }
+  }
+
   ipcMain.on('job:start', async (event, config) => {
     if (isRunning) {
       sendLog({ level: 'warn', message: '[job:start] Un job est déjà en cours — requête ignorée.' });
       return;
     }
     isRunning = true;
+    sessionStats = newSessionStats();
+    sessionStats.t0 = Date.now();
+    sessionStats.pagesRequested = parseInt(config.pages, 10) || 1;
 
     const { searchUrl, pages = 1, noDesc = false, autoAiMarket = true, analyzeImages = false, limit, aiConfig, proxyUrl } = config;
     // Note : analyzeImages est conservé pour rétro-compatibilité UI mais n'a plus
@@ -155,10 +220,29 @@ function setupIpcHandlers(getMainWindow) {
 
       activeRunner.on('log', (data) => {
         sendLog(data);
+        // Comptage pour le résumé de session
+        const level = data.level || 'info';
+        if (level === 'error') sessionStats.errors++;
+        else if (level === 'warn') sessionStats.warnings++;
+        else if (level === 'debug') sessionStats.debugs++;
+        // Extraction des métriques depuis les logs du pipeline
+        const msg = data.message || '';
         // 🟢 FIX : Détection d'interruption élargie (prend en compte "interrompu" et "restreint")
-        if (data.message && (data.message.includes('interrompu') || data.message.includes('restreint'))) {
+        if (msg.includes('interrompu') || msg.includes('restreint')) {
           stoppedEarly = true;
+          sessionStats.stoppedEarly = true;
         }
+        // Compter les annonces extraites
+        const adsMatch = msg.match(/(\d+)\s+annonce\(s\)\s+(?:unique|extrait)/i);
+        if (adsMatch) sessionStats.adsFound = Math.max(sessionStats.adsFound, parseInt(adsMatch[1], 10));
+        // Compter les doublons fusionnés
+        const dupMatch = msg.match(/(\d+)\s+doublon/i);
+        if (dupMatch) sessionStats.adsDuplicates += parseInt(dupMatch[1], 10);
+        // Compter les descriptions extraites (✅ [X/Y])
+        const descMatch = msg.match(/✅\s*\[(\d+)\/\d+\]/);
+        if (descMatch) sessionStats.descriptionsExtracted = Math.max(sessionStats.descriptionsExtracted, parseInt(descMatch[1], 10));
+        // Compter les blocages 403
+        if (msg.includes('Bloqué (HTTP 403') || msg.includes('BLOCKED_403')) sessionStats.descriptionsBlocked++;
       });
 
       activeRunner.on('progress', ({ percent, status, eta }) => {
@@ -191,8 +275,11 @@ function setupIpcHandlers(getMainWindow) {
         const { data: ads, valid, reason } = readWithChecksum(jsonPath);
         if (!valid || !Array.isArray(ads)) {
           sendLog({ level: 'warn', message: `[job:start] annonces.json illisible (${reason || 'format inattendu'}) — étapes suivantes (IA/Excel) ignorées pour ce job.` });
+          sessionStats.warnings++;
         } else {
         let adsWithAi = ads;
+        sessionStats.adsKept = ads.length;
+        if (sessionStats.adsFound === 0) sessionStats.adsFound = ads.length;
         sendLog({ level: 'debug', message: `[job:start] annonces.json lu : ${summarizeAds(adsWithAi)}.` });
 
         // 🧠 IA ANALYSE (Texte + Vision) — uniquement si « Analyse IA » cochée.
@@ -232,9 +319,12 @@ function setupIpcHandlers(getMainWindow) {
               percent: 75 + Math.round((prog.percent / 100) * 25),
               status: prog.status,
             }),
+            onLog: (data) => { sendLog(data); if (data.level === 'error') sessionStats.aiErrors++; },
           });
           const aiElapsed = Math.round((Date.now() - t0Ai) / 1000);
           const analyzedCount = adsWithAi.filter((a) => a.adAnalysis && !a.adAnalysis._fallback).length;
+          sessionStats.aiAnalyzed = analyzedCount;
+          sessionStats.aiFallback = adsWithAi.length - analyzedCount;
           sendLog({ level: 'info', message: `✅ IA Analyse terminée en ${aiElapsed}s (${analyzedCount}/${adsWithAi.length} annonces analysées, ${adsWithAi.length - analyzedCount} fallback).` });
           sendLog({ level: 'debug', message: `[job:start] Phase IA Analyse terminée en ${aiElapsed}s.` });
 
@@ -263,6 +353,9 @@ function setupIpcHandlers(getMainWindow) {
       const latestJob = JobHistoryManager.getLatestJob();
       sendLog({ level: 'debug', message: `[job:start] Durée totale du job : ${Math.round((Date.now() - t0Total) / 1000)}s | stoppedEarly=${stoppedEarly}.` });
 
+      // ─── Résumé de session ───
+      sendSessionSummary();
+
       if (stoppedEarly) {
         sendProgress({ percent: 100, status: 'Sauvegardé (Interruption préventive IP)' });
         sendStatus({
@@ -282,6 +375,8 @@ function setupIpcHandlers(getMainWindow) {
     } catch (err) {
       sendLog({ level: 'error', message: `❌ Erreur : ${err.message}` });
       sendLog({ level: 'debug', message: `[job:start] Détail erreur fatale : ${describeError(err)}` });
+      sessionStats.errors++;
+      sendSessionSummary();
       sendStatus({ state: 'error', message: `Erreur : ${err.message}` });
     } finally {
       isRunning = false;
@@ -385,7 +480,9 @@ function setupIpcHandlers(getMainWindow) {
         sendProgress({ percent: prog.percent, status: prog.status });
         if (prog.stageCounts) { searchOk = prog.stageCounts.searchOk || searchOk; aiOk = prog.stageCounts.aiOk || aiOk; }
       },
+      onLog: (data) => { sendLog(data); if (data.level === 'warn' && /fallback/.test(data.message || '')) sessionStats.marketFallback++; },
     });
+    sessionStats.marketAnalyzed = targetAds.filter((a) => a.marketAnalysis && !a.marketAnalysis._fallback).length;
     const elapsed = Math.round((Date.now() - t0) / 1000);
     const estimated = targetAds.filter((a) => a.marketAnalysis && !a.marketAnalysis._fallback).length;
     // Diagnostic détaillé : répartition des causes d'échec.

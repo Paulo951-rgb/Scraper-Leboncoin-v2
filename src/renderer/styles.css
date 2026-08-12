@@ -485,8 +485,15 @@ input:focus, select:focus { border-color: var(--primary-color); }
 .mb-15 { margin-bottom: 15px !important; }
 
 .logs-card { display: flex; flex-direction: column; }
-.logs-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.logs-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 10px; flex-wrap: wrap; }
 .logs-header h2 { margin: 0; }
+.logs-toolbar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.logs-toolbar .btn.active { background: var(--primary-color, #4a90d9); color: #fff; border-color: var(--primary-color, #4a90d9); }
+.logs-stats { margin-top: 6px; text-align: right; }
+.log-debug { color: var(--text-muted, #888); opacity: 0.7; }
+.log-info { color: var(--text-color, #eee); }
+.log-warn { color: #fbbf24; }
+.log-error { color: #f87171; }
 
 .info-badge-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
 .market-range-info { font-size: 0.78rem; color: var(--text-muted); margin-top: 4px; }

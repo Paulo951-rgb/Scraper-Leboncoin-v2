@@ -58,6 +58,141 @@ const statusText = document.getElementById('statusText');
 const etaText = document.getElementById('etaText');
 const progressBar = document.getElementById('progressBar');
 const logsConsole = document.getElementById('logsConsole');
+const logStats = document.getElementById('logStats');
+const autoScrollToggleBtn = document.getElementById('autoScrollToggleBtn');
+const logModeToggleBtn = document.getElementById('logModeToggleBtn');
+const copyLogsBtn = document.getElementById('copyLogsBtn');
+const clearLogsBtn = document.getElementById('clearLogsBtn');
+
+// ─── Système de logs (mode normal/debug + auto-scroll + copie) ───────────────
+// Les logs sont stockés en mémoire pour permettre le filtrage rétroactif :
+// quand l'utilisateur bascule entre mode normal et debug, les logs déjà reçus
+// sont réaffichés selon le mode choisi (pas besoin d'attendre de nouveaux logs).
+let _logBuffer = [];          // tous les logs reçus (plafonné à MAX_LOG_BUFFER)
+let _logMode = 'normal';      // 'normal' (info+warn+error) ou 'debug' (tout)
+let _autoScroll = true;       // auto-scroll activé par défaut
+const MAX_LOG_BUFFER = 3000;  // plafond mémoire (plus généreux que l'ancien 1000 DOM)
+
+function _logLevelVisible(level) {
+  if (_logMode === 'debug') return true;
+  // Mode normal : on cache les logs debug, on garde info/warn/error
+  return level !== 'debug';
+}
+
+function _renderLogs() {
+  // On reconstruit le DOM à partir du buffer filtré.
+  // Pour les longues sessions, c'est plus rapide que d'ajouter ligne par ligne
+  // et ça permet le filtrage rétroactif quand on change de mode.
+  const frag = document.createDocumentFragment();
+  let visibleCount = 0;
+  for (const entry of _logBuffer) {
+    if (!_logLevelVisible(entry.level)) continue;
+    const line = document.createElement('div');
+    line.className = `log-${entry.level || 'info'}`;
+    line.textContent = `[${entry.time}] ${entry.message}`;
+    frag.appendChild(line);
+    visibleCount++;
+  }
+  logsConsole.innerHTML = '';
+  logsConsole.appendChild(frag);
+  if (logStats) logStats.textContent = `${visibleCount} log(s) affiché(s) / ${_logBuffer.length} total`;
+  if (_autoScroll) logsConsole.scrollTop = logsConsole.scrollHeight;
+}
+
+window.api.onLog(({ level, message }) => {
+  _logBuffer.push({ level: level || 'info', message, time: new Date().toLocaleTimeString() });
+  // Plafond mémoire
+  while (_logBuffer.length > MAX_LOG_BUFFER) _logBuffer.shift();
+
+  // Si le log n'est pas visible dans le mode actuel, on ne touche pas au DOM
+  // (optimisation : pas de re-render complet pour un log caché).
+  if (!_logLevelVisible(level)) {
+    if (logStats) {
+      const vis = _logBuffer.filter((e) => _logLevelVisible(e.level)).length;
+      logStats.textContent = `${vis} log(s) affiché(s) / ${_logBuffer.length} total`;
+    }
+    return;
+  }
+
+  // Ajout incrémental (plus rapide qu'un re-render complet)
+  const line = document.createElement('div');
+  line.className = `log-${level || 'info'}`;
+  line.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+  logsConsole.appendChild(line);
+
+  // Plafond DOM (séparé du buffer mémoire pour la perf)
+  const MAX_LOG_LINES = 1000;
+  while (logsConsole.childElementCount > MAX_LOG_LINES) {
+    logsConsole.removeChild(logsConsole.firstChild);
+  }
+
+  if (_autoScroll) logsConsole.scrollTop = logsConsole.scrollHeight;
+  if (logStats) {
+    const vis = _logBuffer.filter((e) => _logLevelVisible(e.level)).length;
+    logStats.textContent = `${vis} log(s) affiché(s) / ${_logBuffer.length} total`;
+  }
+});
+
+// Bascule auto-scroll
+if (autoScrollToggleBtn) {
+  autoScrollToggleBtn.addEventListener('click', () => {
+    _autoScroll = !_autoScroll;
+    autoScrollToggleBtn.classList.toggle('active', _autoScroll);
+    autoScrollToggleBtn.textContent = _autoScroll ? '⬇ Auto-scroll ON' : '⬇ Auto-scroll OFF';
+    if (_autoScroll) logsConsole.scrollTop = logsConsole.scrollHeight;
+  });
+}
+
+// Bascule mode normal / debug
+if (logModeToggleBtn) {
+  logModeToggleBtn.addEventListener('click', () => {
+    _logMode = _logMode === 'normal' ? 'debug' : 'normal';
+    logModeToggleBtn.textContent = _logMode === 'debug' ? '🐛 Mode debug' : '🩻 Mode normal';
+    logModeToggleBtn.classList.toggle('active', _logMode === 'debug');
+    logModeToggleBtn.title = _logMode === 'debug'
+      ? 'Mode Debug : tous les logs (y compris détaillés). Cliquez pour revenir au mode normal.'
+      : 'Mode normal : logs principaux uniquement. Cliquez pour le mode Debug complet.';
+    _renderLogs();
+  });
+}
+
+// Copier tous les logs affichés
+if (copyLogsBtn) {
+  copyLogsBtn.addEventListener('click', async () => {
+    const lines = [];
+    for (const entry of _logBuffer) {
+      if (!_logLevelVisible(entry.level)) continue;
+      lines.push(`[${entry.time}] [${(entry.level || 'info').toUpperCase()}] ${entry.message}`);
+    }
+    const text = lines.join('\n');
+    if (!text) {
+      const orig = copyLogsBtn.textContent;
+      copyLogsBtn.textContent = 'Rien à copier';
+      setTimeout(() => { copyLogsBtn.textContent = orig; }, 1500);
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
+    const orig = copyLogsBtn.textContent;
+    copyLogsBtn.textContent = `✅ ${lines.length} copiés`;
+    setTimeout(() => { copyLogsBtn.textContent = orig; }, 2000);
+  });
+}
+
+// Vider l'affichage + le buffer
+if (clearLogsBtn) {
+  clearLogsBtn.addEventListener('click', () => {
+    _logBuffer = [];
+    logsConsole.innerHTML = '';
+    if (logStats) logStats.textContent = '0 log(s) affiché(s)';
+  });
+}
 
 // 📶 Mode hors-ligne : détection de connectivité + badge dans l'en-tête.
 // L'utilisateur peut consulter les jobs déjà scrapés (lecture disque) mais ne
@@ -89,7 +224,6 @@ window.addEventListener('online', () => setOfflineMode(false));
 window.addEventListener('offline', () => setOfflineMode(true));
 setInterval(refreshConnectivity, 60000); // refresh périodique
 refreshConnectivity(); // vérification initiale
-const clearLogsBtn = document.getElementById('clearLogsBtn');
 
 const historyTableBody = document.getElementById('historyTableBody');
 const sessionSelect = document.getElementById('sessionSelect');
@@ -678,20 +812,6 @@ triggerMarketBtn.addEventListener('click', async () => {
     alert(`Erreur d'analyse : ${err.message}`);
   } finally {
     triggerMarketBtn.disabled = false;
-  }
-});
-
-window.api.onLog(({ level, message }) => {
-  const line = document.createElement('div');
-  line.className = `log-${level || 'info'}`;
-  line.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
-  logsConsole.appendChild(line);
-  logsConsole.scrollTop = logsConsole.scrollHeight;
-
-  // Plafond de lignes pour éviter la fuite de mémoire DOM sur les longues sessions
-  const MAX_LOG_LINES = 1000;
-  while (logsConsole.childElementCount > MAX_LOG_LINES) {
-    logsConsole.removeChild(logsConsole.firstChild);
   }
 });
 
@@ -1551,10 +1671,6 @@ modalConfirmBtn.addEventListener('click', async () => {
 
 document.getElementById('openMainFolderBtn').addEventListener('click', () => {
   window.api.openFolder('');
-});
-
-clearLogsBtn.addEventListener('click', () => {
-  logsConsole.innerHTML = '';
 });
 
 // Écouteur pour rafraîchir la carte si on coche/décoche la remise en main propre

@@ -257,22 +257,28 @@ class MarketValueAnalyzer {
     if (cached && !cached._fallback) return cached;
 
     const t0 = Date.now();
+    const log = aiConfig._onLog || (() => {});
+
+    log({ level: 'debug', message: `[IA2] ${ad.id} — début analyse marché | prix=${ad.price}€ | produit="${truncate(ad.adAnalysis?.identifiedProduct || ad.title, 40)}"` });
 
     // 1. Recherche Internet
     const query = buildSearchQuery(ad);
+    log({ level: 'debug', message: `[IA2] ${ad.id} — recherche Internet : "${truncate(query, 80)}" (provider=${searchConfig.provider || 'duckduckgo'}, limit=${SEARCH_LIMIT})` });
     let searchRes;
     try {
       const engine = getSearchProvider(searchConfig);
       searchRes = await engine.search(query, { limit: SEARCH_LIMIT, timeoutMs: SEARCH_TIMEOUT_MS });
     } catch (err) {
-      console.warn(`[MarketValueAnalyzer] moteur de recherche échoué pour ${ad.id} : ${err.message}`);
+      log({ level: 'warn', message: `[IA2] ${ad.id} — ❌ moteur de recherche échoué : ${err.message} → fallback` });
       return fallbackMarket(ad, `moteur de recherche indisponible : ${err.message}`, []);
     }
 
     if (!searchRes.ok || !searchRes.results || searchRes.results.length === 0) {
-      console.warn(`[MarketValueAnalyzer] aucune source trouvée pour ${ad.id} : ${searchRes.message || '?'}`);
+      log({ level: 'warn', message: `[IA2] ${ad.id} — ❌ aucune source trouvée : ${searchRes.message || '?'} → fallback` });
       return fallbackMarket(ad, searchRes.message || 'aucune source trouvée sur Internet', []);
     }
+
+    log({ level: 'debug', message: `[IA2] ${ad.id} — ${searchRes.results.length} source(s) trouvée(s) en ${formatMs(Date.now() - t0)} : ${searchRes.results.slice(0, 3).map((r) => truncate(r.title || r.url, 40)).join(' | ')}${searchRes.results.length > 3 ? ` (+${searchRes.results.length - 3})` : ''}` });
 
     // 2. Synthèse IA des sources
     const ai = getAIProvider(aiConfig);
@@ -286,21 +292,23 @@ class MarketValueAnalyzer {
         numCtx: AI_NUM_CTX,
       };
       if (aiConfig.textModel) opts.model = aiConfig.textModel;
+      log({ level: 'debug', message: `[IA2] ${ad.id} — appel IA synthèse (prompt ${prompt.length} car., modèle ${opts.model || 'défaut'}, timeout ${AI_TIMEOUT_MS}ms)...` });
       raw = await ai.chatText(prompt, opts);
+      log({ level: 'debug', message: `[IA2] ${ad.id} — réponse IA reçue (${raw ? raw.length : 0} car.)` });
     } catch (err) {
-      console.warn(`[MarketValueAnalyzer] IA synthèse échouée pour ${ad.id} : ${err.message}`);
+      log({ level: 'warn', message: `[IA2] ${ad.id} — ❌ IA synthèse échouée : ${err.message} → fallback` });
       return fallbackMarket(ad, `IA indisponible : ${err.message}`, searchRes.results);
     }
 
     const parsed = parseMarket(raw);
     if (!parsed) {
-      console.warn(`[MarketValueAnalyzer] JSON invalide pour ${ad.id} : ${truncate(raw, 100)}`);
+      log({ level: 'warn', message: `[IA2] ${ad.id} — ❌ JSON invalide : ${truncate(raw, 120)} → fallback` });
       return fallbackMarket(ad, 'Réponse IA non interprétable (JSON invalide).', searchRes.results);
     }
     // JSON réparé (troncation contexte) : valeur potentiellement partielle →
     // on baisse la confiance pour signaler à l'utilisateur de vérifier.
     if (parsed._repaired) {
-      console.warn(`[MarketValueAnalyzer] JSON réparé (troncation contexte) pour ${ad.id} — confiance baissée.`);
+      log({ level: 'warn', message: `[IA2] ${ad.id} — ⚠️ JSON réparé (troncation contexte) — confiance baissée` });
       parsed.confidence = 'basse';
       if (parsed.rationale) parsed.rationale = `[estimation partielle — JSON tronqué réparé] ${parsed.rationale}`;
       else parsed.rationale = 'Estimation partielle — JSON tronqué réparé (vérifier).';
@@ -340,7 +348,7 @@ class MarketValueAnalyzer {
     parsed.deltaPct = v.deltaPct;
 
     aiCache.set(ad.id, parsed, CACHE_PREFIX);
-    console.log(`[MarketValueAnalyzer] ${ad.id} estimé en ${formatMs(Date.now() - t0)} → ${parsed.realValue != null ? parsed.realValue + '€' : 'N/A'} | ${parsed.verdict}`);
+    log({ level: 'debug', message: `[IA2] ${ad.id} — ✅ marché estimé en ${formatMs(Date.now() - t0)} → valeur=${parsed.realValue != null ? parsed.realValue + '€' : 'N/A'} | fourchette=${parsed.valueRangeLow}-${parsed.valueRangeHigh}€ | verdict=${parsed.verdict} | delta=${parsed.deltaEur}€` });
     return parsed;
   }
 
@@ -354,10 +362,15 @@ class MarketValueAnalyzer {
   static async analyzeMarketBatch(ads, aiConfig = {}, searchConfig = {}, opts = {}) {
     const concurrency = Math.max(1, opts.concurrency || 3);
     const onProgress = opts.onProgress || (() => {});
+    const onLog = opts.onLog || (() => {});
+    const configWithLog = { ...aiConfig, _onLog: onLog };
     const total = ads.length;
     let done = 0;
     let searchOk = 0;
     let aiOk = 0;
+    let fallbacks = 0;
+
+    onLog({ level: 'info', message: `[IA2] Démarrage analyse marché de ${total} annonce(s) (parallèle x${concurrency}, provider IA=${configWithLog.provider || 'ollama'}, moteur=${searchConfig.provider || 'duckduckgo'})` });
 
     const queue = [...ads];
     const worker = async () => {
@@ -365,11 +378,17 @@ class MarketValueAnalyzer {
         const ad = queue.shift();
         if (!ad) break;
         try {
-          ad.marketAnalysis = await MarketValueAnalyzer.analyzeMarket(ad, aiConfig, searchConfig);
-          if (ad.marketAnalysis && !ad.marketAnalysis._fallback) aiOk++;
-          if (ad.marketAnalysis && Array.isArray(ad.marketAnalysis.sources) && ad.marketAnalysis.sources.length > 0) searchOk++;
+          ad.marketAnalysis = await MarketValueAnalyzer.analyzeMarket(ad, configWithLog, searchConfig);
+          if (ad.marketAnalysis && !ad.marketAnalysis._fallback) {
+            aiOk++;
+            if (Array.isArray(ad.marketAnalysis.sources) && ad.marketAnalysis.sources.length > 0) searchOk++;
+          } else {
+            fallbacks++;
+          }
         } catch (err) {
+          onLog({ level: 'warn', message: `[IA2] ${ad.id} — exception non gérée : ${err.message} → fallback` });
           ad.marketAnalysis = fallbackMarket(ad, err.message, []);
+          fallbacks++;
         }
         done++;
         onProgress({
@@ -383,6 +402,7 @@ class MarketValueAnalyzer {
 
     await Promise.all(Array.from({ length: Math.min(concurrency, total) }, () => worker()));
     onProgress({ done: total, total, percent: 100, status: `Analyse marché terminée (recherche OK: ${searchOk}, estimation OK: ${aiOk}).`, stageCounts: { searchOk, aiOk } });
+    onLog({ level: 'debug', message: `[IA2] Lot terminé : ${aiOk} marché OK, ${searchOk} avec sources, ${fallbacks} fallback, ${total - aiOk - fallbacks} cache-hit` });
     // Flush disque du cache IA : les set() sont debouncés. On force l'écriture
     // finale pour persister toutes les estimations de ce lot.
     aiCache._flushSave();

@@ -200,6 +200,9 @@ class AdAnalyzer {
     const ai = getAIProvider(aiConfig);
     const prompt = buildPrompt(ad);
     const t0 = Date.now();
+    const log = aiConfig._onLog || (() => {});
+
+    log({ level: 'debug', message: `[IA1] ${ad.id} — début analyse | titre="${truncate(ad.title, 40)}" | images=${Array.isArray(ad.images) ? ad.images.length : 0} | desc=${ad.description ? truncate(ad.description, 60).length + ' car.' : 'aucune'}` });
 
     // 2. Préparer les images (3 premières)
     // On filtre les entrées invalides (null/undefined/non-string/URL vide) :
@@ -212,14 +215,25 @@ class AdAnalyzer {
     let images = [];
     let visionError = null;
     if (imageUrls.length > 0 && ai.supportsVision() && aiConfig.visionModel) {
+      log({ level: 'debug', message: `[IA1] ${ad.id} — téléchargement de ${imageUrls.length} image(s) pour la vision (modèle ${aiConfig.visionModel})...` });
       try {
         const downloaded = await Promise.allSettled(
           imageUrls.map((u) => downloadImageAsBase64(u, 15000))
         );
+        const failures = downloaded.filter((r) => r.status === 'rejected');
         images = downloaded.filter((r) => r.status === 'fulfilled').map((r) => r.value);
+        if (failures.length > 0) {
+          log({ level: 'debug', message: `[IA1] ${ad.id} — ${failures.length}/${imageUrls.length} image(s) en échec de téléchargement` });
+        }
+        log({ level: 'debug', message: `[IA1] ${ad.id} — ${images.length} image(s) prêtes pour la vision (${images.reduce((s, img) => s + Math.round(img.length * 0.75 / 1024), 0)} Ko total)` });
       } catch (err) {
         visionError = err.message;
+        log({ level: 'warn', message: `[IA1] ${ad.id} — erreur téléchargement images : ${err.message} — dégradation texte seul` });
       }
+    } else if (imageUrls.length > 0 && !ai.supportsVision()) {
+      log({ level: 'debug', message: `[IA1] ${ad.id} — ${imageUrls.length} image(s) ignorées (provider sans support vision)` });
+    } else if (imageUrls.length > 0 && !aiConfig.visionModel) {
+      log({ level: 'debug', message: `[IA1] ${ad.id} — ${imageUrls.length} image(s) ignorées (aucun modèle vision configuré)` });
     }
 
     // 3. Appel IA (vision si images disponibles, sinon texte)
@@ -233,22 +247,25 @@ class AdAnalyzer {
       if (aiConfig.visionModel) opts.model = aiConfig.visionModel;
 
       if (images.length > 0 && ai.supportsVision()) {
+        log({ level: 'debug', message: `[IA1] ${ad.id} — appel IA Vision (prompt ${prompt.length} car. + ${images.length} images, timeout ${VISION_TIMEOUT_MS}ms)...` });
         raw = await ai.chatVision(prompt, images, opts);
       } else {
         // dégradation texte (pas d'images OU provider sans vision)
         const textOpts = { ...opts, timeoutMs: TEXT_TIMEOUT_MS };
         if (aiConfig.textModel) textOpts.model = aiConfig.textModel;
+        log({ level: 'debug', message: `[IA1] ${ad.id} — appel IA Texte (prompt ${prompt.length} car., modèle ${textOpts.model || 'défaut'}, timeout ${TEXT_TIMEOUT_MS}ms)...` });
         raw = await ai.chatText(prompt, textOpts);
       }
+      log({ level: 'debug', message: `[IA1] ${ad.id} — réponse IA reçue en ${formatMs(Date.now() - t0)} (${raw ? raw.length : 0} car.)` });
     } catch (err) {
-      console.warn(`[AdAnalyzer] IA échouée pour ${ad.id} après ${formatMs(Date.now() - t0)} : ${err.message}`);
+      log({ level: 'warn', message: `[IA1] ${ad.id} — ❌ IA échouée après ${formatMs(Date.now() - t0)} : ${err.message}${visionError ? ` | vision: ${visionError}` : ''} → fallback` });
       return fallbackAnalysis(ad, `IA indisponible : ${err.message}${visionError ? ` (vision: ${visionError})` : ''}`);
     }
 
     // 4. Parser
     const parsed = parseAnalysis(raw);
     if (!parsed) {
-      console.warn(`[AdAnalyzer] JSON invalide pour ${ad.id} : ${truncate(raw, 100)}`);
+      log({ level: 'warn', message: `[IA1] ${ad.id} — ❌ JSON invalide : ${truncate(raw, 120)} → fallback` });
       return fallbackAnalysis(ad, 'Réponse IA non interprétable (JSON invalide).');
     }
 
@@ -261,7 +278,7 @@ class AdAnalyzer {
     parsed.keyInfo = Array.isArray(parsed.keyInfo) ? parsed.keyInfo : [];
 
     aiCache.set(ad.id, parsed, CACHE_PREFIX);
-    console.log(`[AdAnalyzer] ${ad.id} analysé en ${formatMs(Date.now() - t0)} → ${truncate(parsed.identifiedProduct || '', 50)}`);
+    log({ level: 'debug', message: `[IA1] ${ad.id} — ✅ analysé en ${formatMs(Date.now() - t0)} → produit="${truncate(parsed.identifiedProduct || '?', 50)}" | keyInfo=${parsed.keyInfo.length} | défauts=${a.defects.length}` });
     return parsed;
   }
 
@@ -275,8 +292,15 @@ class AdAnalyzer {
   static async analyzeAds(ads, aiConfig = {}, opts = {}) {
     const concurrency = Math.max(1, opts.concurrency || 4);
     const onProgress = opts.onProgress || (() => {});
+    const onLog = opts.onLog || (() => {});
+    // Injecte le callback de log dans aiConfig pour que analyzeAd puisse l'utiliser.
+    const configWithLog = { ...aiConfig, _onLog: onLog };
     const total = ads.length;
     let done = 0;
+    let cacheHits = 0;
+    let fallbacks = 0;
+
+    onLog({ level: 'info', message: `[IA1] Démarrage analyse de ${total} annonce(s) (parallèle x${concurrency}, provider=${configWithLog.provider || 'ollama'}, modèle vision=${configWithLog.visionModel || '?'}, modèle texte=${configWithLog.textModel || '?'})` });
 
     const queue = [...ads];
     const worker = async () => {
@@ -284,9 +308,13 @@ class AdAnalyzer {
         const ad = queue.shift();
         if (!ad) break;
         try {
-          ad.adAnalysis = await AdAnalyzer.analyzeAd(ad, aiConfig);
+          ad.adAnalysis = await AdAnalyzer.analyzeAd(ad, configWithLog);
+          if (ad.adAnalysis?._fallback) fallbacks++;
+          else cacheHits++;
         } catch (err) {
+          onLog({ level: 'warn', message: `[IA1] ${ad.id} — exception non gérée : ${err.message} → fallback` });
           ad.adAnalysis = fallbackAnalysis(ad, err.message);
+          fallbacks++;
         }
         done++;
         onProgress({ done, total, percent: Math.round((done / total) * 100), status: `Analyse annonce ${done}/${total}` });
@@ -295,6 +323,7 @@ class AdAnalyzer {
 
     await Promise.all(Array.from({ length: Math.min(concurrency, total) }, () => worker()));
     onProgress({ done: total, total, percent: 100, status: 'Analyse terminée.' });
+    onLog({ level: 'debug', message: `[IA1] Lot terminé : ${cacheHits} analysées OK, ${fallbacks} fallback, ${total - cacheHits - fallbacks} cache-hit` });
     // Flush disque du cache IA : les set() sont debouncés pour éviter de
     // bloquer l'event-loop pendant le batch. On force l'écriture finale pour
     // que toutes les entrées de ce lot soient persistées avant de rendre la main.
