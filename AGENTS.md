@@ -154,14 +154,32 @@ renderer/                    app.js, index.html, styles.css, widget.html, aiStud
 - `rapport.txt` (jobHistory.js) : chemin + champ `files.rapport` vérifiaient un
   fichier que le pipeline ne crée jamais. Retiré.
 - `DEFAULTS` (constants.js) : bloc mort conflictuel avec `SETTINGS_DEFAULTS`.
+- `risk-keywords.js` (config/) : jamais importé dans l'app, seulement référencé
+  par les tests. Supprimé (4e passe).
+
+## Pièges corrigés (audit 2026-08, 4e passe — fiabilité écriture/offline)
+- **Écritures atomiques pour fichiers critiques** : `secretStore._save()`,
+  `settings.saveSettings()` et `aiCache._saveNow()` utilisaient
+  `fs.writeFileSync` (non-atomique). Un crash pendant l'écriture corrompait
+  le fichier → TOUS les secrets/réglages/cache IA perdus au redémarrage.
+  Maintenant : `atomicWriteFileSync` (tmp + rename) partout, comme
+  `writeWithChecksum` pour les annonces.
+- **Guard offline IA Marché** : `triggerMarketBtn` ne bloquait que
+  `duckduckgo` en mode hors-ligne — Tavily aussi nécessite Internet.
+  La guard s'applique maintenant à TOUS les providers.
+- **Refresh après suppression job** : `askDeleteJob` ne rafraîchissait pas
+  l'explorateur/stats/sessionSelect → données fantômes dans l'UI.
+- **compareSet stale** : les IDs d'annonces supprimées restaient dans
+  compareSet → count désynchronisé. Nettoyage au changement de cache.
 
 ## Sécurité (déjà en place)
 - Renderer sandboxé (sandbox:true, contextIsolation:true, nodeIntegration:false)
 - `shell:openExternal` filtré (http/https uniquement)
 - `file:openFolder/openFile` validés contre BASE_OUT_DIR (anti path-traversal)
 - Clés API via `safeStorage` (secretStore.js), pas en clair
+- Clé API recherche via secretStore (4e passe), pas en clair localStorage
 
 ## Commandes
 - Lancer l'app : `npm start` (electron --max-old-space-size=8192 .)
-- Tests : `node test/regression.test.js`
+- Tests : `npm test` (ou `node test/regression.test.js`) — 451 assertions
 - Branche stable : `refactor/professional-architecture`
