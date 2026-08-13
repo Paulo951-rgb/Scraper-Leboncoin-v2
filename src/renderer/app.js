@@ -225,6 +225,43 @@ window.addEventListener('offline', () => setOfflineMode(true));
 setInterval(refreshConnectivity, 60000); // refresh périodique
 refreshConnectivity(); // vérification initiale
 
+// 🩺 Vérification du binaire Chromium (Playwright) au démarrage. Sans ce
+// binaire, le scraping échoue immédiatement avec « Executable doesn't exist ».
+// On affiche un bandeau rouge tant qu'il manque, avec la commande à lancer.
+const chromiumWarningEl = document.getElementById('chromiumWarning');
+const chromiumWarningRetryBtn = document.getElementById('chromiumWarningRetry');
+
+async function refreshChromiumCheck() {
+  if (!window.api || !window.api.checkChromium) return;
+  try {
+    const res = await window.api.checkChromium();
+    if (res && res.ok) {
+      // Binaire présent : on masque le bandeau (s'il était affiché).
+      if (chromiumWarningEl) chromiumWarningEl.classList.add('hidden');
+    } else {
+      if (chromiumWarningEl) chromiumWarningEl.classList.remove('hidden');
+      if (chromiumWarningRetryBtn) {
+        chromiumWarningRetryBtn.textContent = '🔄 Revérifier';
+        chromiumWarningRetryBtn.disabled = false;
+      }
+    }
+  } catch (err) {
+    // Erreur IPC : on n'affiche pas le bandeau (ne pas alarmer pour un souci
+    // de communication), mais on log en console pour le débogage.
+    console.warn('[Chromium] Vérification impossible :', err && err.message);
+  }
+}
+
+if (chromiumWarningRetryBtn) {
+  chromiumWarningRetryBtn.addEventListener('click', () => {
+    chromiumWarningRetryBtn.textContent = '⏳ Vérification…';
+    chromiumWarningRetryBtn.disabled = true;
+    refreshChromiumCheck();
+  });
+}
+refreshChromiumCheck(); // vérification initiale
+
+
 const historyTableBody = document.getElementById('historyTableBody');
 const sessionSelect = document.getElementById('sessionSelect');
 const statsSessionSelect = document.getElementById('statsSessionSelect');
@@ -890,6 +927,7 @@ function renderHistoryTable(jobs) {
       <td>
         <div class="file-tags">
           ${j.files.xlsx ? `<span class="file-tag tag-xlsx" onclick="openFile('${escapePath(j.files.xlsx)}')">XLSX</span>` : ''}
+          ${j.files.csv ? `<span class="file-tag tag-csv" onclick="openFile('${escapePath(j.files.csv)}')">CSV</span>` : ''}
           ${j.files.json ? `<span class="file-tag" onclick="openFile('${escapePath(j.files.json)}')">JSON</span>` : ''}
 
           ${j.files.resumes ? `<span class="file-tag" onclick="openFile('${escapePath(j.files.resumes)}')">RÉSUMÉS IA</span>` : ''}

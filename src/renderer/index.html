@@ -53,7 +53,17 @@
     </header>
 
     <main class="content">
-      
+
+      <!-- BANDEAU D'AVERTISSEMENT CHROMIUM (Playwright) : affiché si le binaire
+           Chromium utilisé pour le scraping n'est pas installé. Sans lui, tout
+           job échoue avec « Executable doesn't exist ». Masqué par défaut. -->
+      <div id="chromiumWarning" class="chromium-warning hidden">
+        <span class="chromium-warning-icon">⚠️</span>
+        <span class="chromium-warning-text"><strong>Chromium (Playwright) introuvable.</strong> Le scraping ne fonctionnera pas tant que vous n'aurez pas installé le navigateur. Ouvrez un terminal dans le dossier du logiciel et lancez&nbsp;:</span>
+        <code id="chromiumWarningCmd">npx playwright install chromium</code>
+        <button id="chromiumWarningRetry" class="btn btn-small btn-primary" type="button">🔄 Revérifier</button>
+      </div>
+
       <!-- PAGE 1 : SCRAPER -->
       <section id="tab-scraper" class="tab-content active">
         

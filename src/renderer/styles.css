@@ -384,6 +384,15 @@ input:focus, select:focus { border-color: var(--primary-color); }
 .star-icon.starred { color: #facc15; }
 
 .progress-card { margin-top: 10px; }
+
+/* Bandeau d'avertissement Chromium (Playwright) : scraping impossible sans le
+   binaire. Pleine largeur, fond rouge, icône + commande + bouton revérifier. */
+.chromium-warning { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; background: linear-gradient(90deg, #7f1d1d, #b91c1c); color: #fff; border: 1px solid #ef4444; border-radius: 8px; padding: 12px 16px; margin-bottom: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.25); }
+.chromium-warning.hidden { display: none !important; }
+.chromium-warning-icon { font-size: 1.5rem; flex-shrink: 0; }
+.chromium-warning-text { flex: 1; min-width: 220px; font-size: 0.9rem; line-height: 1.45; }
+.chromium-warning code { background: rgba(0,0,0,0.35); color: #fde68a; padding: 4px 10px; border-radius: 4px; font-family: 'Courier New', monospace; font-size: 0.85rem; user-select: all; }
+.chromium-warning .btn { flex-shrink: 0; }
 .progress-header { display: flex; justify-content: space-between; font-size: 0.85rem; margin-bottom: 6px; }
 .progress-bar-container { background-color: var(--bg-color); height: 10px; border-radius: 5px; overflow: hidden; }
 .progress-bar { background-color: var(--primary-color); height: 100%; transition: width 0.3s ease; }
@@ -427,6 +436,7 @@ input:focus, select:focus { border-color: var(--primary-color); }
 .file-tags { display: flex; gap: 4px; }
 .file-tag { background-color: var(--border-color); color: var(--text-color); padding: 2px 5px; border-radius: 3px; font-size: 0.7rem; cursor: pointer; }
 .file-tag.tag-xlsx { background-color: #15803d; color: white; }
+.file-tag.tag-csv { background-color: #1d4ed8; color: white; }
 .file-tag:hover { background-color: var(--primary-color); color: #0f172a; }
 
 .history-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }

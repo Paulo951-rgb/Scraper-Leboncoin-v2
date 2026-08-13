@@ -1199,6 +1199,75 @@ assert(/return\s+errStr/.test(fs.readFileSync(path.join(base, 'infrastructure/fi
 assert(/await\s+window\.api\.openJobsFolder\(\)/.test(aistudioModCode), 'aiStudioModule: openJobsFolder await + gestion d\'erreur');
 assert(/res\.success\s*===\s*false/.test(aistudioModCode), 'aiStudioModule: affiche une alerte si openJobsFolder échoue');
 
+// ─── Améliorations globales : vérif Chromium + export CSV ──────────────────
+console.log('\n[8/8] Améliorations globales (Chromium check + CSV export)');
+
+// A. Vérification du binaire Chromium (scraping-critique)
+assert(/app:checkChromium/.test(ipcCode2), 'ipcHandlers: handler app:checkChromium enregistré');
+assert(/chromium\.executablePath\(\)/.test(ipcCode2), 'ipcHandlers: app:checkChromium utilise chromium.executablePath()');
+assert(/fs\.existsSync\(exePath\)/.test(ipcCode2), 'ipcHandlers: app:checkChromium vérifie l\'existence du binaire sur disque');
+assert(/fixCommand/.test(ipcCode2), 'ipcHandlers: app:checkChromium renvoie fixCommand (aide utilisateur)');
+
+const preloadCodeG = fs.readFileSync(path.join(base, 'preload.js'), 'utf8');
+assert(/checkChromium:\s*\(\)\s*=>\s*ipcRenderer\.invoke\('app:checkChromium'\)/.test(preloadCodeG), 'preload: expose checkChromium à l\'API renderer');
+
+const indexHtmlG = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/index.html'), 'utf8');
+assert(/id="chromiumWarning"/.test(indexHtmlG), 'index.html: élément #chromiumWarning présent (bandeau)');
+assert(/chromiumWarningRetry/.test(indexHtmlG), 'index.html: bouton de revérification #chromiumWarningRetry présent');
+assert(/npx playwright install chromium/.test(indexHtmlG), 'index.html: commande de correction affichée dans le bandeau');
+
+const appJsCodeG = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/app.js'), 'utf8');
+assert(/refreshChromiumCheck/.test(appJsCodeG), 'app.js: fonction refreshChromiumCheck définie');
+assert(/window\.api\.checkChromium\(\)/.test(appJsCodeG), 'app.js: appel à window.api.checkChromium() au démarrage');
+assert(/\/\/ vérification initiale/.test(appJsCodeG), 'app.js: refreshChromiumCheck() appelée à l\'init');
+assert(/res\.ok/.test(appJsCodeG) && /chromiumWarningEl/.test(appJsCodeG), 'app.js: masque/affiche le bandeau selon res.ok');
+
+// B. Export CSV (jumeau du XLSX)
+const excelCodeG = fs.readFileSync(path.join(base, 'infrastructure/excelExporter.js'), 'utf8');
+assert(/static async exportToCsv\(/.test(excelCodeG), 'excelExporter: méthode exportToCsv définie');
+assert(/_csvField/.test(excelCodeG), 'excelExporter: fonction _csvField (échappement RFC 4180)');
+assert(/replace\(\/\"\/g, '""'\)/.test(excelCodeG), 'excelExporter: _csvField double les guillemets internes');
+assert(/\\uFEFF/.test(excelCodeG), 'excelExporter: exportToCsv ajoute le BOM UTF-8 (accents Excel)');
+assert(/\\r\\n/.test(excelCodeG), 'excelExporter: exportToCsv utilise CRLF (compat Excel Windows)');
+
+assert(/exportToCsv\(adsWithAi, csvPath\)/.test(ipcCode2), 'ipcHandlers: job:start génère le CSV après le XLSX');
+assert(/exportToCsv\(ads, path\.join\(path\.dirname\(targetJob\.files\.xlsx\)/.test(ipcCode2), 'ipcHandlers: market:analyze régénère le CSV après le XLSX');
+
+const jobHistCodeG = fs.readFileSync(path.join(base, 'services/jobs/jobHistory.js'), 'utf8');
+assert(/csvPath\s*=\s*path\.join\(resultsDir,\s*'annonces\.csv'\)/.test(jobHistCodeG), 'jobHistory: chemin annonces.csv déclaré');
+assert(/csv:\s*fs\.existsSync\(csvPath\)/.test(jobHistCodeG), 'jobHistory: fichiers.csv liste le CSV');
+assert(/tag-csv/.test(appJsCodeG), 'app.js: tag CSV affiché dans la table d\'historique');
+assert(/\.tag-csv\s*\{/.test(fs.readFileSync(path.join(__dirname, '..', 'src/renderer/styles.css'), 'utf8')), 'styles.css: style .tag-csv défini');
+
+// C. Test fonctionnel de l'export CSV (échappement réel)
+{
+  const tmpCsv = path.join(require('os').tmpdir(), 'lbc-test-export.csv');
+  const testAds = [
+    { id: '1', title: 'RTX 3060 "gaming"', price: 250.5, category: 'Info', city: 'Paris', zipcode: '75001',
+      seller: 'Jean', sellerRating: 4.8, sellerRatingCount: 27, deliveryMode: 'livraison',
+      date: '2024-01-15T10:30:00+00:00', url: 'https://lbc.fr/1',
+      adAnalysis: { identifiedProduct: 'RTX 3060', summary: 'Bon état,\nfonctionne.' },
+      marketAnalysis: { verdictLabel: 'Bonne affaire', realValue: 300, valueRangeLow: 280, valueRangeHigh: 320, deltaEur: 50, rationale: 'OK' } },
+    { id: '2', title: 'Simple', marketAnalysis: {} },
+  ];
+  const ExcelExporter = require('../src/main/infrastructure/excelExporter').ExcelExporter;
+  const csvContent = (async () => {
+    await ExcelExporter.exportToCsv(testAds, tmpCsv);
+    return fs.readFileSync(tmpCsv, 'utf8');
+  })();
+  await csvContent.then((c) => {
+    assert(c.startsWith('\uFEFF'), 'CSV: BOM UTF-8 en tête de fichier');
+    assert(c.includes('Titre;Produit Identifié'), 'CSV: ligne d\'en-têtes présente');
+    assert(c.includes('"RTX 3060 ""gaming"""'), 'CSV: guillemet interne doublé et champ quoté');
+    assert(c.includes('"Bon état,\nfonctionne."'), 'CSV: champ avec virgule + saut de ligne quoté');
+    assert(c.includes('250,5'), 'CSV: prix décimal avec virgule (FR)');
+    assert(c.includes('4,8/5 (27 avis)'), 'CSV: note vendeur formatée');
+    assert(c.includes('\r\n'), 'CSV: fins de ligne CRLF');
+    assert(c.split('\r\n').length >= 3, 'CSV: au moins 3 lignes (header + 2 ads)');
+    try { fs.unlinkSync(tmpCsv); } catch { /* ignore */ }
+  });
+}
+
 console.log(`\n=== RÉSULTAT : ${pass} réussis, ${fail} échoués ===`);
 process.exit(fail > 0 ? 1 : 0);
 }

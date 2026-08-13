@@ -28,6 +28,7 @@ class JobHistoryManager {
       const resultsDir = path.join(jobPath, 'results');
       const jsonPath = path.join(resultsDir, 'annonces.json');
       const xlsxPath = path.join(resultsDir, 'annonces.xlsx');
+      const csvPath = path.join(resultsDir, 'annonces.csv');
       const txtPath = path.join(resultsDir, 'annonces.txt');
       const resumesPath = path.join(resultsDir, 'resumes-ia.json');
 
@@ -69,6 +70,7 @@ class JobHistoryManager {
         files: {
           json: fs.existsSync(jsonPath) ? jsonPath : null,
           xlsx: fs.existsSync(xlsxPath) ? xlsxPath : null,
+          csv: fs.existsSync(csvPath) ? csvPath : null,
           txt: fs.existsSync(txtPath) ? txtPath : null,
           resumes: fs.existsSync(resumesPath) ? resumesPath : null,
         },

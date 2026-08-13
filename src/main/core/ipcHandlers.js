@@ -362,6 +362,15 @@ function setupIpcHandlers(getMainWindow) {
 
         await ExcelExporter.exportToXlsx(adsWithAi, xlsxPath);
         sendLog({ level: 'info', message: '📊 Export Excel (.xlsx) généré avec succès !' });
+        // Export CSV jumeau (compatible Excel FR, BOM UTF-8) : permet l'import
+        // dans un tableur alternatif ou un script sans dépendre d'Excel.
+        const csvPath = path.join(resultsDir, 'annonces.csv');
+        try {
+          await ExcelExporter.exportToCsv(adsWithAi, csvPath);
+          sendLog({ level: 'debug', message: `📄 Export CSV généré : ${csvPath}` });
+        } catch (csvErr) {
+          sendLog({ level: 'warn', message: `Export CSV impossible : ${csvErr.message}` });
+        }
 
         // Note : la notification « Très bonne affaire » est déclenchée par le
         // handler market:analyze (IA Marché, action manuelle) — pas ici. Pendant
@@ -559,6 +568,13 @@ function setupIpcHandlers(getMainWindow) {
     writeSummaryFile(ads, path.join(path.dirname(targetJob.files.json), 'resumes-ia.json'));
     if (targetJob.files.xlsx) {
       await ExcelExporter.exportToXlsx(ads, targetJob.files.xlsx);
+      // Régénère aussi le CSV (jumeau du xlsx) avec les données marché mises à
+      // jour : sans cela, le CSV restait à l'état du dernier job:start.
+      try {
+        await ExcelExporter.exportToCsv(ads, path.join(path.dirname(targetJob.files.xlsx), 'annonces.csv'));
+      } catch (csvErr) {
+        sendLog({ level: 'warn', message: `Mise à jour CSV impossible : ${csvErr.message}` });
+      }
     }
 
     // Notification si une « Très bonne affaire » est détectée.
@@ -605,6 +621,38 @@ function setupIpcHandlers(getMainWindow) {
       timestamp: new Date().toISOString(),
     };
   });
+
+  // 🩺 Vérification du binaire Chromium (Playwright) : scraping-critique.
+  // Si le binaire n'est pas installé, le scraping échoue avec une erreur
+  // cryptique « Executable doesn't exist » au moment de chromium.launch().
+  // On vérifie le chemin renvoyé par chromium.executablePath() sur le disque
+  // et on renvoie un statut + un message d'aide (« npx playwright install
+  // chromium ») pour que le renderer affiche un bandeau d'avertissement
+  // AVANT que l'utilisateur ne lance un job qui échouera.
+  ipcMain.handle('app:checkChromium', async () => {
+    try {
+      const { chromium } = require('playwright');
+      const exePath = chromium.executablePath();
+      const exists = fs.existsSync(exePath);
+      const result = {
+        ok: exists,
+        path: exePath,
+        exists,
+        reason: exists ? null : 'Binaire Chromium introuvable sur le disque.',
+        fixCommand: 'npx playwright install chromium',
+      };
+      if (!exists) {
+        logger.warn(`[Chromium] Binaire manquant : ${exePath} — exécutez « npx playwright install chromium ».`);
+      } else {
+        logger.info(`[Chromium] Binaire OK : ${exePath}`);
+      }
+      return result;
+    } catch (err) {
+      logger.warn(`[Chromium] Vérification impossible : ${err.message}`);
+      return { ok: false, path: null, exists: false, reason: err.message, fixCommand: 'npx playwright install chromium' };
+    }
+  });
+
 
   // ─── Bibliothèque de prompts préfaits (IA Studio V2) ──────────────────
   // Remplace l'ancien générateur IA par des templates statiques à trous.

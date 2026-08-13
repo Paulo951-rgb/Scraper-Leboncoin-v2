@@ -118,6 +118,89 @@ class ExcelExporter {
 
     return outputPath;
   }
+
+  /**
+   * Échappe une valeur pour un champ CSV conforme RFC 4180 :
+   * entourer de guillemets si la valeur contient un séparateur, un guillemet,
+   * un retour à la ligne ; et doubler les guillemets internes.
+   */
+  static _csvField(value, sep = ';') {
+    const s = value == null ? '' : String(value);
+    if (s.includes(sep) || s.includes('"') || s.includes('\n') || s.includes('\r')) {
+      return `"${s.replace(/"/g, '""')}"`;
+    }
+    return s;
+  }
+
+  /**
+   * Exporte les annonces au format CSV (compatible Excel FR : séparateur « ; »,
+   * encodage UTF-8 avec BOM pour que les accents s'affichent correctement à
+   * l'ouverture dans Excel). Représente les mêmes colonnes que le .xlsx, en
+   * version texte plat. Utile pour un import dans un tableur alternatif ou un
+   * script.
+   * @returns {string} chemin du fichier écrit.
+   */
+  static async exportToCsv(ads, outputPath) {
+    const sep = ';';
+    const headers = [
+      'ID', 'Titre', 'Produit Identifié (IA)', 'Prix (€)', 'Catégorie',
+      'Verdict IA Marché', 'Valeur Marché (€)', 'Fourchette Marché (€)',
+      'Bénéfice/Perte (€)', 'Résumé IA', 'Justification Marché',
+      'Ville', 'Vendeur', 'Note Vendeur', 'Remise', 'Date', 'Lien',
+    ];
+
+    const rows = [headers.map((h) => this._csvField(h, sep)).join(sep)];
+
+    for (const ad of ads) {
+      const ma = ad.marketAnalysis || {};
+      const aa = ad.adAnalysis || {};
+      const deliveryMap = { livraison: 'Livraison', main_propre: 'Main propre', inconnu: 'Inconnu' };
+      let rating = '';
+      if (ad.sellerRating != null) {
+        rating = `${String(ad.sellerRating).replace('.', ',')}/5`;
+        if (ad.sellerRatingCount != null) rating += ` (${ad.sellerRatingCount} avis)`;
+      }
+      let dateText = '';
+      if (ad.date) {
+        const d = new Date(ad.date);
+        if (Number.isFinite(d.getTime())) {
+          const pad = (n) => String(n).padStart(2, '0');
+          dateText = `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        }
+      }
+      const marketRange = (ma.valueRangeLow != null && ma.valueRangeHigh != null)
+        ? `${ma.valueRangeLow} € - ${ma.valueRangeHigh} €` : '';
+      const delta = ma.deltaEur != null ? `${ma.deltaEur > 0 ? '+' : ''}${ma.deltaEur} €` : '';
+
+      const row = [
+        ad.id || '',
+        ad.title || '',
+        aa.identifiedProduct || '',
+        typeof ad.price === 'number' ? String(ad.price).replace('.', ',') : (ad.price || ''),
+        ad.category || '',
+        ma.verdictLabel || '',
+        ma.realValue != null ? `${ma.realValue} €` : '',
+        marketRange,
+        delta,
+        aa.summary || '',
+        ma.rationale || '',
+        `${ad.city || ''}${ad.zipcode ? ' (' + ad.zipcode + ')' : ''}`,
+        `${ad.seller || 'Particulier'}${ad.isPro ? ' (Pro)' : ''}`,
+        rating,
+        deliveryMap[ad.deliveryMode] || 'Inconnu',
+        dateText,
+        ad.url || '',
+      ];
+      rows.push(row.map((v) => this._csvField(v, sep)).join(sep));
+    }
+
+    const dir = path.dirname(outputPath);
+    fs.mkdirSync(dir, { recursive: true });
+    // BOM UTF-8 (\uFEFF) : indispensable pour qu'Excel Windows reconnaisse
+    // l'UTF-8 et affiche correctement les accents.
+    fs.writeFileSync(outputPath, '\uFEFF' + rows.join('\r\n'), 'utf8');
+    return outputPath;
+  }
 }
 
 module.exports = { ExcelExporter };
