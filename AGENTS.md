@@ -250,5 +250,30 @@ renderer/                    app.js, index.html, styles.css, widget.html, aiStud
 
 ## Commandes
 - Lancer l'app : `npm start` (electron --max-old-space-size=8192 .)
-- Tests : `npm test` (ou `node test/regression.test.js`) — 588 assertions
+- Tests : `npm test` (ou `node test/regression.test.js`) — 640 assertions
 - Branche stable : `refactor/professional-architecture`
+
+## Améliorations globales (session 2026-08, 5e passe)
+- **Vérif Chromium (`app:checkChromium`)** : feature documentée mais MANQUANTE
+  avant cette session. Ajoutée : handler IPC qui vérifie
+  `chromium.executablePath()` sur le disque (fs.existsSync), renvoie
+  `{ ok, path, exists, reason, fixCommand }`. Le renderer affiche un bandeau
+  rouge `#chromiumWarning` (index.html + styles.css) si le binaire manque,
+  avec la commande `npx playwright install chromium` et un bouton « Revérifier ».
+  `refreshChromiumCheck()` est appelée au démarrage (app.js). preload expose
+  `checkChromium`. Scrape-critique : sans ce binaire, tout job échoue avec
+  « Executable doesn't exist ».
+- **Export CSV (`ExcelExporter.exportToCsv`)** : jumeau du .xlsx, généré
+  automatiquement dans job:start ET régénéré dans market:analyze. RFC 4180
+  (guillemets internes doublés, champs avec virgule/saut-de-ligne quotés),
+  BOM UTF-8 (\uFEFF) pour les accents Excel FR, séparateur « ; », fins CRLF.
+  jobHistory liste le CSV dans `files.csv` ; tag bleu `.tag-csv` dans la table
+  d'historique (ouvrable au clic comme XLSX/JSON).
+- **Moteur de scraping INTACT** : entre b668e86 et HEAD, AUCUN fichier de
+  `src/main/services/scraping/` (harCapturer, leboncoin-pipeline, pipelineRunner,
+  userAgents) n'a été modifié. Les commits 3642595 et 8829861 n'ont touché que
+  ipcHandlers (annulation IA), main.js (webview IA Studio), aiStudioModule,
+  adAnalyzer/marketValueAnalyzer (signal d'annulation). Donc si le scraping
+  « casse », la cause la plus probable est l'environnement (binaire Chromium
+  manquant — d'où la vérif ci-dessus), PAS le code des commits récents.
+- **Tests** : 640 assertions (section 8/8 ajoutée pour Chromium + CSV).
