@@ -53,14 +53,20 @@ const AiStudioModule = {
 
   /** Charge les templates depuis le main process via IPC. */
   async loadTemplates() {
+    // État de chargement visible : si l'IPC échoue ou reste sans réponse,
+    // l'utilisateur voit « Chargement… » au lieu d'un onglet vide (qui donnait
+    // l'impression que les prompts étaient cassés).
+    this.setGenStatus('⏳ Chargement des prompts…', false);
     try {
       if (!window.api || !window.api.listPromptTemplates) {
         this.setGenStatus('Erreur : API prompts préfaits indisponible.', true);
+        this._showRetry();
         return;
       }
       const res = await window.api.listPromptTemplates();
       if (!res || !res.templates || res.templates.length === 0) {
-        this.setGenStatus('Aucun prompt préfait disponible.', true);
+        this.setGenStatus('Aucun prompt préfait disponible' + (res && res.error ? ' : ' + res.error : '') + '.', true);
+        this._showRetry();
         return;
       }
       this.templates = res.templates;
@@ -71,7 +77,26 @@ const AiStudioModule = {
     } catch (err) {
       console.error('[AI Studio] chargement templates échoué :', err);
       this.setGenStatus('Erreur chargement prompts : ' + (err.message || err), true);
+      this._showRetry();
     }
+  },
+
+  /** Affiche un bouton « Recharger les prompts » sous la grille (récupérable). */
+  _showRetry() {
+    const container = this.el.aistudioCardsContainer;
+    if (!container) return;
+    // Évite les doublons.
+    const existing = container.querySelector('.prompt-retry-btn');
+    if (existing) return;
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-primary prompt-retry-btn';
+    btn.textContent = '🔄 Recharger les prompts';
+    btn.style.marginTop = '8px';
+    btn.addEventListener('click', () => {
+      btn.remove();
+      this.loadTemplates();
+    });
+    container.appendChild(btn);
   },
 
   /** Charge les prompts IA internes (utilisés pendant le scraping). */
@@ -322,11 +347,13 @@ const AiStudioModule = {
       const res = await window.api.buildPrompt(tmpl.id, values);
       if (!res || res.error) throw new Error(res ? res.error : 'Erreur inconnue');
       if (!res.prompt) throw new Error('Prompt vide.');
-      await this.copyToClipboard(res.prompt);
+      const ok = await this.copyToClipboard(res.prompt);
+      if (!ok) throw new Error('Copie impossible (presse-papiers bloqué par le navigateur).');
       this.flashCard(tmpl.id, '✅ Prompt rempli copié !');
     } catch (err) {
       console.error('[AI Studio] copie prompt rempli échouée :', err);
       this.setGenStatus('❌ ' + (err && err.message ? err.message : err), true);
+      this.flashCard(tmpl.id, '❌ Copie échouée');
     }
   },
 
@@ -339,11 +366,13 @@ const AiStudioModule = {
     const tmplObj = this.templates.find((t) => t.id === tmpl.id);
     const raw = tmplObj ? tmplObj.template : tmpl.template || '';
     try {
-      await this.copyToClipboard(raw);
+      const ok = await this.copyToClipboard(raw);
+      if (!ok) throw new Error('Copie impossible (presse-papiers bloqué par le navigateur).');
       this.flashCard(tmpl.id, '✅ Prompt brut copié (avec trous) !');
     } catch (err) {
       console.error('[AI Studio] copie prompt brut échouée :', err);
       this.setGenStatus('❌ ' + (err && err.message ? err.message : err), true);
+      this.flashCard(tmpl.id, '❌ Copie échouée');
     }
   },
 
@@ -366,18 +395,26 @@ const AiStudioModule = {
   },
 
   async copyToClipboard(text) {
+    // Retourne true si la copie a réussi, false sinon (pour feedback utilisateur).
+    // navigator.clipboard peut échouer dans un webview/sandbox (Permissions API) ;
+    // on retente via execCommand sur un textarea temporaire.
     try {
       await navigator.clipboard.writeText(text);
+      return true;
     } catch (err) {
-      // Fallback : textarea temporaire
       const ta = document.createElement('textarea');
       ta.value = text;
       ta.style.position = 'fixed';
+      ta.style.top = '0';
+      ta.style.left = '0';
       ta.style.opacity = '0';
       document.body.appendChild(ta);
+      ta.focus();
       ta.select();
-      document.execCommand('copy');
+      let ok = false;
+      try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
       document.body.removeChild(ta);
+      return ok;
     }
   },
 

@@ -250,6 +250,13 @@ app.whenReady().then(() => {
       try { shutdown(); } catch { /* best-effort */ }
     });
   }
+  // Configure la partition IA Studio (UA Chrome + sec-ch-ua) AVANT la création
+  // de la fenêtre : le <webview> de l'onglet IA Studio charge aistudio.google.com
+  // dès le démarrage. Sans cela, la première requête partait avec l'UA par défaut
+  // (contenant "Electron") → Google détectait Electron et servait une page
+  // blanche/bloquée (« effet blanc »). La fenêtre de connexion configurait cette
+  // partition trop tard (uniquement à l'ouverture de la fenêtre 🔑).
+  configureAiStudioSession();
   createWindow();
 }).catch((err) => {
   console.error('❌ Erreur app.whenReady :', err);
@@ -295,8 +302,16 @@ app.on('web-contents-created', (_event, contents) => {
     }
     // Verrouille systématiquement : pas de Node.js dans le webview.
     webPreferences.nodeIntegration = false;
-    webPreferences.sandbox = true;
     webPreferences.webSecurity = true;
+    // Le webview AI Studio (preload allowlisté) garde contextIsolation=false pour
+    // que son preload puisse masquer l'empreinte Electron (navigator.userAgentData
+    // etc.) avant les scripts Google. On ne force PAS sandbox=true dessus : la
+    // fenêtre de connexion (qui marche) n'a pas non plus sandbox, et sandbox +
+    // contextIsolation=false peut empêcher le preload d'overrider navigator →
+    // Google voit Electron → page blanche. Les autres webview restent sandboxés.
+    if (!isAiStudioPreload) {
+      webPreferences.sandbox = true;
+    }
     // Isole chaque webview non-AI-Studio dans sa propre session (pas d'accès
     // au cache/cookies app). Le webview AI Studio garde sa partition
     // persist:aistudio (partagée avec la fenêtre de connexion Google).
