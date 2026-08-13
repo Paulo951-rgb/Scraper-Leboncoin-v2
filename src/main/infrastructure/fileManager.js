@@ -5,7 +5,7 @@ const fs = require('fs');
 const { shell } = require('electron');
 
 class FileManager {
-  static openFolder(folderPath) {
+  static async openFolder(folderPath) {
     // Crée le dossier s'il n'existe pas encore (au premier lancement, les
     // dossiers output/jobs n'existent pas → openPath échoue silencieusement
     // et le bouton "Ouvrir les jobs" paraissait ne rien faire).
@@ -14,15 +14,18 @@ class FileManager {
     } catch (e) {
       throw new Error(`Impossible de créer le dossier "${folderPath}" : ${e.message}`);
     }
-    shell.openPath(folderPath);
+    // shell.openPath renvoie '' en cas de succès, ou un message d'erreur sinon
+    // (sans throw). On retourne ce message pour que l'appelant puisse le
+    // remonter à l'utilisateur au lieu d'un échec silencieux.
+    const errStr = await shell.openPath(folderPath);
+    return errStr;
   }
 
-  static openFile(filePath) {
+  static async openFile(filePath) {
     if (fs.existsSync(filePath)) {
-      shell.openPath(filePath);
-    } else {
-      throw new Error(`Le fichier "${filePath}" n'existe pas encore.`);
+      return await shell.openPath(filePath);
     }
+    throw new Error(`Le fichier "${filePath}" n'existe pas encore.`);
   }
 }
 

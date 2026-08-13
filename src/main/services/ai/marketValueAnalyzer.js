@@ -363,18 +363,24 @@ class MarketValueAnalyzer {
     const concurrency = Math.max(1, opts.concurrency || 3);
     const onProgress = opts.onProgress || (() => {});
     const onLog = opts.onLog || (() => {});
+    const signal = opts.signal; // token d'annulation partagé { cancelled: boolean }
     const configWithLog = { ...aiConfig, _onLog: onLog };
     const total = ads.length;
     let done = 0;
     let searchOk = 0;
     let aiOk = 0;
     let fallbacks = 0;
+    let cancelled = false;
 
     onLog({ level: 'info', message: `[IA2] Démarrage analyse marché de ${total} annonce(s) (parallèle x${concurrency}, provider IA=${configWithLog.provider || 'ollama'}, moteur=${searchConfig.provider || 'duckduckgo'})` });
 
     const queue = [...ads];
     const worker = async () => {
       while (queue.length > 0) {
+        // Arrêt propre demandé (bouton « Arrêter ») : on n'entame plus aucune
+        // nouvelle recherche. Les workers en cours terminent l'estimation
+        // courante, puis s'arrêtent. Les résultats partiels sont conservés.
+        if (signal && signal.cancelled) { cancelled = true; break; }
         const ad = queue.shift();
         if (!ad) break;
         try {
@@ -401,8 +407,13 @@ class MarketValueAnalyzer {
     };
 
     await Promise.all(Array.from({ length: Math.min(concurrency, total) }, () => worker()));
-    onProgress({ done: total, total, percent: 100, status: `Analyse marché terminée (recherche OK: ${searchOk}, estimation OK: ${aiOk}).`, stageCounts: { searchOk, aiOk } });
-    onLog({ level: 'debug', message: `[IA2] Lot terminé : ${aiOk} marché OK, ${searchOk} avec sources, ${fallbacks} fallback, ${total - aiOk - fallbacks} cache-hit` });
+    if (cancelled) {
+      onProgress({ done, total, percent: Math.round((done / total) * 100), status: `Analyse marché interrompue (${done}/${total}).`, stageCounts: { searchOk, aiOk } });
+      onLog({ level: 'warn', message: `[IA2] Analyse marché interrompue par l'utilisateur : ${done}/${total} annonce(s) traitée(s).` });
+    } else {
+      onProgress({ done: total, total, percent: 100, status: `Analyse marché terminée (recherche OK: ${searchOk}, estimation OK: ${aiOk}).`, stageCounts: { searchOk, aiOk } });
+      onLog({ level: 'debug', message: `[IA2] Lot terminé : ${aiOk} marché OK, ${searchOk} avec sources, ${fallbacks} fallback, ${total - aiOk - fallbacks} cache-hit` });
+    }
     // Flush disque du cache IA : les set() sont debouncés. On force l'écriture
     // finale pour persister toutes les estimations de ce lot.
     aiCache._flushSave();

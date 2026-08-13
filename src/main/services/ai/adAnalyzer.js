@@ -293,18 +293,25 @@ class AdAnalyzer {
     const concurrency = Math.max(1, opts.concurrency || 4);
     const onProgress = opts.onProgress || (() => {});
     const onLog = opts.onLog || (() => {});
+    const signal = opts.signal; // token d'annulation partagé { cancelled: boolean }
     // Injecte le callback de log dans aiConfig pour que analyzeAd puisse l'utiliser.
     const configWithLog = { ...aiConfig, _onLog: onLog };
     const total = ads.length;
     let done = 0;
     let cacheHits = 0;
     let fallbacks = 0;
+    let cancelled = false;
 
     onLog({ level: 'info', message: `[IA1] Démarrage analyse de ${total} annonce(s) (parallèle x${concurrency}, provider=${configWithLog.provider || 'ollama'}, modèle vision=${configWithLog.visionModel || '?'}, modèle texte=${configWithLog.textModel || '?'})` });
 
     const queue = [...ads];
     const worker = async () => {
       while (queue.length > 0) {
+        // Arrêt propre demandé (bouton « Arrêter ») : on n'entame plus aucune
+        // nouvelle annonce. Les workers en cours terminent l'annonce courante
+        // (l'appel IA est déjà parti), puis s'arrêtent. Les résultats partiels
+        // déjà produits sont conservés et sauvegardés par l'appelant.
+        if (signal && signal.cancelled) { cancelled = true; break; }
         const ad = queue.shift();
         if (!ad) break;
         try {
@@ -322,8 +329,13 @@ class AdAnalyzer {
     };
 
     await Promise.all(Array.from({ length: Math.min(concurrency, total) }, () => worker()));
-    onProgress({ done: total, total, percent: 100, status: 'Analyse terminée.' });
-    onLog({ level: 'debug', message: `[IA1] Lot terminé : ${cacheHits} analysées OK, ${fallbacks} fallback, ${total - cacheHits - fallbacks} cache-hit` });
+    if (cancelled) {
+      onProgress({ done, total, percent: Math.round((done / total) * 100), status: `Analyse interrompue (${done}/${total}).` });
+      onLog({ level: 'warn', message: `[IA1] Analyse interrompue par l'utilisateur : ${done}/${total} annonce(s) traitée(s).` });
+    } else {
+      onProgress({ done: total, total, percent: 100, status: 'Analyse terminée.' });
+      onLog({ level: 'debug', message: `[IA1] Lot terminé : ${cacheHits} analysées OK, ${fallbacks} fallback, ${total - cacheHits - fallbacks} cache-hit` });
+    }
     // Flush disque du cache IA : les set() sont debouncés pour éviter de
     // bloquer l'event-loop pendant le batch. On force l'écriture finale pour
     // que toutes les entrées de ce lot soient persistées avant de rendre la main.

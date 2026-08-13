@@ -58,6 +58,14 @@ function setupIpcHandlers(getMainWindow) {
   // sur le MÊME job → race sur le fichier annonces.json et appels IA dupliqués.
   let isMarketAnalyzing = false;
 
+  // Token d'annulation partagé pour TOUTES les tâches longues (scraping + IA
+  // Analyse + IA Marché). Le bouton « Arrêter » positionne activeCancel.cancelled
+  // = true ; les boucles de workers des analyseurs (AdAnalyzer / MarketValueAnalyzer)
+  // vérifient ce flag entre chaque annonce et s'arrêtent proprement, en
+  // conservant les résultats déjà produits. Permet d'arrêter l'IA (pas seulement
+  // le scraping) sans tuer l'application.
+  let activeCancel = null;
+
   // Getter de fenêtre principale : renvoie null si détruite/fichermée,
   // évitant les crashes "Cannot read properties of null" sur webContents.send.
   const getWin = () => {
@@ -71,6 +79,9 @@ function setupIpcHandlers(getMainWindow) {
   // l'app pendant un job laissait le processus fils (leboncoin-pipeline) et son
   // navigateur Chromium orphelins, continuant à tourner en arrière-plan.
   function shutdown() {
+    try {
+      if (activeCancel) activeCancel.cancelled = true;
+    } catch { /* shutdown best-effort */ }
     try {
       if (activeRunner) activeRunner.stop();
     } catch { /* shutdown best-effort */ }
@@ -164,6 +175,9 @@ function setupIpcHandlers(getMainWindow) {
       return;
     }
     isRunning = true;
+    // Nouveau token d'annulation pour ce job (bouton « Arrêter »). Réinitialisé
+    // à chaque job : un clic Arrêter n'affecte QUE le job en cours.
+    activeCancel = { cancelled: false };
     sessionStats = newSessionStats();
     sessionStats.t0 = Date.now();
     sessionStats.pagesRequested = parseInt(config.pages, 10) || 1;
@@ -320,6 +334,7 @@ function setupIpcHandlers(getMainWindow) {
           };
           adsWithAi = await AdAnalyzer.analyzeAds(adsWithAi, analysisConfig, {
             concurrency: userSettings.aiConcurrency || 4,
+            signal: activeCancel,
             onProgress: (prog) => sendProgress({
               percent: 75 + Math.round((prog.percent / 100) * 25),
               status: prog.status,
@@ -330,7 +345,13 @@ function setupIpcHandlers(getMainWindow) {
           const analyzedCount = adsWithAi.filter((a) => a.adAnalysis && !a.adAnalysis._fallback).length;
           sessionStats.aiAnalyzed = analyzedCount;
           sessionStats.aiFallback = adsWithAi.length - analyzedCount;
-          sendLog({ level: 'info', message: `✅ IA Analyse terminée en ${aiElapsed}s (${analyzedCount}/${adsWithAi.length} annonces analysées, ${adsWithAi.length - analyzedCount} fallback).` });
+          if (activeCancel && activeCancel.cancelled) {
+            stoppedEarly = true;
+            sessionStats.stoppedEarly = true;
+            sendLog({ level: 'warn', message: `⏹️ IA Analyse interrompue : ${analyzedCount}/${adsWithAi.length} annonce(s) analysée(s). Les résultats partiels sont sauvegardés.` });
+          } else {
+            sendLog({ level: 'info', message: `✅ IA Analyse terminée en ${aiElapsed}s (${analyzedCount}/${adsWithAi.length} annonces analysées, ${adsWithAi.length - analyzedCount} fallback).` });
+          }
           sendLog({ level: 'debug', message: `[job:start] Phase IA Analyse terminée en ${aiElapsed}s.` });
 
           writeWithChecksum(jsonPath, adsWithAi, null, 2);
@@ -386,14 +407,29 @@ function setupIpcHandlers(getMainWindow) {
       isRunning = false;
       activeCapturer = null;
       activeRunner = null;
+      activeCancel = null;
     }
   });
 
+  // ⏹️ Bouton « Arrêter » : arrêt propre de TOUTE tâche longue en cours, pas
+  // uniquement le scraping. Annule l'IA Analyse (job:start) et l'IA Marché
+  // (market:analyze) via le token partagé activeCancel, ET stoppe la capture
+  // HAR / le pipeline forké pour la phase de scraping. Les workers IA en cours
+  // terminent l'annonce courante puis s'arrêtent ; les résultats partiels sont
+  // sauvegardés. Aucun kill forcé : l'application reste stable.
   ipcMain.on('job:stop', () => {
-    if (!isRunning) return;
-    sendLog({ level: 'warn', message: 'Demande d\'arrêt utilisateur envoyée...' });
+    // Arrêt de l'IA Marché (market:analyze) même si isRunning est false (le
+    // scraping est déjà fini mais l'IA Marché tourne encore).
+    if (activeCancel) {
+      activeCancel.cancelled = true;
+      sendLog({ level: 'warn', message: '⏹️ Demande d\'arrêt envoyée — arrêt en cours de la tâche (les annonces en traitement terminent, puis stop).' });
+    }
+    // Arrêt de la phase scraping (capture HAR + pipeline forké).
     if (activeRunner) activeRunner.stop();
     if (activeCapturer) activeCapturer.stop(); // Arrêt immédiat de la capture HAR en cours
+    if (!isRunning && !isMarketAnalyzing && !activeCancel) {
+      sendLog({ level: 'debug', message: '[job:stop] Aucune tâche en cours.' });
+    }
   });
 
   // 🌐 IA MARCHÉ — recherche Internet + estimation réelle de la valeur.
@@ -405,6 +441,11 @@ function setupIpcHandlers(getMainWindow) {
     if (isRunning) throw new Error('Un job de scraping est en cours — attendez la fin avant d\'analyser le marché.');
     if (isMarketAnalyzing) throw new Error('Une analyse de marché est déjà en cours — attendez la fin avant d\'en lancer une autre.');
     isMarketAnalyzing = true;
+    // Token d'annulation dédié à l'IA Marché (bouton « Arrêter »). Indépendant
+    // du token de job:start (les deux ne tournent jamais en même temps grâce
+    // au verrou isRunning, mais on isole pour la clarté).
+    activeCancel = { cancelled: false };
+    let wasCancelled = false;
     try {
     const jobs = JobHistoryManager.listAllJobs();
     const targetJob = jobs.find((j) => j.id === jobId);
@@ -480,12 +521,14 @@ function setupIpcHandlers(getMainWindow) {
     let aiOk = 0;
     targetAds = await MarketValueAnalyzer.analyzeMarketBatch(targetAds, marketAiConfig, sConfig, {
       concurrency: reanalyzeSettings.aiConcurrency || 3,
+      signal: activeCancel,
       onProgress: (prog) => {
         sendProgress({ percent: prog.percent, status: prog.status });
         if (prog.stageCounts) { searchOk = prog.stageCounts.searchOk || searchOk; aiOk = prog.stageCounts.aiOk || aiOk; }
       },
       onLog: (data) => { sendLog(data); if (data.level === 'warn' && /fallback/.test(data.message || '')) sessionStats.marketFallback++; },
     });
+    wasCancelled = !!(activeCancel && activeCancel.cancelled);
     sessionStats.marketAnalyzed = targetAds.filter((a) => a.marketAnalysis && !a.marketAnalysis._fallback).length;
     const elapsed = Math.round((Date.now() - t0) / 1000);
     const estimated = targetAds.filter((a) => a.marketAnalysis && !a.marketAnalysis._fallback).length;
@@ -503,7 +546,9 @@ function setupIpcHandlers(getMainWindow) {
         failReasons[cat] = (failReasons[cat] || 0) + 1;
       }
     }
-    if (estimated < targetAds.length) {
+    if (wasCancelled) {
+      sendLog({ level: 'warn', message: `⏹️ IA Marché interrompue en ${elapsed}s — ${estimated}/${targetAds.length} estimations réussies. Les résultats partiels sont sauvegardés.` });
+    } else if (estimated < targetAds.length) {
       const breakdown = Object.entries(failReasons).map(([k, v]) => `${v}× ${k}`).join(', ');
       sendLog({ level: 'warn', message: `⚠️ IA Marché terminée en ${elapsed}s — ${estimated}/${targetAds.length} réussies. Échecs : ${breakdown || 'inconnu'}.` });
     } else {
@@ -528,6 +573,11 @@ function setupIpcHandlers(getMainWindow) {
       // Toujours libérer le verrou, même en cas d'erreur fatale : sinon une
       // analyse échouée bloquait définitivement toute analyse de marché future.
       isMarketAnalyzing = false;
+      activeCancel = null;
+      // L'IA Marché est une action manuelle (invoke) qui n'envoie jamais
+      // d'état 'completed'/'error' par elle-même. On envoie un état terminal
+      // pour que le bouton « Arrêter » du renderer se réactive.
+      sendStatus({ state: 'completed', message: wasCancelled ? 'Analyse de marché interrompue.' : 'Analyse de marché terminée.' });
     }
   });
 
@@ -745,7 +795,11 @@ function setupIpcHandlers(getMainWindow) {
     try {
       const target = folderPath || BASE_OUT_DIR;
       if (!isPathAllowed(target)) return { success: false, error: 'Chemin non autorisé.' };
-      FileManager.openFolder(target);
+      const errStr = await FileManager.openFolder(target);
+      // shell.openPath renvoie '' en cas de succès, ou un message d'erreur
+      // (ex: "Failed to open ...") sans throw. Sans cette vérification, l'échec
+      // était silencieux : le bouton paraissait ne « rien faire ».
+      if (errStr) return { success: false, error: errStr };
       return { success: true };
     } catch (err) {
       return { success: false, error: err.message };
@@ -758,7 +812,10 @@ function setupIpcHandlers(getMainWindow) {
   // dossier et le crée s'il n'existe pas.
   ipcMain.handle('jobs:openFolder', async () => {
     try {
-      FileManager.openFolder(JOBS_DIR);
+      const errStr = await FileManager.openFolder(JOBS_DIR);
+      // shell.openPath renvoie '' si OK, sinon un message d'erreur. On remonte
+      // l'échec pour que le renderer puisse l'afficher (sinon bouton silencieux).
+      if (errStr) return { success: false, error: errStr };
       return { success: true };
     } catch (err) {
       return { success: false, error: err.message };
@@ -768,7 +825,8 @@ function setupIpcHandlers(getMainWindow) {
   ipcMain.handle('file:openFile', async (event, filePath) => {
     try {
       if (!isPathAllowed(filePath)) return { success: false, error: 'Chemin non autorisé.' };
-      FileManager.openFile(filePath);
+      const errStr = await FileManager.openFile(filePath);
+      if (errStr) return { success: false, error: errStr };
       return { success: true };
     } catch (err) {
       return { success: false, error: err.message };

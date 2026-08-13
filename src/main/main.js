@@ -272,15 +272,35 @@ app.on('activate', () => {
 // tout le sandboxing. On force les webpreferences sûres sur TOUS les webview.
 app.on('web-contents-created', (_event, contents) => {
   contents.on('will-attach-webview', (_e, webPreferences, params) => {
-    // Supprime tout preload injecté par le renderer — seul le preload app est autorisé.
-    delete webPreferences.preload;
-    // Verrouille le sandbox : pas de Node.js dans le webview.
+    // Allowlist du preload AI Studio : le <webview> de l'onglet IA Studio charge
+    // aistudioLoginPreload.js (fichier local maîtrisé) qui masque l'empreinte
+    // Electron (navigator.userAgentData / webdriver / chrome) AVANT les scripts
+    // de Google pour qu'AI Studio s'affiche normalement. Ce preload nécessite
+    // contextIsolation=false pour pouvoir modifier les objets de la page.
+    // Sans cet allowlist, le hardening supprimait le preload → AI Studio voyait
+    // Electron et ne s'affichait pas correctement.
+    const aiStudioPreload = 'aistudioLoginPreload.js';
+    const isAiStudioPreload = !!(params && params.preload && String(params.preload).endsWith(aiStudioPreload));
+
+    if (!isAiStudioPreload) {
+      // Tout preload non autorisé est supprimé (sécurité : un renderer
+      // compromis ne peut pas injecter son propre preload).
+      delete webPreferences.preload;
+      webPreferences.contextIsolation = true;
+    } else {
+      // Preload de confiance : il a besoin de contextIsolation=false pour
+      // surcharger navigator avant les scripts Google. nodeIntegration reste
+      // false (pas d'accès Node dans la page).
+      webPreferences.contextIsolation = false;
+    }
+    // Verrouille systématiquement : pas de Node.js dans le webview.
     webPreferences.nodeIntegration = false;
-    webPreferences.contextIsolation = true;
     webPreferences.sandbox = true;
     webPreferences.webSecurity = true;
-    // Isole chaque webview dans sa propre session (pas d'accès au cache/cookies app).
-    if (!params.partition || params.partition === 'persist:default') {
+    // Isole chaque webview non-AI-Studio dans sa propre session (pas d'accès
+    // au cache/cookies app). Le webview AI Studio garde sa partition
+    // persist:aistudio (partagée avec la fenêtre de connexion Google).
+    if (!isAiStudioPreload && (!params.partition || params.partition === 'persist:default')) {
       webPreferences.partition = 'webview-sandbox';
     }
   });

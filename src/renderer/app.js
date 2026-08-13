@@ -777,6 +777,9 @@ triggerMarketBtn.addEventListener('click', async () => {
     return;
   }
   triggerMarketBtn.disabled = true;
+  // Active le bouton « Arrêter » pendant l'IA Marché : le job:stop handler
+  // annule maintenant aussi l'analyse de marché (token activeCancel partagé).
+  stopBtn.disabled = false;
   progressBar.style.width = '0%';
   statusText.textContent = 'Analyse de marché IA (recherche Internet + estimation)...';
 
@@ -1612,12 +1615,28 @@ window.openUrl = (urlStr) => {
   if (urlStr) window.api.openExternal(urlStr);
 };
 
-window.openFolder = (folderPath) => {
-  if (folderPath) window.api.openFolder(folderPath);
+window.openFolder = async (folderPath) => {
+  if (!folderPath) return;
+  try {
+    const res = await window.api.openFolder(folderPath);
+    if (res && res.success === false) {
+      alert('Impossible d\'ouvrir le dossier : ' + (res.error || 'erreur inconnue'));
+    }
+  } catch (err) {
+    alert('Impossible d\'ouvrir le dossier : ' + (err.message || err));
+  }
 };
 
-window.openFile = (filePath) => {
-  if (filePath) window.api.openFile(filePath);
+window.openFile = async (filePath) => {
+  if (!filePath) return;
+  try {
+    const res = await window.api.openFile(filePath);
+    if (res && res.success === false) {
+      alert('Impossible d\'ouvrir le fichier : ' + (res.error || 'erreur inconnue'));
+    }
+  } catch (err) {
+    alert('Impossible d\'ouvrir le fichier : ' + (err.message || err));
+  }
 };
 
 window.askDeleteJob = (jobId) => {
@@ -1668,8 +1687,15 @@ modalConfirmBtn.addEventListener('click', async () => {
   }
 });
 
-document.getElementById('openMainFolderBtn').addEventListener('click', () => {
-  window.api.openFolder('');
+document.getElementById('openMainFolderBtn').addEventListener('click', async () => {
+  try {
+    const res = await window.api.openFolder('');
+    if (res && res.success === false) {
+      alert('Impossible d\'ouvrir le dossier principal : ' + (res.error || 'erreur inconnue'));
+    }
+  } catch (err) {
+    alert('Impossible d\'ouvrir le dossier principal : ' + (err.message || err));
+  }
 });
 
 // Écouteur pour rafraîchir la carte si on coche/décoche la remise en main propre

@@ -607,9 +607,12 @@ const fileMgrCode = fs.readFileSync(path.join(base, 'infrastructure/fileManager.
 assert(/mkdirSync/.test(fileMgrCode), 'fileManager: openFolder crée le dossier (mkdirSync recursive) — fix bouton jobs');
 // openFolder ne jette plus si le dossier n'existe pas — il le crée (mkdirSync recursive).
 // openFile jette toujours (normal, on ne crée pas un fichier inexistant).
-const openFolderMatch = fileMgrCode.match(/static openFolder\(folderPath\) \{[\s\S]*?\n  \}/);
-assert(openFolderMatch, 'fileManager: méthode openFolder trouvée');
+// openFolder est async (retourne le résultat de shell.openPath pour remonter les
+// erreurs silencieuses au renderer — fix bouton « Ouvrir les jobs »).
+const openFolderMatch = fileMgrCode.match(/static\s+async\s+openFolder\(folderPath\)\s*\{[\s\S]*?\n  \}/);
+assert(openFolderMatch, 'fileManager: méthode openFolder (async) trouvée');
 assert(!/fs\.existsSync\(folderPath\)/.test(openFolderMatch[0]), 'fileManager: openFolder n\'utilise plus fs.existsSync (crée le dossier au lieu de vérifier)');
+assert(/return\s+errStr/.test(openFolderMatch[0]), 'fileManager: openFolder retourne le résultat de shell.openPath (erreurs non silencieuses)');
 
 // F5 : fenêtre de connexion Google dédiée (le webview est bloqué par Google pour l'OAuth)
 assert(/aistudioLoginBtn/.test(htmlCode), 'index.html: bouton 🔑 Se connecter (ouverture fenêtre dédiée)');
@@ -1155,6 +1158,46 @@ assert(/Erreur CLI[^\n]*\n[\s\S]*?process\.exit\(1\)/.test(pipelineCode2), 'pipe
 // sessionStats.pagesScraped mis à jour dans le handler de progression
 assert(/pagesScraped/.test(ipcCode2), 'ipcHandlers: pagesScraped tracker présent');
 assert(/currentPage > sessionStats\.pagesScraped/.test(ipcCode2), 'ipcHandlers: pagesScraped mis à jour depuis la progression HAR');
+
+// ─── P1 : Bouton « Arrêter » universel (scraping + IA Analyse + IA Marché) ───
+console.log('\n[7/7] Bouton Arrêter universel (IA + Marché)');
+// Token d'annulation partagé dans ipcHandlers
+assert(/activeCancel\s*=\s*\{\s*cancelled:\s*false\s*\}/.test(ipcCode2), 'ipcHandlers: token activeCancel créé pour job:start et market:analyze');
+// job:stop annule l'IA (pas seulement isRunning) — plus de return précoce sur !isRunning
+assert(!/if\s*\(\s*!isRunning\s*\)\s*return;/.test(ipcCode2), 'ipcHandlers: job:stop ne retourne plus prématurément si !isRunning (couvre l\'IA Marché)');
+assert(/activeCancel\.cancelled\s*=\s*true/.test(ipcCode2), 'ipcHandlers: job:stop positionne activeCancel.cancelled (arrêt IA)');
+// Signal propagé aux analyseurs
+assert(/signal:\s*activeCancel/.test(ipcCode2), 'ipcHandlers: signal activeCancel passé à analyzeAds ET analyzeMarketBatch');
+assert(/signal\s*=\s*opts\.signal/.test(adAnalyzerCode2), 'adAnalyzer: analyzeAds lit opts.signal (token d\'annulation)');
+assert(/signal\s*&&\s*signal\.cancelled/.test(adAnalyzerCode2), 'adAnalyzer: boucle worker vérifie signal.cancelled entre chaque annonce');
+const marketCode3 = fs.readFileSync(path.join(__dirname, '..', 'src/main/services/ai/marketValueAnalyzer.js'), 'utf8');
+assert(/signal\s*=\s*opts\.signal/.test(marketCode3), 'marketValueAnalyzer: analyzeMarketBatch lit opts.signal');
+assert(/signal\s*&&\s*signal\.cancelled/.test(marketCode3), 'marketValueAnalyzer: boucle worker vérifie signal.cancelled');
+// Statut terminal envoyé à la fin de market:analyze (pour réactiver le bouton Arrêter)
+assert(/state:\s*'completed'/.test(ipcCode2) && /Analyse de marché/.test(ipcCode2), 'ipcHandlers: market:analyze envoie un statut terminal (completed)');
+
+// ─── P2 : Robustesse affichage prompts préfaits ─────────────────────────────
+console.log('\n[7/7] Robustesse prompts préfaits');
+assert(/_buildCard\(tmpl\)/.test(aistudioModCode), 'aiStudioModule: renderCards délègue à _buildCard (extraction)');
+assert(/this\.loadTemplates\(\)/.test(aistudioModCode), 'aiStudioModule: loadTemplates appelé dans init');
+assert(/try\s*\{\s*this\.bindBrowser\(e\)/.test(aistudioModCode), 'aiStudioModule: bindBrowser isolé dans try/catch (ne bloque pas les prompts)');
+// loadTemplates appelé AVANT bindBrowser (prompts prioritaires sur le webview)
+const initBlock = aistudioModCode.match(/init\(\)\s*\{[\s\S]*?\n  \},/);
+assert(initBlock && initBlock[0].indexOf('loadTemplates') < initBlock[0].indexOf('bindBrowser'), 'aiStudioModule: loadTemplates avant bindBrowser (prompts indépendants du webview)');
+
+// ─── P3 : webview AI Studio (allowlist preload de confiance) ────────────────
+console.log('\n[7/7] webview AI Studio (allowlist preload)');
+assert(/aistudioLoginPreload\.js/.test(mainCode4), 'main.js: allowlist preload aistudioLoginPreload.js dans will-attach-webview');
+assert(/isAiStudioPreload/.test(mainCode4), 'main.js: détection isAiStudioPreload (branche de confiance)');
+// Le preload de confiance conserve contextIsolation=false (nécessaire pour masquer Electron)
+assert(/isAiStudioPreload[\s\S]*?contextIsolation\s*=\s*false/.test(mainCode4), 'main.js: preload IA Studio autorisé avec contextIsolation=false');
+
+// ─── P4 : Bouton « Ouvrir les jobs » (erreurs non silencieuses) ─────────────
+console.log('\n[7/7] Bouton Ouvrir les jobs (erreurs non silencieuses)');
+assert(/errStr\s*=\s*await\s+FileManager\.openFolder\(JOBS_DIR\)/.test(ipcCode2), 'ipcHandlers: jobs:openFolder await FileManager.openFolder et capture l\'erreur');
+assert(/return\s+errStr/.test(fs.readFileSync(path.join(base, 'infrastructure/fileManager.js'), 'utf8')), 'fileManager: openFolder retourne errStr (shell.openPath)');
+assert(/await\s+window\.api\.openJobsFolder\(\)/.test(aistudioModCode), 'aiStudioModule: openJobsFolder await + gestion d\'erreur');
+assert(/res\.success\s*===\s*false/.test(aistudioModCode), 'aiStudioModule: affiche une alerte si openJobsFolder échoue');
 
 console.log(`\n=== RÉSULTAT : ${pass} réussis, ${fail} échoués ===`);
 process.exit(fail > 0 ? 1 : 0);

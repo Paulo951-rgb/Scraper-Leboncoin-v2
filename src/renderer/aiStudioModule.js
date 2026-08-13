@@ -35,9 +35,20 @@ const AiStudioModule = {
     if (missing) return;
 
     this.el = e;
+    // Les prompts préfaits sont chargés EN PREMIER et indépendamment du
+    // navigateur intégré : si le <webview> AI Studio échoue à s'attacher, cela
+    // ne doit JAMAIS empêcher les prompts de s'afficher (c'est la fonctionnalité
+    // principale de l'onglet). On branche les actions puis le navigateur après.
     this.bindActions(e);
-    this.bindBrowser(e);
     this.loadTemplates();
+    // bindBrowser est volontairement en dernier et isolé : une erreur de webview
+    // ne bloque ni les prompts ni les actions.
+    try {
+      this.bindBrowser(e);
+    } catch (err) {
+      console.error('[AI Studio] navigateur intégré indisponible :', err);
+      if (e.aistudioGenStatus) e.aistudioGenStatus.textContent = 'Navigateur IA Studio indisponible — les prompts restent utilisables.';
+    }
   },
 
   /** Charge les templates depuis le main process via IPC. */
@@ -151,9 +162,31 @@ const AiStudioModule = {
   renderCards() {
     const container = this.el.aistudioCardsContainer;
     container.innerHTML = '';
+    let rendered = 0;
 
     for (const tmpl of this.templates) {
-      const card = document.createElement('div');
+      // Une carte défectueuse (template mal formé) ne doit pas empêcher les
+      // autres de s'afficher. Sans ce try/catch, une seule exception tuait toute
+      // la grille et l'onglet paraissait vide (« prompts non visibles »).
+      try {
+        const card = this._buildCard(tmpl);
+        if (card) { container.appendChild(card); rendered++; }
+      } catch (err) {
+        console.error('[AI Studio] carte prompt échouée :', tmpl && tmpl.id, err);
+      }
+    }
+
+    if (rendered === 0) {
+      this.setGenStatus('⚠️ Aucun prompt n\'a pu être affiché (template invalide).', true);
+    } else {
+      this.setGenStatus('', false);
+    }
+  },
+
+  /** Construit le DOM d'une carte de prompt (extrait de renderCards pour le try/catch par carte). */
+  _buildCard(tmpl) {
+    if (!tmpl || !tmpl.id || !tmpl.template) return null;
+    const card = document.createElement('div');
       card.className = 'prompt-card';
       card.dataset.tplId = tmpl.id;
 
@@ -238,8 +271,7 @@ const AiStudioModule = {
         card.classList.toggle('expanded');
       });
 
-      container.appendChild(card);
-    }
+    return card;
   },
 
   /**
@@ -357,11 +389,16 @@ const AiStudioModule = {
   },
 
   bindActions(e) {
-    e.aistudioOpenJobsBtn.addEventListener('click', () => {
-      if (window.api && window.api.openJobsFolder) {
-        window.api.openJobsFolder();
-      } else if (window.api && window.api.openFolder) {
-        window.api.openFolder(null);
+    e.aistudioOpenJobsBtn.addEventListener('click', async () => {
+      try {
+        const res = window.api && window.api.openJobsFolder
+          ? await window.api.openJobsFolder()
+          : await window.api.openFolder(null);
+        if (res && res.success === false) {
+          alert('Impossible d\'ouvrir le dossier des jobs : ' + (res.error || 'erreur inconnue'));
+        }
+      } catch (err) {
+        alert('Impossible d\'ouvrir le dossier des jobs : ' + (err.message || err));
       }
     });
   },
