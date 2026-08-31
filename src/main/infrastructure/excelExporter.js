@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { atomicWriteFileSync } = require('../utils/helpers');
 const ExcelJS = require('exceljs');
 
 class ExcelExporter {
@@ -198,7 +199,7 @@ class ExcelExporter {
     fs.mkdirSync(dir, { recursive: true });
     // BOM UTF-8 (\uFEFF) : indispensable pour qu'Excel Windows reconnaisse
     // l'UTF-8 et affiche correctement les accents.
-    fs.writeFileSync(outputPath, '\uFEFF' + rows.join('\r\n'), 'utf8');
+    atomicWriteFileSync(outputPath, '\uFEFF' + rows.join('\r\n'));
     return outputPath;
   }
 }

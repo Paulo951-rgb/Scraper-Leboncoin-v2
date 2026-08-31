@@ -18,18 +18,19 @@ class PipelineRunner extends EventEmitter {
 
   run(options) {
     return new Promise((resolve, reject) => {
-      const { harPath, outDir, noDesc = false, limit, fresh = false, speed, headless = true } = options;
+const { harPath, outDir, noDesc = false, limit, fresh = false, speed, headless = true, userAgent } = options;
 
-      if (!harPath) return reject(new Error('harPath est requis pour exécuter le pipeline.'));
-      if (!outDir) return reject(new Error('outDir est requis pour exécuter le pipeline.'));
+    if (!harPath) return reject(new Error('harPath est requis pour exécuter le pipeline.'));
+    if (!outDir) return reject(new Error('outDir est requis pour exécuter le pipeline.'));
 
-      const scriptPath = path.join(__dirname, 'leboncoin-pipeline.js');
+    const scriptPath = path.join(__dirname, 'leboncoin-pipeline.js');
 
-      // fork() gère de manière native et parfaite les espaces dans les chemins Windows !
-      // Le premier argument de fork est le script, le deuxième est le tableau des arguments restants (harPath, --out, etc.)
-      const remainingArgs = [harPath, '--out', outDir];
-      if (headless) remainingArgs.push('--headless');
-      if (speed) remainingArgs.push('--speed', speed); 
+    // fork() gère de manière native et parfaite les espaces dans les chemins Windows !
+    // Le premier argument de fork est le script, le deuxième est le tableau des arguments restants (harPath, --out, etc.)
+    const remainingArgs = [harPath, '--out', outDir];
+    if (headless) remainingArgs.push('--headless');
+    if (speed) remainingArgs.push('--speed', speed); 
+    if (userAgent) remainingArgs.push('--user-agent', userAgent);
 
       if (noDesc) remainingArgs.push('--no-desc');
       if (fresh) remainingArgs.push('--fresh');
@@ -41,7 +42,7 @@ class PipelineRunner extends EventEmitter {
       });
       this.emit('log', { level: 'debug', message: `[pipelineRunner] Script : ${scriptPath}` });
       this.emit('log', { level: 'debug', message: `[pipelineRunner] Args : ${remainingArgs.join(' ')}` });
-      this.emit('log', { level: 'debug', message: `[pipelineRunner] Options : noDesc=${noDesc}  limit=${limit ?? '(aucun)'} | fresh=${fresh} | cwd=${process.cwd()}` });
+      this.emit('log', { level: 'debug', message: `[pipelineRunner] Options : noDesc=${noDesc}  limit=${limit ?? '(aucun)'} | fresh=${fresh} | userAgent=${userAgent ? '(transmis)' : '(aléatoire)'} | cwd=${process.cwd()}` });
 
       this.isCancelled = false;
       const t0Fork = Date.now();
