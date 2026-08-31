@@ -5,6 +5,20 @@ const path = require('path');
 const { atomicWriteFileSync } = require('../utils/helpers');
 const ExcelJS = require('exceljs');
 
+/**
+ * Extracteur de description sûr : garantit qu'on n'envoie JAMAIS un objet
+ * au writer XLSX/CSV (sinon Excel/CSV écrirait [object Object]).
+ * Renvoie TOUJOURS une string (ou '' si absente).
+ */
+function _descString(ad) {
+  if (ad && typeof ad.description === 'object' && typeof ad.description.originale === 'string') {
+    return ad.description.originale;
+  }
+  if (typeof ad.description === 'string') return ad.description;
+  if (typeof ad.body === 'string') return ad.body;
+  return '';
+}
+
 class ExcelExporter {
   static async exportToXlsx(ads, outputPath) {
     const workbook = new ExcelJS.Workbook();
@@ -14,13 +28,14 @@ class ExcelExporter {
       views: [{ showGridLines: true }],
     });
 
+    // Colonnes alignées sur la structure finale (SCRAPING PUR, sans les
+    // champs supprimés). L'IA reste une couche optionnelle (produit identifié,
+    // verdict marché) ajoutée APRÈS le scraping.
     sheet.columns = [
       { header: 'ID', key: 'id', width: 14 },
       { header: 'Titre de l\'annonce', key: 'title', width: 35 },
       { header: 'Produit Identifié (IA)', key: 'identifiedName', width: 30 },
       { header: 'Prix Demande (€)', key: 'price', width: 12 },
-      { header: 'Prix Original (€)', key: 'priceOriginal', width: 12 },
-      { header: 'Négociable', key: 'negociable', width: 11 },
       { header: 'Catégorie', key: 'category', width: 18 },
       { header: 'Sous-catégorie', key: 'subCategory', width: 14 },
       { header: 'Ville', key: 'city', width: 16 },
@@ -34,11 +49,9 @@ class ExcelExporter {
       { header: 'Main Propre', key: 'handDelivery', width: 10 },
       { header: 'Transporteur', key: 'deliveryLabel', width: 16 },
       { header: 'Likes', key: 'likes', width: 8 },
-      { header: 'Vues', key: 'vues', width: 10 },
-      { header: 'Marque', key: 'brand', width: 14 },
-      { header: 'Modèle', key: 'model', width: 16 },
-      { header: 'État', key: 'condition', width: 14 },
+      { header: 'État', key: 'etat', width: 14 },
       { header: 'Nb Photos', key: 'photoCount', width: 9 },
+      { header: 'Description', key: 'description', width: 50 },
       { header: 'Verdict IA Marché', key: 'verdictLabel', width: 20 },
       { header: 'Valeur Marché (€)', key: 'marketValue', width: 14 },
       { header: 'Fourchette Marché (€)', key: 'marketRange', width: 20 },
@@ -69,11 +82,10 @@ class ExcelExporter {
       const livraison = ad.transaction?.livraison ?? ad.shipping;
       const mainPropre = ad.transaction?.mainPropre ?? ad.handDelivery;
       const transporteur = ad.transaction?.transporteur ?? ad.deliveryLabel;
-      const livraisonText = livraison === true ? 'OUI' : (livraison === false ? 'NON' : 'null');
-      const mainPropreText = mainPropre === true ? 'OUI' : (mainPropre === false ? 'NON' : 'null');
+      const livraisonText = livraison === true ? 'OUI' : (livraison === false ? 'NON' : '');
+      const mainPropreText = mainPropre === true ? 'OUI' : (mainPropre === false ? 'NON' : '');
 
-      // Note vendeur formatée (ex: "4,8/5 (27 avis)") depuis le champ structuré
-      // ou legacy. Toujours null (string vide) si non disponible — JAMAIS '-'.
+      // Note vendeur : JAMAIS de faux tirets. Vide si non disponible.
       let ratingText = '';
       const note = ad.vendeur?.note ?? ad.sellerRating;
       const nbAvis = ad.vendeur?.nombreAvis ?? ad.sellerRatingCount;
@@ -90,28 +102,24 @@ class ExcelExporter {
         return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
       };
 
-      const negociable = ad.prix?.negociable;
-      const negociableText = negociable === true ? 'OUI' : (negociable === false ? 'NON' : '');
-      const brand = ad.produit?.brand ?? '';
-      const modelField = ad.produit?.model ?? '';
-      const conditionField = ad.produit?.condition ?? ad.detection?.etatInferreLabel ?? '';
+      const price = (typeof ad.prix === 'number') ? ad.prix
+        : (typeof ad.price === 'number' ? ad.price : parseFloat(ad.price) || 0);
       const photoCount = ad.photos?.count ?? (Array.isArray(ad.images) ? ad.images.length : 0);
       const typeVendeur = ad.vendeur?.type ?? (ad.isPro ? 'pro' : 'particulier');
-      const subCategory = ad.produit?.type ?? '';
+      const etat = ad.produit?.etat ?? '';
+      const descriptionStr = _descString(ad);
 
       const row = sheet.addRow({
         id: ad.id || '',
         title: ad.title || '',
         identifiedName: adAnalysis.identifiedProduct || '',
-        price: typeof ad.price === 'number' ? ad.price : parseFloat(ad.price) || 0,
-        priceOriginal: ad.prix?.original ?? '',
-        negociable: negociableText,
+        price,
         category: ad.category || '',
-        subCategory,
+        subCategory: ad.subCategory || '',
         city: ad.city || '',
         zipcode: ad.zipcode || '',
-        department: ad.localisation?.departement || '',
-        seller: ad.seller || '',
+        department: ad.department || '',
+        seller: ad.seller || ad.vendeur?.nom || '',
         sellerType: typeVendeur,
         sellerRating: ratingText,
         sellerRatingCount: nbAvis ?? '',
@@ -119,16 +127,14 @@ class ExcelExporter {
         handDelivery: mainPropreText,
         deliveryLabel: transporteur || '',
         likes: ad.statistiques?.likes ?? '',
-        vues: ad.statistiques?.vues ?? '',
-        brand,
-        model: modelField,
-        condition: conditionField,
+        etat,
         photoCount,
-        verdictLabel: ma.verdictLabel || 'Non analysé',
+        description: descriptionStr,
+        verdictLabel: ma.verdictLabel || '',
         marketValue: ma.realValue != null ? `${ma.realValue} €` : '',
         marketRange: (ma.valueRangeLow != null && ma.valueRangeHigh != null) ? `${ma.valueRangeLow} € - ${ma.valueRangeHigh} €` : '',
         deltaEur: ma.deltaEur != null ? `${ma.deltaEur > 0 ? '+' : ''}${ma.deltaEur} €` : '',
-        adSummary: adAnalysis.summary || 'Analyse IA non effectuée',
+        adSummary: adAnalysis.summary || '',
         maRationale: ma.rationale || '',
         datePublication: fmtDate(ad.dates?.publication || ad.date),
         dateScraping: fmtDate(ad.dates?.scraping),
@@ -163,9 +169,7 @@ class ExcelExporter {
   }
 
   /**
-   * Échappe une valeur pour un champ CSV conforme RFC 4180 :
-   * entourer de guillemets si la valeur contient un séparateur, un guillemet,
-   * un retour à la ligne ; et doubler les guillemets internes.
+   * Échappe une valeur pour un champ CSV conforme RFC 4180.
    */
   static _csvField(value, sep = ';') {
     const s = value == null ? '' : String(value);
@@ -176,30 +180,18 @@ class ExcelExporter {
   }
 
   /**
-   * Exporte les annonces au format CSV (compatible Excel FR : séparateur « ; »,
-   * encodage UTF-8 avec BOM pour que les accents s'affichent correctement à
-   * l'ouverture dans Excel). Représente les mêmes colonnes que le .xlsx, en
-   * version texte plat. Utile pour un import dans un tableur alternatif ou un
-   * script.
-   *
-   * IMPORTANT : l'ordre des colonnes est FIXE et identique pour toutes les
-   * annonces (exigence Python/pandas/Excel). Les champs absents restent vides
-   * (jamais décalés, jamais remplacés par des sentinelles type 'null' —
-   * cellule vide = valeur absente).
-   *
-   * @returns {string} chemin du fichier écrit.
+   * Exporte les annonces au format CSV (séparateur « ; », UTF-8 + BOM, CRLF).
+   * MÊMES DONNÉES que le XLSX. L'ordre des colonnes est FIXE.
    */
   static async exportToCsv(ads, outputPath) {
     const sep = ';';
     const headers = [
-      'ID', 'Titre', 'Produit Identifié (IA)', 'Prix (€)', 'Prix Original (€)', 'Négociable',
+      'ID', 'Titre', 'Produit Identifié (IA)', 'Prix (€)',
       'Catégorie', 'Sous-catégorie',
       'Ville', 'Code Postal', 'Département',
       'Vendeur', 'Type Vendeur', 'Note Vendeur', 'Nb Avis Vendeur',
       'Livraison', 'Main Propre', 'Transporteur',
-      'Likes', 'Vues',
-      'Marque', 'Modèle', 'État',
-      'Nb Photos', 'Facture', 'Garantie', 'Échange', 'Urgent', 'État Détecté',
+      'Likes', 'État', 'Nb Photos', 'Description',
       'Verdict IA Marché', 'Valeur Marché (€)', 'Fourchette Marché (€)', 'Bénéfice/Perte (€)',
       'Résumé IA', 'Justification Marché',
       'Date Publication', 'Date Scraping', 'Statut Annonce', 'Statut Scraping',
@@ -215,7 +207,6 @@ class ExcelExporter {
       const pad = (n) => String(n).padStart(2, '0');
       return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
     };
-
     const fmtTri = (v) => v === true ? 'OUI' : (v === false ? 'NON' : '');
 
     for (const ad of ads) {
@@ -235,20 +226,23 @@ class ExcelExporter {
       const marketRange = (ma.valueRangeLow != null && ma.valueRangeHigh != null)
         ? `${ma.valueRangeLow} € - ${ma.valueRangeHigh} €` : '';
       const delta = ma.deltaEur != null ? `${ma.deltaEur > 0 ? '+' : ''}${ma.deltaEur} €` : '';
+      const price = (typeof ad.prix === 'number') ? ad.prix
+        : (typeof ad.price === 'number' ? ad.price : null);
+      const photoCount = ad.photos?.count ?? (Array.isArray(ad.images) ? ad.images.length : 0);
+      const etat = ad.produit?.etat ?? '';
+      const descriptionStr = _descString(ad);
 
       const row = [
         ad.id || '',
         ad.title || '',
         aa.identifiedProduct || '',
-        typeof ad.price === 'number' ? String(ad.price).replace('.', ',') : (ad.price || ''),
-        ad.prix?.original != null ? String(ad.prix.original).replace('.', ',') : '',
-        fmtTri(ad.prix?.negociable),
+        price != null ? String(price).replace('.', ',') : '',
         ad.category || '',
-        ad.produit?.type || '',
+        ad.subCategory || '',
         ad.city || '',
         ad.zipcode || '',
-        ad.localisation?.departement || '',
-        ad.seller || '',
+        ad.department || '',
+        ad.seller || ad.vendeur?.nom || '',
         ad.vendeur?.type ?? (ad.isPro ? 'pro' : 'particulier'),
         rating,
         nbAvis != null ? String(nbAvis) : '',
@@ -256,16 +250,9 @@ class ExcelExporter {
         fmtTri(mainPropre),
         ad.transaction?.transporteur || ad.deliveryLabel || '',
         ad.statistiques?.likes != null ? String(ad.statistiques.likes) : '',
-        ad.statistiques?.vues != null ? String(ad.statistiques.vues) : '',
-        ad.produit?.brand || '',
-        ad.produit?.model || '',
-        ad.produit?.condition || '',
-        ad.photos?.count ?? (Array.isArray(ad.images) ? String(ad.images.length) : '0'),
-        fmtTri(ad.detection?.facture),
-        fmtTri(ad.detection?.garantie),
-        fmtTri(ad.detection?.echangeAccepte),
-        fmtTri(ad.detection?.urgent),
-        ad.detection?.etatInferreLabel || '',
+        etat,
+        String(photoCount),
+        descriptionStr,
         ma.verdictLabel || '',
         ma.realValue != null ? `${ma.realValue} €` : '',
         marketRange,
