@@ -13,6 +13,7 @@ const { summarizeAds, summarizeHarEntries, truncate, formatBytes, formatMs } = r
 const { getRandomUserAgent } = require('./userAgents');
 const { writeWithChecksum } = require('../../utils/integrity');
 const { AdaptiveRateLimiter } = require('../../utils/rateLimiter');
+const adFields = require('./adFields');
 
 const DEFAULTS = Object.freeze({
   // Mode rapide : fetchs parallèles (Promise.all) comme le code original.
@@ -219,160 +220,11 @@ function firstDefined(...vals) {
 }
 
 /**
- * firstNonNull : comme firstDefined mais n'accepte pas les chaînes vides
- * ni les valeurs "falsy" (0, false, ''). Utilisé pour les champs où on veut
- * une vraie valeur exploitable (note, nombre d'avis...).
- */
-function firstNonNull(...vals) {
-  for (const v of vals) {
-    if (v !== undefined && v !== null && v !== '' && !Number.isNaN(v)) return v;
-  }
-  return null;
-}
-
-/**
- * Normalise une valeur de shipping/delivery qui peut apparaître sous plusieurs
- * formes selon la version de l'API Leboncoin : booléen direct, objet {value:bool},
- * string "true"/"false", ou nombre 0/1.
- * @returns {boolean|null} true=livraison, false=main propre, null=inconnu
- */
-function _normalizeBool(val) {
-  if (val === true || val === 'true' || val === 1 || val === '1') return true;
-  if (val === false || val === 'false' || val === 0 || val === '0') return false;
-  if (val && typeof val === 'object' && 'value' in val) return _normalizeBool(val.value);
-  if (val && typeof val === 'object' && 'shipping' in val) return _normalizeBool(val.shipping);
-  return null;
-}
-
-/**
- * Extraction défensive du mode de remise et des options de livraison.
- * Leboncoin expose le shipping de plusieurs façons selon le contexte
- * (recherche vs page détail) et selon la version de l'API :
- *   - has_option.shipping / options.shipping / has_shipping (bool livraison)
- *   - delivery.shipping / delivery_option (livraison Chronopost/Mondial Relay)
- *   - shipping_option.shipping / shippingOptions (variantes récentes)
- *   - attributes[] : tableau clé-valeur avec {key:"shippable", value:true/false}
- *   - is_shippable / shippable (variantes récentes)
- *   - texte de description : "remise en main propre", "main propre", "pas d'envoi"
- *
- * On retourne un objet structuré :
- *   { shipping: bool|null,          // true = livraison possible, false = main propre
- *     handDelivery: bool|null,      // true = remise en main propre uniquement
- *     deliveryMode: 'main_propre'|'livraison'|'inconnu',
- *     deliveryLabel: string|null } // libellé humain si dispo
- */
-function extractDeliveryInfo(raw) {
-  // 1) Recherche dans les champs directs (anciennes et nouvelles variantes).
-  const shippingVal = firstDefined(
-    raw.has_option?.shipping,
-    raw.options?.shipping,
-    raw.has_shipping,
-    raw.shipping,
-    raw.delivery?.shipping,
-    raw.shipping_option?.shipping,
-    raw.shippingOptions,
-    raw.is_shippable,
-    raw.shippable,
-    raw.is_shipping,
-    null
-  );
-  let shipping = _normalizeBool(shippingVal);
-
-  // 2) Recherche dans le tableau attributes (API Leboncoin récente).
-  // Leboncoin stocke les options de livraison sous forme de paires
-  // {key, value} dans un tableau attributes. Les clés possibles :
-  // "shippable", "shipping_fee", "shipping_label", "delivery_mode", etc.
-  if (shipping === null && Array.isArray(raw.attributes)) {
-    for (const attr of raw.attributes) {
-      if (!attr || typeof attr !== 'object') continue;
-      const key = String(attr.key || attr.name || '').toLowerCase();
-      const val = attr.value;
-      if (key === 'shippable' || key === 'is_shippable' || key === 'shipping' || key === 'is_shipping') {
-        shipping = _normalizeBool(val);
-        if (shipping !== null) break;
-      }
-    }
-  }
-
-  // 3) Recherche via le libellé de livraison (deliveryLabel).
-  const deliveryOption = firstDefined(
-    raw.delivery?.delivery_option,
-    raw.delivery_option,
-    raw.delivery?.option,
-    raw.shipping_option?.delivery_option,
-    null
-  );
-
-  // 4) Détection depuis les attributes (libellés/carrier).
-  let attrDeliveryLabel = null;
-  if (Array.isArray(raw.attributes)) {
-    for (const attr of raw.attributes) {
-      if (!attr || typeof attr !== 'object') continue;
-      const key = String(attr.key || attr.name || '').toLowerCase();
-      if (key === 'shipping_label' || key === 'delivery_mode' || key === 'carrier') {
-        attrDeliveryLabel = firstNonNull(attr.value, attrDeliveryLabel);
-      }
-    }
-  }
-
-  // 5) Si on n'a toujours pas trouvé shipping mais qu'on a un libellé de
-  //    livraison (carrier/label), c'est que la livraison est proposée.
-  const deliveryLabel = firstNonNull(
-    deliveryOption,
-    raw.delivery?.carrier,
-    raw.delivery?.label,
-    raw.shipping_option?.carrier,
-    raw.shipping_option?.label,
-    attrDeliveryLabel,
-    null
-  );
-  if (shipping === null && deliveryLabel) {
-    shipping = true;
-  }
-
-  // 6) Détection depuis le texte de la description. Sur Leboncoin, "remise
-  //    en main propre" est souvent mentionnée dans le body quand l'envoi
-  //    n'est pas proposé. On cherche des marqueurs explicites.
-  if (shipping === null) {
-    const body = firstDefined(raw.body, raw.description, raw.text, null);
-    if (body && typeof body === 'string') {
-      const lowerBody = body.toLowerCase();
-      if (/remise\s+en\s+main\s+propre|main\s+propre\s+uniquement|pas\s+d['\s]+envoi|retrait\s+uniquement|retrait\s+en\s+main\s+propre/.test(lowerBody)) {
-        shipping = false;
-      }
-    }
-  }
-
-  // 7) Sur Leboncoin, l'ABSENCE d'option de livraison signifie que le
-  //    vendeur ne propose PAS d'envoi → c'est une remise en main propre.
-  //    On ne peut pas deviner pour les annonces sans description ni
-  //    attributs, donc on laisse inconnu uniquement si on n'a vraiment
-  //    rien trouvé. MAIS si on a des attributs (le tableau existe) et
-  //    qu'aucun shipping n'est trouvé, c'est que la livraison n'est PAS
-  //    proposée → main propre.
-  if (shipping === null && Array.isArray(raw.attributes) && raw.attributes.length > 0) {
-    shipping = false;
-  }
-
-  let handDelivery = null;
-  if (shipping === false) handDelivery = true;
-  else if (shipping === true) handDelivery = false;
-
-  let deliveryMode = 'inconnu';
-  if (shipping === true) deliveryMode = 'livraison';
-  else if (shipping === false) deliveryMode = 'main_propre';
-
-  return { shipping, handDelivery, deliveryMode, deliveryLabel };
-}
-
-/**
- * Extraction défensive de la catégorie de l'annonce.
- * Leboncoin expose la catégorie sous plusieurs chemins selon la version de
- * l'API (recherche vs page détail). On essaie dans l'ordre :
- *   category_name, category.name, category_name_json, category_label.
+ * Wrapper mince conservé pour les call sites existants (parseHtmlDescription).
+ * Délègue désormais au module adFields (source unique de vérité).
  */
 function extractCategory(raw) {
-  return firstDefined(
+  return adFields.firstDefined(
     raw.category_name,
     raw.category?.name,
     raw.category?.label,
@@ -382,99 +234,159 @@ function extractCategory(raw) {
   );
 }
 
-/**
- * Extraction défensive de la note vendeur et du nombre d'avis.
- * Leboncoin expose ces données dans l'objet owner de la page de détail
- * (rarement dans la liste de recherche). Plusieurs noms de champs possibles :
- *   owner.rating / owner.rating_average / owner.score  → note (ex: 4.8)
- *   owner.nb_ratings / owner.ratings_count / owner.rating_count → nb avis
- */
-function extractSellerRating(raw) {
-  const owner = raw.owner || {};
-  const ratingVal = firstNonNull(
-    owner.rating,
-    owner.rating_average,
-    owner.score,
-    owner.ratingValue,
-    raw.seller_rating,
-    raw.rating,
-    null
-  );
-  const countVal = firstNonNull(
-    owner.nb_ratings,
-    owner.ratings_count,
-    owner.rating_count,
-    owner.nbReviews,
-    owner.review_count,
-    raw.seller_rating_count,
-    raw.nb_ratings,
-    null
-  );
-
-  let sellerRating = null;
-  if (ratingVal !== null) {
-    const n = parseFloat(ratingVal);
-    if (!Number.isNaN(n) && n >= 0 && n <= 5) sellerRating = Math.round(n * 10) / 10;
-  }
-  let sellerRatingCount = null;
-  if (countVal !== null) {
-    const c = parseInt(countVal, 10);
-    if (!Number.isNaN(c) && c >= 0) sellerRatingCount = c;
-  }
-
-  return { sellerRating, sellerRatingCount };
+function extractDeliveryInfo(raw) {
+  const t = adFields.extractTransaction(raw);
+  return { shipping: t.livraison, handDelivery: t.mainPropre, deliveryMode: t.mode, deliveryLabel: t.deliveryLabel };
 }
 
+function extractSellerRating(raw) {
+  const s = adFields.extractSeller(raw);
+  return { sellerRating: s.rating, sellerRatingCount: s.ratingCount };
+}
+
+/**
+ * Normalise une annonce brute Leboncoin en structure complète et stable.
+ *
+ * Sortie (compatible avec l'ancien code ET la nouvelle architecture v2) :
+ *  - Champs legacy (à NE PAS supprimer — rétro-compat) : id, title, price,
+ *    description, url, images, main_image, city, zipcode, shipping,
+ *    handDelivery, deliveryMode, deliveryLabel, seller, isPro,
+ *    sellerRating, sellerRatingCount, category, date.
+ *  - Champs structurés v2 : prix{}, vendeur{}, transaction{}, statistiques{},
+ *    dates{}, produit{}, photos{}, description{}, detection{}, scraping{}.
+ *  - Champ `dateScraping` (ISO string) injecté au moment de la
+ *    normalisation pour distinguer clairement « date publication » vs
+ *    « date scraping ».
+ *
+ * IMPORTANT : ne JAMAIS inventer de valeur. Tout champ non trouvé est
+ * `null`. Le texte de la description originale est conservé tel quel
+ * (jamais résumé, jamais modifié).
+ */
 function normalizeAd(raw) {
-  const id = firstDefined(raw.list_id, raw.id, raw.ad_id);
-  const title = firstDefined(raw.subject, raw.title, raw.name);
-  const description = cleanText(firstDefined(raw.body, raw.description, raw.text));
-  const url = firstDefined(raw.url, id ? `https://www.leboncoin.fr/ad/${id}.htm` : null);
+  const id = adFields.firstDefined(raw.list_id, raw.id, raw.ad_id);
+  const title = adFields.firstDefined(raw.subject, raw.title, raw.name);
+  const descObj = adFields.extractDescription(raw);
+  const description = descObj.nettoye;
+  const url = adFields.firstDefined(raw.url, id ? `https://www.leboncoin.fr/ad/${id}.htm` : null);
 
-  const city = firstDefined(raw.location?.city, raw.location?.city_label, raw.city);
-  const zipcode = firstDefined(raw.location?.zipcode, raw.location?.zip_code);
+  const city = adFields.firstDefined(raw.location?.city, raw.location?.city_label, raw.city);
+  const zipcode = adFields.firstDefined(raw.location?.zipcode, raw.location?.zip_code);
+  const department = adFields.zipcodeToDepartment(zipcode);
 
-  const imagesList = Array.isArray(raw.images?.urls) ? raw.images.urls : [];
+  const seller = adFields.extractSeller(raw);
+  const transaction = adFields.extractTransaction(raw);
+  const dates = adFields.extractDates(raw);
+  const attributes = adFields.extractAttributes(raw);
+  const priceObj = adFields.extractPrice(raw);
+  const stats = adFields.extractStats(raw);
+  const photos = adFields.extractPhotos(raw);
 
-  const delivery = extractDeliveryInfo(raw);
-  const { sellerRating, sellerRatingCount } = extractSellerRating(raw);
+  // Détection de mots-clés dans la description (négociable, facture, etc.)
+  const detected = adFields.detectInDescription(descObj.originale || descObj.nettoye);
+  const conditionInferred = adFields.inferCondition(detected);
 
-  // Vendeur : Leboncoin expose owner.name (recherche+détail), mais aussi
-  // seller.name / store.name dans certaines variantes récentes.
-  const sellerName = firstDefined(
-    raw.owner?.name,
-    raw.owner?.store_name,
-    raw.seller?.name,
-    raw.store?.name,
-    raw.owner_name,
-    null
-  );
-  const isPro = (raw.owner?.type === 'pro' || raw.owner?.type === 'professional'
-    || raw.seller?.type === 'pro' || raw.store?.is_pro === true
-    || (raw.owner?.siren != null && raw.owner.siren !== ''));
+  // Date de scraping = maintenant (date d'extraction par NOTRE logiciel).
+  // Toujours ISO string pour exploitation machine. Distincte de
+  // dates.publication (date à laquelle Leboncoin a publié l'annonce).
+  const scrapedAt = new Date().toISOString();
 
-  return {
+  const legacy = {
     id: id != null ? String(id) : null,
     title: title || null,
-    price: raw.price?.value ?? raw.price ?? null,
+    price: priceObj.valeur,
     description: description || null,
     url: url || null,
-    images: imagesList,
-    main_image: imagesList.length > 0 ? imagesList[0] : null,
+    images: photos.urls,
+    main_image: photos.main,
     city: city || null,
     zipcode: zipcode || null,
-    shipping: delivery.shipping,
-    handDelivery: delivery.handDelivery,
-    deliveryMode: delivery.deliveryMode,
-    deliveryLabel: delivery.deliveryLabel,
-    seller: sellerName,
-    isPro,
-    sellerRating,
-    sellerRatingCount,
+    shipping: transaction.livraison,
+    handDelivery: transaction.mainPropre,
+    deliveryMode: transaction.mode,
+    deliveryLabel: transaction.deliveryLabel,
+    seller: seller.name,
+    isPro: seller.isPro,
+    sellerRating: seller.rating,
+    sellerRatingCount: seller.ratingCount,
     category: extractCategory(raw),
-    date: firstDefined(raw.first_publication_date, raw.index_date, raw.date),
+    date: dates.publication,
+  };
+
+  const ad = {
+    ...legacy,
+    // Champs structurés v2
+    prix: {
+      valeur: priceObj.valeur,
+      devise: priceObj.devise,
+      original: priceObj.original,
+      negociable: priceObj.negociable,
+    },
+    vendeur: {
+      nom: seller.name,
+      nomMagasin: seller.storeName,
+      type: seller.type,
+      id: seller.id,
+      isPro: seller.isPro,
+      note: seller.rating,
+      noteSur: 5,
+      nombreAvis: seller.ratingCount,
+      urlProfil: seller.profileUrl,
+      ancienneteJours: seller.accountAgeDays,
+      siren: seller.siren,
+    },
+    transaction: {
+      livraison: transaction.livraison,
+      mainPropre: transaction.mainPropre,
+      mode: transaction.mode,
+      transporteur: transaction.deliveryLabel,
+    },
+    statistiques: {
+      likes: stats.likes,
+      vues: stats.vues,
+    },
+    dates: {
+      publication: dates.publication,
+      modification: dates.modification,
+      scraping: scrapedAt,
+      statut: dates.status,
+    },
+    produit: {
+      ...attributes.mapped,
+      attributs: attributes.generic,
+    },
+    photos: {
+      count: photos.count,
+      urls: photos.urls,
+      miniatures: photos.thumbnails,
+      principale: photos.main,
+      miniaturePrincipale: photos.mainThumbnail,
+    },
+    localisation: {
+      ville: city || null,
+      codePostal: zipcode || null,
+      departement: department,
+    },
+    description: {
+      originale: descObj.originale,
+      nettoyee: descObj.nettoye,
+      longueur: descObj.longueur,
+    },
+    detection: {
+      ...detected,
+      etatInferre: conditionInferred.etat,
+      etatInferreLabel: conditionInferred.etatLabel,
+    },
     raw,
   };
+
+  // Scraping meta (statut + champs récupérés). Calculé à partir de la
+  // structure finale pour donner une vue qualité du scraping par annonce.
+  ad.scraping = adFields.scraperQuality(ad);
+
+  // Compatibilité : les anciens code accèdent à `ad.date` et `ad.description`
+  // directement. On garde ces champs (legacy). Le bloc structuré ci-dessus
+  // ajoute les versions détaillées sans casser l'existant.
+  return ad;
 }
 
 // Fusionne deux annonces en préservant les valeurs non-nulles : on ne remplace
@@ -842,39 +754,121 @@ class DescriptionEnricher {
 // EXPORTATION DES FICHIERS
 // -------------------------------------------------------------------------
 
+function _boolTri(v) {
+  if (v === true) return 'OUI';
+  if (v === false) return 'NON';
+  return 'null';
+}
+
+function _fmtDate(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return null;
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function _fmtIso(iso) {
+  if (!iso) return '-';
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return iso;
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+/**
+ * Bloc TXT lisible d'une annonce, en sections (GÉNÉRAL / VENDEUR / TRANSACTION
+ * / STATISTIQUES / DATES / PRODUIT / PHOTOS / DESCRIPTION / SCRAPING). Toutes
+ * les valeurs absentes affichent `null` ou `-` — JAMAIS d'invention.
+ */
 function toReadableBlock(ad, index) {
-  const imgLines = Array.isArray(ad.images) && ad.images.length > 0
-    ? ad.images.map((img, i) => `  - Photo ${i + 1} : ${img}`).join('\n')
+  const photos = ad.photos || {};
+  const urls = Array.isArray(photos.urls) ? photos.urls : (Array.isArray(ad.images) ? ad.images : []);
+  const imgLines = urls.length > 0
+    ? urls.map((img, i) => `  - Photo ${i + 1} : ${img}`).join('\n')
     : '  - Aucune photo';
 
-  const deliveryLine = ad.deliveryMode === 'livraison'
-    ? `Livraison  : OUI${ad.deliveryLabel ? ' (' + ad.deliveryLabel + ')' : ''}`
-    : ad.deliveryMode === 'main_propre'
-      ? `Livraison  : NON (remise en main propre)`
-      : `Livraison  : ? (information non extraite)`;
+  const note = ad.vendeur?.note;
+  const nbAvis = ad.vendeur?.nombreAvis;
+  const ratingLine = note != null
+    ? `Note vendeur    : ${note}/5${nbAvis != null ? ` (${nbAvis} avis)` : ''}`
+    : 'Note vendeur    : null';
 
-  const ratingLine = ad.sellerRating != null
-    ? `Note vénd. : ${ad.sellerRating}/5${ad.sellerRatingCount != null ? ' (' + ad.sellerRatingCount + ' avis)' : ''}`
-    : 'Note vénd. : -';
+  const livraison = ad.transaction?.livraison;
+  const mainPropre = ad.transaction?.mainPropre;
+  const transporteur = ad.transaction?.transporteur;
 
-  return [
+  const lines = [
     `===== ANNONCE ${index + 1} =====`,
-    `ID          : ${ad.id ?? '-'}`,
-    `Titre       : ${ad.title ?? '-'}`,
-    `URL         : ${ad.url ?? '-'}`,
-    `Prix        : ${ad.price != null ? ad.price + ' €' : '-'}`,
-    `Catégorie   : ${ad.category ?? '-'}`,
-    `Ville       : ${ad.city ?? '-'}${ad.zipcode ? ' (' + ad.zipcode + ')' : ''}`,
-    `Vendeur     : ${ad.seller ?? '-'}${ad.isPro ? ' (Pro)' : ''}`,
-    ratingLine,
-    deliveryLine,
-    `Date        : ${ad.date ?? '-'}`,
-    `Photos (${ad.images ? ad.images.length : 0}) :`,
-    imgLines,
-    `Description :`,
-    ad.description ? ad.description : '(non disponible)',
     '',
-  ].join('\n');
+    'GÉNÉRAL',
+    `ID                 : ${ad.id ?? 'null'}`,
+    `Titre              : ${ad.title ?? 'null'}`,
+    `URL                : ${ad.url ?? 'null'}`,
+    `Prix               : ${ad.prix?.valeur != null ? ad.prix.valeur + ' €' : (ad.price != null ? ad.price + ' €' : 'null')}${ad.prix?.original != null ? ` (original : ${ad.prix.original} €)` : ''}`,
+    `Catégorie          : ${ad.category ?? 'null'}`,
+    `Sous-catégorie     : ${ad.produit?.type ?? 'null'}`,
+    `Ville              : ${ad.localisation?.ville ?? ad.city ?? 'null'}`,
+    `Code postal        : ${ad.localisation?.codePostal ?? ad.zipcode ?? 'null'}`,
+    `Département        : ${ad.localisation?.departement ?? 'null'}`,
+    '',
+    'VENDEUR',
+    `Nom                : ${ad.vendeur?.nom ?? ad.seller ?? 'null'}`,
+    `Type               : ${ad.vendeur?.type ?? (ad.isPro ? 'pro' : 'particulier')}`,
+    `ID vendeur         : ${ad.vendeur?.id ?? 'null'}`,
+    ratingLine,
+    `URL profil         : ${ad.vendeur?.urlProfil ?? 'null'}`,
+    `Ancienneté (jours) : ${ad.vendeur?.ancienneteJours ?? 'null'}`,
+    '',
+    'TRANSACTION',
+    `Livraison          : ${_boolTri(livraison)}${transporteur ? ` (${transporteur})` : ''}`,
+    `Main propre        : ${_boolTri(mainPropre)}`,
+    `Négociable         : ${_boolTri(ad.prix?.negociable)}`,
+    `Facture            : ${_boolTri(ad.detection?.facture)}`,
+    `Garantie           : ${_boolTri(ad.detection?.garantie)}`,
+    `Échange accepté    : ${_boolTri(ad.detection?.echangeAccepte)}`,
+    `Urgence            : ${_boolTri(ad.detection?.urgent)}`,
+    '',
+    'STATISTIQUES',
+    `Likes              : ${ad.statistiques?.likes ?? 'null'}`,
+    `Vues               : ${ad.statistiques?.vues ?? 'null'}`,
+    '',
+    'DATES',
+    `Date publication   : ${_fmtIso(ad.dates?.publication) ?? 'null'}`,
+    `Date modification  : ${_fmtIso(ad.dates?.modification) ?? 'null'}`,
+    `Date scraping      : ${_fmtIso(ad.dates?.scraping) ?? 'null'}`,
+    `Statut annonce     : ${ad.dates?.statut ?? 'null'}`,
+    '',
+    'PRODUIT',
+    `Marque             : ${ad.produit?.brand ?? 'null'}`,
+    `Modèle             : ${ad.produit?.model ?? 'null'}`,
+    `Couleur            : ${ad.produit?.color ?? 'null'}`,
+    `Taille             : ${ad.produit?.size ?? 'null'}`,
+    `Capacité           : ${ad.produit?.capacity ?? 'null'}`,
+    `Année              : ${ad.produit?.year ?? 'null'}`,
+    `Matière            : ${ad.produit?.material ?? 'null'}`,
+    `État déclaré       : ${ad.produit?.condition ?? 'null'}`,
+    `État détecté       : ${ad.detection?.etatInferreLabel ?? 'null'}`,
+    `Référence          : ${ad.produit?.reference ?? 'null'}`,
+    '',
+    'PHOTOS',
+    `Nombre             : ${urls.length}`,
+    `Photo principale   : ${urls[0] ?? 'null'}`,
+    imgLines,
+    '',
+    'DESCRIPTION',
+    `Longueur           : ${ad.description?.longueur ?? (ad.description ? String(ad.description).length : 0)} caractères`,
+    ad.description?.originale || ad.description || '(non disponible)',
+    '',
+    'QUALITÉ DU SCRAPING',
+    `Statut             : ${ad.scraping?.statut ?? 'unknown'}`,
+    `Champs récupérés   : ${ad.scraping?.champsRecuperes ?? 0}/${ad.scraping?.champsTotal ?? 0}`,
+    `Champs manquants   : ${(ad.scraping?.champsManquants || []).join(', ') || 'aucun'}`,
+    '',
+    '========================',
+    '',
+  ];
+  return lines.join('\n');
 }
 
 function writeOutputsFactory(outDir, opts) {
@@ -882,6 +876,18 @@ function writeOutputsFactory(outDir, opts) {
   const txtPath = path.join(outDir, 'annonces.txt');
 
   return function writeOutputs(ads) {
+    // Rafraîchit la date de scraping et la qualité du scraping pour chaque
+    // annonce avant l'écriture (les timestamps doivent correspondre à
+    // l'écriture disque la plus récente).
+    for (const ad of ads) {
+      if (ad && typeof ad === 'object') {
+        if (!ad.dates) ad.dates = {};
+        ad.dates.scraping = new Date().toISOString();
+        // Recalcule la qualité : certains champs peuvent avoir été enrichis
+        // par le DescriptionEnricher (description, livraison, vendeur...).
+        ad.scraping = adFields.scraperQuality(ad);
+      }
+    }
     writeWithChecksum(jsonPath, ads, null, 2);
     atomicWriteFileSync(txtPath, ads.map(toReadableBlock).join('\n'));
   };

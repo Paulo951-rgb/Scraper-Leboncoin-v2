@@ -825,6 +825,13 @@ function setupIpcHandlers(getMainWindow) {
     return JobHistoryManager.listAllJobs();
   });
 
+  // Historique d'évolution des annonces (changements de prix / likes / statut
+  // entre sessions). Permet de détecter les annonces dont le prix baisse d'un
+  // scraping à l'autre.
+  ipcMain.handle('job:getAdHistory', async () => {
+    return JobHistoryManager.getAdHistory();
+  });
+
   ipcMain.handle('job:delete', async (event, jobId) => {
     return JobHistoryManager.deleteJob(jobId);
   });

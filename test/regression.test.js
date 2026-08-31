@@ -666,26 +666,57 @@ const excelCode = fs.readFileSync(path.join(__dirname, '..', 'src/main/infrastru
 const appCodeFull = fs.readFileSync(path.join(__dirname, '..', 'src/renderer', 'app.js'), 'utf8');
 const htmlCodeFull = fs.readFileSync(path.join(__dirname, '..', 'src/renderer', 'index.html'), 'utf8');
 
-// Pipeline : helpers d'extraction défensive présents
+// Pipeline : helpers d'extraction défensive présents (wrappers sur adFields)
 assert(/function extractDeliveryInfo/.test(pipelineCode), 'pipeline: extractDeliveryInfo helper');
 assert(/function extractCategory/.test(pipelineCode), 'pipeline: extractCategory helper');
 assert(/function extractSellerRating/.test(pipelineCode), 'pipeline: extractSellerRating helper');
-// normalizeAd peuple les nouveaux champs
-assert(/deliveryMode:\s*delivery\.deliveryMode/.test(pipelineCode), 'pipeline: normalizeAd définit deliveryMode');
-assert(/sellerRating,/.test(pipelineCode), 'pipeline: normalizeAd définit sellerRating');
+// normalizeAd : champs legacy préservés (rétro-compat) pour les exports
+assert(/deliveryMode:\s*transaction\.mode/.test(pipelineCode), 'pipeline: normalizeAd définit deliveryMode (legacy, depuis transaction.mode)');
+assert(/sellerRating:\s*seller\.rating,\s*\n\s*sellerRatingCount/.test(pipelineCode), 'pipeline: normalizeAd expose sellerRating/sellerRatingCount (legacy)');
 assert(/category:\s*extractCategory\(raw\)/.test(pipelineCode), 'pipeline: normalizeAd définit category via extractCategory');
-assert(/handDelivery:\s*delivery\.handDelivery/.test(pipelineCode), 'pipeline: normalizeAd définit handDelivery');
-// mergeDuplicates préserve les valeurs non-null (ne pas écraser par null)
+assert(/handDelivery:\s*transaction\.mainPropre/.test(pipelineCode), 'pipeline: normalizeAd définit handDelivery (legacy, depuis transaction.mainPropre)');
+// Module dédié adFields.js : source unique de vérité pour les extracteurs
+assert(existsSync(path.join(base, 'services/scraping/adFields.js')), 'pipeline: module adFields.js présent (extracteurs centralisés)');
+const adFieldsCode = fs.readFileSync(path.join(base, 'services/scraping/adFields.js'), 'utf8');
+assert(/extractSeller/.test(adFieldsCode), 'adFields: extractSeller (vendeur structuré complet)');
+assert(/extractTransaction/.test(adFieldsCode), 'adFields: extractTransaction (livraison + main propre séparés)');
+assert(/extractDates/.test(adFieldsCode), 'adFields: extractDates (publication / modification / scraping)');
+assert(/extractAttributes/.test(adFieldsCode), 'adFields: extractAttributes (attributs produit dynamiques)');
+assert(/extractStats/.test(adFieldsCode), 'adFields: extractStats (likes + vues)');
+assert(/extractPhotos/.test(adFieldsCode), 'adFields: extractPhotos (urls + miniatures + principale)');
+assert(/detectInDescription/.test(adFieldsCode), 'adFields: detectInDescription (négociable/facture/garantie/etc.)');
+assert(/scraperQuality/.test(adFieldsCode), 'adFields: scraperQuality (statut + champs récupérés)');
+assert(/zipcodeToDepartment/.test(adFieldsCode), 'adFields: zipcodeToDepartment (département FR)');
+// Champs structurés présents dans la sortie de normalizeAd
+assert(/prix:\s*\{\s*valeur/.test(pipelineCode), 'pipeline: normalizeAd produit prix{} structuré');
+assert(/vendeur:\s*\{/.test(pipelineCode), 'pipeline: normalizeAd produit vendeur{} structuré');
+assert(/transaction:\s*\{/.test(pipelineCode), 'pipeline: normalizeAd produit transaction{} structuré');
+assert(/statistiques:\s*\{/.test(pipelineCode), 'pipeline: normalizeAd produit statistiques{} (likes/vues)');
+assert(/produit:\s*\{/.test(pipelineCode), 'pipeline: normalizeAd produit produit{} (attributs)');
+assert(/photos:\s*\{/.test(pipelineCode), 'pipeline: normalizeAd produit photos{} (urls + principale)');
+assert(/localisation:\s*\{/.test(pipelineCode), 'pipeline: normalizeAd produit localisation{} (ville + CP + dept)');
+assert(/description:\s*\{/.test(pipelineCode), 'pipeline: normalizeAd produit description{} (originale + nettoyee + longueur)');
+assert(/dates:\s*\{/.test(pipelineCode), 'pipeline: normalizeAd produit dates{} (publication + scraping + statut)');
+assert(/ad\.scraping\s*=\s*adFields\.scraperQuality/.test(pipelineCode), 'pipeline: normalizeAd produit scraping{} (qualité)');
+assert(/ad\.dates\.scraping\s*=\s*new Date\(\)\.toISOString\(\)/.test(pipelineCode), 'pipeline: normalizeAd injecte dateScraping ISO');
 assert(/mergeKeepingNonNull/.test(pipelineCode), 'pipeline: mergeKeepingNonNull préserve les champs non-null');
 // Enrichissement page détail : récupère aussi category/rating/delivery
 assert(/extractSellerRating\(target\)/.test(pipelineCode), 'pipeline: enrichissement page détil extrait sellerRating');
 assert(/extractCategory\(target\)/.test(pipelineCode), 'pipeline: enrichissement page détail extrait category');
 
-// Excel : nouvelles colonnes présentes
+// Excel : nouvelles colonnes présentes (structurées)
 assert(/header:\s*'Catégorie'/.test(excelCode), 'excelExporter: colonne Catégorie');
 assert(/header:\s*'Note Vendeur'/.test(excelCode), 'excelExporter: colonne Note Vendeur');
-assert(/header:\s*'Mode de Remise'/.test(excelCode), 'excelExporter: colonne Mode de Remise');
-assert(/deliveryLabelMap/.test(excelCode), 'excelExporter: libellé humain du mode de remise');
+assert(/header:\s*'Livraison'/.test(excelCode), 'excelExporter: colonne Livraison (séparée)');
+assert(/header:\s*'Main Propre'/.test(excelCode), 'excelExporter: colonne Main Propre (séparée)');
+assert(/header:\s*'Likes'/.test(excelCode), 'excelExporter: colonne Likes');
+assert(/header:\s*'Vues'/.test(excelCode), 'excelExporter: colonne Vues');
+assert(/header:\s*'Date Scraping'/.test(excelCode), 'excelExporter: colonne Date Scraping');
+assert(/header:\s*'Date Publication'/.test(excelCode), 'excelExporter: colonne Date Publication');
+assert(/header:\s*'Négociable'/.test(excelCode), 'excelExporter: colonne Négociable');
+assert(/header:\s*'Transporteur'/.test(excelCode), 'excelExporter: colonne Transporteur');
+assert(/header:\s*'Département'/.test(excelCode), 'excelExporter: colonne Département');
+assert(/fmtTri/.test(excelCode), 'excelExporter: helper fmtTri (OUI/NON/null) pour booleans nullables');
 
 // UI : la fiche détaillée affiche les 3 nouveaux champs
 assert(/id="modalCategory"/.test(htmlCodeFull), 'index.html: modalCategory span');
@@ -970,27 +1001,124 @@ const excelCode2 = fs.readFileSync(path.join(__dirname, '..', 'src/main/infrastr
 assert(/Number\.isFinite\(d\.getTime\(\)\)/.test(excelCode2), 'excelExporter: date validée (Number.isFinite)');
 assert(/pad\(d\.getDate\(\)\)/.test(excelCode2), 'excelExporter: date formatée JJ/MM/AAAA HH:mm');
 
-// --- 8. Détection remise en main propre (v3) ---
+// --- 8. Détection remise en main propre (v3 → v4 = adFields) ---
 // L'ancien extractDeliveryInfo regardait seulement has_option.shipping / options.shipping /
 // delivery.shipping. Sur l'API Leboncoin récente, le shipping est dans le tableau attributes[]
-// avec des paires {key:"shippable", value:true/false}. La nouvelle version vérifie aussi
-// les attributes, le texte de description ("remise en main propre"), et les libellés de carrier.
-const pipeCodeDelivery = fs.readFileSync(path.join(base, 'services/scraping/leboncoin-pipeline.js'), 'utf8');
-// Vérifie les nouveaux chemins d'extraction
-assert(/raw\.attributes/.test(pipeCodeDelivery), 'pipeline: extractDeliveryInfo vérifie raw.attributes[] (API récente)');
-assert(/shippable|is_shippable/.test(pipeCodeDelivery), 'pipeline: extractDeliveryInfo cherche clé "shippable" dans attributes');
-assert(/raw\.is_shippable|raw\.shippable|raw\.is_shipping/.test(pipeCodeDelivery), 'pipeline: extractDeliveryInfo vérifie is_shippable/shippable (variantes récentes)');
+// avec des paires {key:"shippable", value:true/false}. La logique est désormais centralisée
+// dans services/scraping/adFields.js (module pur) et le pipeline expose juste un wrapper.
+const adFieldsDeliveryCode = fs.readFileSync(path.join(base, 'services/scraping/adFields.js'), 'utf8');
+// Vérifie les nouveaux chemins d'extraction (dans adFields, plus dans le pipeline)
+assert(/raw\.attributes/.test(adFieldsDeliveryCode), 'adFields: extractTransaction vérifie raw.attributes[] (API récente)');
+assert(/shippable|is_shippable/.test(adFieldsDeliveryCode), 'adFields: extractTransaction cherche clé "shippable" dans attributes');
+assert(/raw\.is_shippable|raw\.shippable|raw\.is_shipping/.test(adFieldsDeliveryCode), 'adFields: extractTransaction vérifie is_shippable/shippable (variantes récentes)');
 // Détection depuis le texte de la description
-assert(/remise\\s\+en\\s\+main\\s\+propre/.test(pipeCodeDelivery), 'pipeline: extractDeliveryInfo détecte "remise en main propre" dans le body');
-assert(/pas\\s\+d/.test(pipeCodeDelivery), 'pipeline: extractDeliveryInfo détecte "pas d\'envoi" dans le body');
-assert(/retrait/.test(pipeCodeDelivery), 'pipeline: extractDeliveryInfo détecte "retrait" dans le body (main propre)');
+assert(/remise\\s\+en\\s\+main\\s\+propre/.test(adFieldsDeliveryCode), 'adFields: extractTransaction détecte "remise en main propre" dans le body');
+assert(/pas\\s\+d/.test(adFieldsDeliveryCode), 'adFields: extractTransaction détecte "pas d\'envoi" dans le body');
+assert(/retrait/.test(adFieldsDeliveryCode), 'adFields: extractTransaction détecte "retrait" dans le body (main propre)');
 // Heuristique : si attributes existe mais pas de shipping trouvé → main propre
-assert(/Array\.isArray\(raw\.attributes\) && raw\.attributes\.length > 0/.test(pipeCodeDelivery), 'pipeline: extractDeliveryInfo default main_propre quand attributes présent sans shipping');
+assert(/Array\.isArray\(raw\.attributes\) && raw\.attributes\.length > 0/.test(adFieldsDeliveryCode), 'adFields: extractTransaction default main_propre quand attributes présent sans shipping');
+// Le wrapper pipeline délègue au module adFields
+const pipeCodeDelivery = fs.readFileSync(path.join(base, 'services/scraping/leboncoin-pipeline.js'), 'utf8');
+assert(/function extractDeliveryInfo\(\s*raw\s*\)\s*\{[\s\S]{0,200}adFields\.extractTransaction/.test(pipeCodeDelivery), 'pipeline: extractDeliveryInfo délègue à adFields.extractTransaction');
 // Enrichissement appliqué même sans description (fix crucial : avant, shipping était
 // skipé si parsed.description était null)
 assert(!/if \(parsed\.description\) \{[^}]*if \(parsed\.shipping/.test(pipeCodeDelivery.replace(/\s+/g, ' ')), 'pipeline: enrichissement delivery n\'est PLUS conditionnel à parsed.description');
 // libellé de carrier → shipping=true (livraison)
-assert(/shipping = true/.test(pipeCodeDelivery), 'pipeline: deliveryLabel trouvé → shipping=true (livraison)');
+assert(/livraison\s*=\s*true/.test(adFieldsDeliveryCode), 'adFields: deliveryLabel trouvé → livraison=true');
+// ═════ Tests fonctionnels des nouveaux extracteurs adFields ═════
+{
+  const { extractTransaction, extractSeller, extractDates, extractAttributes,
+    extractStats, extractPhotos, extractDescription, detectInDescription,
+    inferCondition, scraperQuality, zipcodeToDepartment } =
+    require(path.join(base, 'services/scraping/adFields'));
+  // extractTransaction : shipping=false explicite → mainPropre=true
+  let t = extractTransaction({ has_option: { shipping: false } });
+  assert(t.livraison === false && t.mainPropre === true && t.mode === 'main_propre',
+    'adFields.extractTransaction: shipping=false → mainPropre=true');
+  // extractTransaction : shipping=true → livraison=true, mainPropre=false
+  t = extractTransaction({ shipping: true });
+  assert(t.livraison === true && t.mainPropre === false && t.mode === 'livraison',
+    'adFields.extractTransaction: shipping=true → livraison=true');
+  // extractTransaction : shipping null + description main propre → détecté
+  t = extractTransaction({ body: 'Remise en main propre uniquement' });
+  assert(t.livraison === false && t.mainPropre === true,
+    'adFields.extractTransaction: détection "remise en main propre" dans body');
+  // extractTransaction : shipping null + description "pas d'envoi" → main propre
+  t = extractTransaction({ body: "pas d'envoi possible" });
+  assert(t.livraison === false && t.mainPropre === true,
+    'adFields.extractTransaction: détection "pas d\'envoi" dans body');
+  // extractTransaction : pas d'info → null (jamais false par défaut)
+  t = extractTransaction({});
+  assert(t.livraison === null && t.mainPropre === null,
+    'adFields.extractTransaction: pas d\'info → null (jamais false)');
+  // extractSeller
+  const s = extractSeller({ owner: { name: 'Jean', type: 'pro', rating: 4.8, nb_ratings: 27 } });
+  assert(s.name === 'Jean' && s.isPro === true && s.rating === 4.8 && s.ratingCount === 27,
+    'adFields.extractSeller: nom + note + nb avis + isPro');
+  // extractDates
+  const d = extractDates({ first_publication_date: '2026-01-15T10:00:00Z' });
+  assert(d.publication === '2026-01-15T10:00:00Z' && d.status === null,
+    'adFields.extractDates: publication extraite');
+  // extractAttributes : dynamique
+  const attrs = extractAttributes({ attributes: [
+    { key: 'brand', value: 'Apple' },
+    { key: 'model', value: 'iPhone 12' },
+    { key: 'color', value: 'Noir' },
+    { key: 'warranty', value: 'Oui' },
+  ] });
+  assert(attrs.mapped.brand === 'Apple' && attrs.mapped.model === 'iPhone 12' &&
+    attrs.mapped.color === 'Noir' && attrs.mapped.garantie === true,
+    'adFields.extractAttributes: brand/model/color/garantie mappés');
+  assert(attrs.generic.brand && attrs.generic.brand.value === 'Apple',
+    'adFields.extractAttributes: objet générique conservé');
+  // extractStats
+  const st = extractStats({ favorites_count: 24, views_count: 183 });
+  assert(st.likes === 24 && st.vues === 183,
+    'adFields.extractStats: likes + vues');
+  // extractPhotos
+  const ph = extractPhotos({ images: { urls: ['https://a.jpg', 'https://b.jpg'] } });
+  assert(ph.count === 2 && ph.main === 'https://a.jpg' && ph.urls.length === 2,
+    'adFields.extractPhotos: count + main + urls');
+  // extractDescription : longueur + originale + nettoyee
+  const desc = extractDescription({ body: 'Hello\n\n\nWorld' });
+  assert(desc.longueur === 13 && desc.originale === 'Hello\n\n\nWorld' && desc.nettoyee === 'Hello\n\nWorld',
+    'adFields.extractDescription: longueur + originale + nettoyee (nettoyage sauts de ligne)');
+  // detectInDescription : oui / non / null
+  const det = detectInDescription('Prix ferme, non négociable. Avec facture.');
+  assert(det.negociable === false && det.facture === true,
+    'adFields.detectInDescription: "non négociable" → false ; "facture" → true');
+  assert(det.urgent === null,
+    'adFields.detectInDescription: absent → null');
+  // inferCondition : hiérarchie
+  assert(inferCondition({ etatNeuf: true }).etat === 'neuf',
+    'adFields.inferCondition: etatNeuf → neuf');
+  assert(inferCondition({ tresBonEtat: true }).etat === 'tres_bon',
+    'adFields.inferCondition: tresBonEtat → tres_bon');
+  assert(inferCondition({ aReparer: true }).etat === 'a_reparer',
+    'adFields.inferCondition: aReparer → a_reparer');
+  // scraperQuality : statut success / partial / error
+  const adFull = {
+    id: '1', title: 'X', url: 'u',
+    prix: { valeur: 100, negociable: false },
+    description: { originale: 'd', nettoyee: 'd', longueur: 1 },
+    city: 'Lyon', zipcode: '69000', category: 'C',
+    dates: { publication: '2026-01-01', scraping: '2026-01-02' },
+    vendeur: { nom: 'J', note: 4.5, nombreAvis: 10 },
+    transaction: { livraison: true, mainPropre: false },
+    statistiques: { likes: 5, vues: 100 },
+    produit: { brand: 'X', model: 'Y' },
+    photos: { count: 1 },
+  };
+  const qFull = scraperQuality(adFull);
+  assert(qFull.statut === 'success' && qFull.champsRecuperes === qFull.champsTotal,
+    'adFields.scraperQuality: tous champs présents → success');
+  // zipcodeToDepartment
+  assert(zipcodeToDepartment('75001') === '75', 'adFields.zipcodeToDepartment: 75001 → 75');
+  assert(zipcodeToDepartment('97400') === '974', 'adFields.zipcodeToDepartment: 97400 → 974 (DOM-TOM 3 chiffres)');
+  assert(zipcodeToDepartment('69000') === '69', 'adFields.zipcodeToDepartment: 69000 → 69');
+  assert(zipcodeToDepartment(null) === null, 'adFields.zipcodeToDepartment: null → null');
+  assert(zipcodeToDepartment('abc') === null, 'adFields.zipcodeToDepartment: invalide → null');
+}
 
 // constants.js : DEFAULTS mort supprimé (valeurs conflictuelles avec settings)
 const constantsCode = fs.readFileSync(path.join(__dirname, '..', 'src/main/config/constants.js'), 'utf8');
@@ -1199,8 +1327,42 @@ assert(/return\s+errStr/.test(fs.readFileSync(path.join(base, 'infrastructure/fi
 assert(/await\s+window\.api\.openJobsFolder\(\)/.test(aistudioModCode), 'aiStudioModule: openJobsFolder await + gestion d\'erreur');
 assert(/res\.success\s*===\s*false/.test(aistudioModCode), 'aiStudioModule: affiche une alerte si openJobsFolder échoue');
 
-// ─── Améliorations globales : vérif Chromium + export CSV ──────────────────
-console.log('\n[8/8] Améliorations globales (Chromium check + CSV export)');
+// D. Historique des annonces (changements prix/likes entre sessions)
+const { buildAdHistory } = require(path.join(base, 'services/jobs/jobHistory'));
+{
+  // Une annonce qui baisse de prix de 150 → 120 → 100
+  const jobs = [
+    { id: 'job-2026-08-01T10-00', date: '01/08/2026 à 10:00', ads: [
+      { id: '1', title: 'iPhone', price: 150, statistiques: { likes: 10 } },
+      { id: '2', title: 'Autre', price: 200 },
+    ]},
+    { id: 'job-2026-08-15T10-00', date: '15/08/2026 à 10:00', ads: [
+      { id: '1', title: 'iPhone', price: 120, statistiques: { likes: 15 } },
+      { id: '2', title: 'Autre', price: 200 },
+    ]},
+    { id: 'job-2026-08-30T10-00', date: '30/08/2026 à 10:00', ads: [
+      { id: '1', title: 'iPhone', price: 100, statistiques: { likes: 24 } },
+    ]},
+  ];
+  const history = buildAdHistory(jobs);
+  assert(history.length === 2, 'buildAdHistory: 2 annonces uniques détectées');
+  const ad1 = history.find((h) => h.id === '1');
+  assert(ad1 && ad1.sessions === 3, 'buildAdHistory: annonce 1 vue dans 3 sessions');
+  assert(ad1 && ad1.prix && ad1.prix.initial === 150 && ad1.prix.actuel === 100, 'buildAdHistory: prix initial/actuel corrects');
+  assert(ad1 && ad1.prix.delta === -50 && ad1.prix.baisse === 50 && ad1.prix.direction === 'baisse', 'buildAdHistory: baisse de 50€ détectée');
+  assert(ad1 && ad1.likes && ad1.likes.delta === 14 && ad1.likes.direction === 'up', 'buildAdHistory: hausse de likes 10→24 détectée');
+  // Tri : la première (baisse + hausse likes) doit précéder l'autre
+  assert(history[0].id === '1', 'buildAdHistory: tri par activité (baisse + likes up en premier)');
+  // Annonce 2 : prix stable, likes absents (pas de changement)
+  const ad2 = history.find((h) => h.id === '2');
+  assert(ad2 && ad2.prix === null, 'buildAdHistory: prix stable → null (pas de changement)');
+  assert(ad2 && ad2.likes === null, 'buildAdHistory: pas de likes → null');
+}
+assert(/getAdHistory/.test(fs.readFileSync(path.join(base, 'core/ipcHandlers.js'), 'utf8')), 'ipcHandlers: handler job:getAdHistory enregistré');
+assert(/job:getAdHistory/.test(fs.readFileSync(path.join(base, 'preload.js'), 'utf8')), 'preload: getAdHistory exposé au renderer');
+assert(/getAdHistory:\s*\(\)\s*=>\s*ipcRenderer\.invoke\('job:getAdHistory'\)/.test(fs.readFileSync(path.join(base, 'preload.js'), 'utf8')), 'preload: getAdHistory IPC correctement câblée');
+
+// C. Test fonctionnel de l'export CSV (échappement réel)
 
 // A. Vérification du binaire Chromium (scraping-critique)
 assert(/app:checkChromium/.test(ipcCode2), 'ipcHandlers: handler app:checkChromium enregistré');
@@ -1242,10 +1404,22 @@ assert(/\.tag-csv\s*\{/.test(fs.readFileSync(path.join(__dirname, '..', 'src/ren
 // C. Test fonctionnel de l'export CSV (échappement réel)
 {
   const tmpCsv = path.join(require('os').tmpdir(), 'lbc-test-export.csv');
+  // Nouvelle structure : les champs sont répartis entre champs legacy
+  // (ad.id, ad.price, ad.seller, ad.sellerRating, ad.deliveryMode) et
+  // champs structurés (ad.transaction, ad.vendeur, ad.prix). L'export doit
+  // fonctionner dans les deux cas (rétro-compat pour les anciens exports).
   const testAds = [
     { id: '1', title: 'RTX 3060 "gaming"', price: 250.5, category: 'Info', city: 'Paris', zipcode: '75001',
       seller: 'Jean', sellerRating: 4.8, sellerRatingCount: 27, deliveryMode: 'livraison',
       date: '2024-01-15T10:30:00+00:00', url: 'https://lbc.fr/1',
+      transaction: { livraison: true, mainPropre: false, transporteur: null },
+      vendeur: { note: 4.8, nombreAvis: 27 },
+      statistiques: { likes: 5, vues: 100 },
+      prix: { negociable: false },
+      produit: { brand: 'NVIDIA', model: 'RTX 3060' },
+      photos: { count: 3 },
+      dates: { publication: '2024-01-15T10:30:00+00:00', scraping: '2026-08-31T22:43:15Z' },
+      localisation: { departement: '75' },
       adAnalysis: { identifiedProduct: 'RTX 3060', summary: 'Bon état,\nfonctionne.' },
       marketAnalysis: { verdictLabel: 'Bonne affaire', realValue: 300, valueRangeLow: 280, valueRangeHigh: 320, deltaEur: 50, rationale: 'OK' } },
     { id: '2', title: 'Simple', marketAnalysis: {} },
@@ -1258,10 +1432,15 @@ assert(/\.tag-csv\s*\{/.test(fs.readFileSync(path.join(__dirname, '..', 'src/ren
   await csvContent.then((c) => {
     assert(c.startsWith('\uFEFF'), 'CSV: BOM UTF-8 en tête de fichier');
     assert(c.includes('Titre;Produit Identifié'), 'CSV: ligne d\'en-têtes présente');
+    assert(c.includes('Livraison;Main Propre'), 'CSV: colonnes Livraison + Main Propre séparées');
+    assert(c.includes('Likes;Vues'), 'CSV: colonnes Likes + Vues');
+    assert(c.includes('Date Publication;Date Scraping'), 'CSV: colonnes Date Publication + Date Scraping');
     assert(c.includes('"RTX 3060 ""gaming"""'), 'CSV: guillemet interne doublé et champ quoté');
     assert(c.includes('"Bon état,\nfonctionne."'), 'CSV: champ avec virgule + saut de ligne quoté');
     assert(c.includes('250,5'), 'CSV: prix décimal avec virgule (FR)');
     assert(c.includes('4,8/5 (27 avis)'), 'CSV: note vendeur formatée');
+    assert(c.includes('OUI'), 'CSV: livraison=OUI pour la première annonce');
+    assert(c.includes('5'), 'CSV: likes exportés');
     assert(c.includes('\r\n'), 'CSV: fins de ligne CRLF');
     assert(c.split('\r\n').length >= 3, 'CSV: au moins 3 lignes (header + 2 ads)');
     try { fs.unlinkSync(tmpCsv); } catch { /* ignore */ }

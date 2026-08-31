@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld('api', {
   listSearchProviders: () => ipcRenderer.invoke('search:providers'),
 
   getHistory: () => ipcRenderer.invoke('job:getHistory'),
+  getAdHistory: () => ipcRenderer.invoke('job:getAdHistory'),
   deleteJob: (jobId) => ipcRenderer.invoke('job:delete', jobId),
 
   openFolder: (pathStr) => ipcRenderer.invoke('file:openFolder', pathStr),
