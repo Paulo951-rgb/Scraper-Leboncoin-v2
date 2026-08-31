@@ -358,15 +358,22 @@
             </div>
           </div>
 
-          <!-- NOUVELLE LIGNE DE FILTRES : livraison / main propre / type vendeur / likes min / note min -->
+          <!-- FILTRES : livraison / main propre / type vendeur / likes min / note min / catégorie / ville -->
           <div class="filter-row" style="margin-top:8px;">
             <div class="form-group flex-1">
-              <label>Remise :</label>
-              <select id="filterDeliveryMode" class="filter-select">
-                <option value="ALL">Toutes remises</option>
-                <option value="LIVRAISON">📦 Livraison uniquement</option>
-                <option value="MAIN_PROPRE">🤝 Main propre uniquement</option>
-                <option value="LIVRAISON_AND_MAIN">📦🤝 Livraison + main propre</option>
+              <label>Livraison :</label>
+              <select id="filterLivraison" class="filter-select">
+                <option value="ALL">Toutes</option>
+                <option value="OUI">📦 OUI uniquement</option>
+                <option value="NON">NON uniquement</option>
+              </select>
+            </div>
+            <div class="form-group flex-1">
+              <label>Main propre :</label>
+              <select id="filterMainPropre" class="filter-select">
+                <option value="ALL">Toutes</option>
+                <option value="OUI">🤝 OUI uniquement</option>
+                <option value="NON">NON uniquement</option>
               </select>
             </div>
             <div class="form-group flex-1">
@@ -386,14 +393,10 @@
               <input type="number" id="filterMinLikes" placeholder="0" min="0" step="1" class="filter-input">
             </div>
             <div class="form-group flex-1">
-              <label>Catégorie :</label>
-              <select id="filterCategorySelect" class="filter-select">
-                <option value="ALL">Toutes catégories</option>
+              <label>État déclaré :</label>
+              <select id="filterEtat" class="filter-select">
+                <option value="ALL">Tous états</option>
               </select>
-            </div>
-            <div class="form-group flex-1">
-              <label>Ville :</label>
-              <input type="text" id="filterCity" placeholder="🏙️ Ville..." class="filter-input">
             </div>
           </div>
 
@@ -672,24 +675,14 @@
           <div class="seller-info-banner" id="modalExtraInfoBanner" style="margin-top:6px; flex-wrap:wrap; gap:10px;">
             <span id="modalCategory">🏷️ <strong>Catégorie :</strong> <span class="modal-extra-val">-</span></span>
             <span id="modalSellerRating">⭐ <strong>Note vendeur :</strong> <span class="modal-extra-val">-</span></span>
-            <span id="modalDeliveryMode">🤝 <strong>Remise :</strong> <span class="modal-extra-val">-</span></span>
-          </div>
-          <!-- NOUVELLES INFOS : livraison / main propre séparés, likes, vues, état, dates -->
-          <div class="seller-info-banner" id="modalExtraInfoBanner2" style="margin-top:6px; flex-wrap:wrap; gap:10px;">
             <span id="modalLivraison">📦 <strong>Livraison :</strong> <span class="modal-extra-val">-</span></span>
             <span id="modalMainPropre">🤝 <strong>Main propre :</strong> <span class="modal-extra-val">-</span></span>
-            <span id="modalLikes">❤️ <strong>Likes :</strong> <span class="modal-extra-val">-</span></span>
-            <span id="modalVues">👁️ <strong>Vues :</strong> <span class="modal-extra-val">-</span></span>
           </div>
-          <div class="seller-info-banner" id="modalExtraInfoBanner3" style="margin-top:6px; flex-wrap:wrap; gap:10px;">
+          <div class="seller-info-banner" id="modalExtraInfoBanner2" style="margin-top:6px; flex-wrap:wrap; gap:10px;">
+            <span id="modalLikes">❤️ <strong>Likes :</strong> <span class="modal-extra-val">-</span></span>
             <span id="modalDateScraping">🕒 <strong>Date scraping :</strong> <span class="modal-extra-val">-</span></span>
             <span id="modalTypeVendeur">👤 <strong>Type vendeur :</strong> <span class="modal-extra-val">-</span></span>
-            <span id="modalEtat">🏷️ <strong>État :</strong> <span class="modal-extra-val">-</span></span>
-          </div>
-          <!-- PRODUIT : caractéristiques dynamiques (marque, modèle, etc.) -->
-          <div class="card subcard" id="modalProduitCard" style="margin-top:10px;">
-            <h4>Caractéristiques Produit</h4>
-            <div id="modalProduit" style="font-size:0.85rem; line-height:1.5;"></div>
+            <span id="modalEtat">🏷️ <strong>État déclaré :</strong> <span class="modal-extra-val">-</span></span>
           </div>
           <div class="card subcard" style="margin-top:10px;">
             <h4>Résumé & Explication IA</h4>

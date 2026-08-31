@@ -279,12 +279,12 @@ const filterPriceMin = document.getElementById('filterPriceMin');
 const filterPriceMax = document.getElementById('filterPriceMax');
 const filterTagSelect = document.getElementById('filterTagSelect');
 const sortSelect = document.getElementById('sortSelect');
-const filterDeliveryMode = document.getElementById('filterDeliveryMode');
+const filterLivraison = document.getElementById('filterLivraison');
+const filterMainPropre = document.getElementById('filterMainPropre');
 const filterSellerType = document.getElementById('filterSellerType');
 const filterMinRating = document.getElementById('filterMinRating');
 const filterMinLikes = document.getElementById('filterMinLikes');
-const filterCategorySelect = document.getElementById('filterCategorySelect');
-const filterCity = document.getElementById('filterCity');
+const filterEtat = document.getElementById('filterEtat');
 const triggerMarketBtn = document.getElementById('triggerMarketBtn');
 
 const statTotalAds = document.getElementById('statTotalAds');
@@ -972,7 +972,7 @@ function renderHistoryTable(jobs) {
 async function loadExplorerPage() {
   allJobsCache = await window.api.getHistory();
   populateSessionDropdown(sessionSelect);
-  populateCategoryFilter();
+  populateEtatFilter();
   restoreExplorerFilters();
   renderExplorerAds();
 }
@@ -997,13 +997,13 @@ if (filterPriceMin) filterPriceMin.addEventListener('input', () => { saveExplore
 if (filterPriceMax) filterPriceMax.addEventListener('input', () => { saveExplorerFilters(); renderExplorerAds(); });
 if (filterTagSelect) filterTagSelect.addEventListener('change', () => { saveExplorerFilters(); renderExplorerAds(); });
 if (sortSelect) sortSelect.addEventListener('change', () => { saveExplorerFilters(); renderExplorerAds(); });
-// Nouveaux filtres (livraison / main propre / type vendeur / note min / likes min / catégorie / ville)
-if (filterDeliveryMode) filterDeliveryMode.addEventListener('change', () => { saveExplorerFilters(); renderExplorerAds(); });
+// Filtres scraping (livraison / main propre / type vendeur / note min / likes min / état)
+if (filterLivraison) filterLivraison.addEventListener('change', () => { saveExplorerFilters(); renderExplorerAds(); });
+if (filterMainPropre) filterMainPropre.addEventListener('change', () => { saveExplorerFilters(); renderExplorerAds(); });
 if (filterSellerType) filterSellerType.addEventListener('change', () => { saveExplorerFilters(); renderExplorerAds(); });
 if (filterMinRating) filterMinRating.addEventListener('input', () => { saveExplorerFilters(); renderExplorerAds(); });
 if (filterMinLikes) filterMinLikes.addEventListener('input', () => { saveExplorerFilters(); renderExplorerAds(); });
-if (filterCategorySelect) filterCategorySelect.addEventListener('change', () => { saveExplorerFilters(); renderExplorerAds(); });
-if (filterCity) filterCity.addEventListener('input', () => { saveExplorerFilters(); renderExplorerAds(); });
+if (filterEtat) filterEtat.addEventListener('change', () => { saveExplorerFilters(); renderExplorerAds(); });
 
 // Changement de session : rafraîchit immédiatement tout l'explorateur (sans
 // avoir à manipuler un autre filtre pour déclencher la mise à jour).
@@ -1018,12 +1018,12 @@ function saveExplorerFilters() {
       priceMax: filterPriceMax?.value || '',
       tag: filterTagSelect?.value || 'ALL',
       sort: sortSelect?.value || 'DEFAULT',
-      deliveryMode: filterDeliveryMode?.value || 'ALL',
+      livraison: filterLivraison?.value || 'ALL',
+      mainPropre: filterMainPropre?.value || 'ALL',
       sellerType: filterSellerType?.value || 'ALL',
       minRating: filterMinRating?.value || '',
       minLikes: filterMinLikes?.value || '',
-      category: filterCategorySelect?.value || 'ALL',
-      city: filterCity?.value || '',
+      etat: filterEtat?.value || 'ALL',
     }));
   } catch { /* quota dépassé */ }
 }
@@ -1036,33 +1036,35 @@ function restoreExplorerFilters() {
     if (saved.priceMax != null && filterPriceMax) filterPriceMax.value = saved.priceMax;
     if (saved.tag && filterTagSelect) filterTagSelect.value = saved.tag;
     if (saved.sort && sortSelect) sortSelect.value = saved.sort;
-    if (saved.deliveryMode && filterDeliveryMode) filterDeliveryMode.value = saved.deliveryMode;
+    if (saved.livraison && filterLivraison) filterLivraison.value = saved.livraison;
+    if (saved.mainPropre && filterMainPropre) filterMainPropre.value = saved.mainPropre;
     if (saved.sellerType && filterSellerType) filterSellerType.value = saved.sellerType;
     if (saved.minRating != null && filterMinRating) filterMinRating.value = saved.minRating;
     if (saved.minLikes != null && filterMinLikes) filterMinLikes.value = saved.minLikes;
-    if (saved.category && filterCategorySelect) filterCategorySelect.value = saved.category;
-    if (saved.city && filterCity) filterCity.value = saved.city;
+    if (saved.etat && filterEtat) filterEtat.value = saved.etat;
   } catch { /* JSON corrompu */ }
 }
 
 /**
- * Peuple le sélecteur de catégorie avec les catégories distinctes trouvées dans
- * les annonces chargées. Si une seule catégorie (« ALL ») est conservée et que
- * le filtre courant n'est plus valide, on retombe sur « ALL ».
+ * Peuple le sélecteur d'état avec les valeurs distinctes trouvées dans les
+ * annonces (État déclaré par le vendeur : "Neuf", "Très bon état", etc.).
  */
-function populateCategoryFilter() {
-  if (!filterCategorySelect) return;
-  const cats = new Set();
+function populateEtatFilter() {
+  if (!filterEtat) return;
+  const etats = new Set();
   for (const j of allJobsCache) {
     if (!Array.isArray(j.ads)) continue;
-    for (const a of j.ads) if (a.category) cats.add(a.category);
+    for (const a of j.ads) {
+      const e = a.produit?.etat;
+      if (e) etats.add(e);
+    }
   }
-  const current = filterCategorySelect.value;
-  const opts = ['<option value="ALL">Toutes catégories</option>',
-    ...[...cats].sort().map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`)];
-  filterCategorySelect.innerHTML = opts.join('');
-  if (current && cats.has(current)) filterCategorySelect.value = current;
-  else filterCategorySelect.value = 'ALL';
+  const current = filterEtat.value;
+  const opts = ['<option value="ALL">Tous états</option>',
+    ...[...etats].sort().map((e) => `<option value="${escapeHtml(e)}">${escapeHtml(e)}</option>`)];
+  filterEtat.innerHTML = opts.join('');
+  if (current && etats.has(current)) filterEtat.value = current;
+  else filterEtat.value = 'ALL';
 }
 
 function renderExplorerAds() {
@@ -1073,13 +1075,13 @@ function renderExplorerAds() {
 
   const minP = parseFloat(filterPriceMin.value) || 0;
   const maxP = parseFloat(filterPriceMax.value) || Infinity;
-  // Nouveaux filtres
-  const deliveryFilter = filterDeliveryMode ? filterDeliveryMode.value : 'ALL';
+  // Filtres scraping
+  const livraisonFilter = filterLivraison ? filterLivraison.value : 'ALL';
+  const mainPropreFilter = filterMainPropre ? filterMainPropre.value : 'ALL';
   const sellerTypeFilter = filterSellerType ? filterSellerType.value : 'ALL';
   const minRating = filterMinRating && filterMinRating.value !== '' ? parseFloat(filterMinRating.value) : null;
   const minLikes = filterMinLikes && filterMinLikes.value !== '' ? parseInt(filterMinLikes.value, 10) : null;
-  const categoryFilter = filterCategorySelect ? filterCategorySelect.value : 'ALL';
-  const cityFilter = filterCity ? filterCity.value.toLowerCase().trim() : '';
+  const etatFilter = filterEtat ? filterEtat.value : 'ALL';
 
   let sourceAds = [];
 
@@ -1100,9 +1102,19 @@ function renderExplorerAds() {
   const likesOf = (a) => (a.statistiques && a.statistiques.likes != null) ? a.statistiques.likes : (a.favorites_count != null ? a.favorites_count : null);
   const datePubOf = (a) => a.dates?.publication || a.date;
   const dateScrapeOf = (a) => a.dates?.scraping;
+  const etatOf = (a) => a.produit?.etat;
+
+  // Helper description (lit description.originale si l'objet structuré est présent)
+  const descText = (a) => {
+    if (a && typeof a.description === 'object' && typeof a.description.originale === 'string') {
+      return a.description.originale;
+    }
+    return typeof a.description === 'string' ? a.description : '';
+  };
 
   let filtered = sourceAds.filter((a) => {
-    const fullText = `${a.title || ''} ${(a.description?.originale || a.description?.nettoyee || a.description) || ''} ${a.city || ''} ${a.seller || ''}`.toLowerCase();
+    const desc = descText(a);
+    const fullText = `${a.title || ''} ${desc} ${a.city || ''} ${a.seller || ''}`.toLowerCase();
     const matchesQuery = !query || fullText.includes(query);
 
     const price = typeof a.price === 'number' ? a.price : parseFloat(a.price) || 0;
@@ -1110,40 +1122,40 @@ function renderExplorerAds() {
 
     const matchesTag = matchesVerdictFilter(a, tagFilter);
 
-    // Livraison : 4 modes (ALL, LIVRAISON, MAIN_PROPRE, LIVRAISON_AND_MAIN)
-    let matchesDelivery = true;
-    if (deliveryFilter === 'LIVRAISON') matchesDelivery = livraisonOf(a) === true;
-    else if (deliveryFilter === 'MAIN_PROPRE') matchesDelivery = mainPropreOf(a) === true;
-    else if (deliveryFilter === 'LIVRAISON_AND_MAIN') matchesDelivery = livraisonOf(a) === true && mainPropreOf(a) === true;
+    // Livraison : OUI / NON (3 états, jamais de null car l'utilisateur filtre explicitement)
+    let matchesLivraison = true;
+    if (livraisonFilter === 'OUI') matchesLivraison = livraisonOf(a) === true;
+    else if (livraisonFilter === 'NON') matchesLivraison = livraisonOf(a) === false;
+
+    // Main propre : OUI / NON
+    let matchesMainPropre = true;
+    if (mainPropreFilter === 'OUI') matchesMainPropre = mainPropreOf(a) === true;
+    else if (mainPropreFilter === 'NON') matchesMainPropre = mainPropreOf(a) === false;
 
     // Type vendeur
     const matchesSellerType = sellerTypeFilter === 'ALL' ||
       (sellerTypeFilter === 'PRO' && typeVendeurOf(a) === 'pro') ||
       (sellerTypeFilter === 'PART' && typeVendeurOf(a) === 'particulier');
 
-    // Note min : null (pas d'info) est EXCLUE — on ne retient que les annonces
-    // qui ont une note et qui sont ≥ au seuil.
+    // Note min
     let matchesRating = true;
     if (minRating != null) {
       const r = noteOf(a);
       matchesRating = r != null && r >= minRating;
     }
 
-    // Likes min : null exclu
+    // Likes min
     let matchesLikes = true;
     if (minLikes != null) {
       const l = likesOf(a);
       matchesLikes = l != null && l >= minLikes;
     }
 
-    // Catégorie
-    const matchesCategory = categoryFilter === 'ALL' || (a.category && a.category === categoryFilter);
+    // État déclaré
+    const matchesEtat = etatFilter === 'ALL' || (etatOf(a) && etatOf(a) === etatFilter);
 
-    // Ville (substring insensible à la casse)
-    const matchesCity = !cityFilter || (a.city && a.city.toLowerCase().includes(cityFilter));
-
-    return matchesQuery && matchesPrice && matchesTag && matchesDelivery && matchesSellerType
-      && matchesRating && matchesLikes && matchesCategory && matchesCity;
+    return matchesQuery && matchesPrice && matchesTag && matchesLivraison && matchesMainPropre
+      && matchesSellerType && matchesRating && matchesLikes && matchesEtat;
   });
 
   if (sortMode === 'DEAL_DESC') {
@@ -1153,7 +1165,6 @@ function renderExplorerAds() {
   } else if (sortMode === 'PRICE_DESC') {
     filtered.sort((a, b) => (b.price || 0) - (a.price || 0));
   } else if (sortMode === 'RATING_DESC') {
-    // Note vendeur décroissante : null (pas d'info) part en bas
     filtered.sort((a, b) => (noteOf(b) ?? -1) - (noteOf(a) ?? -1));
   } else if (sortMode === 'LIKES_DESC') {
     filtered.sort((a, b) => (likesOf(b) ?? -1) - (likesOf(a) ?? -1));
@@ -1326,8 +1337,9 @@ window.openAdDetail = (adId) => {
     ratingText = `${note}/5`;
     if (nbAvis != null) ratingText += ` (${nbAvis} avis)`;
   }
-  setExtraVal('modalSellerRating', note != null ? ratingText : 'Aucune note');
+  setExtraVal('modalSellerRating', note != null ? ratingText : '❓ Aucune note');
 
+  // Livraison et Main propre INDÉPENDANTS (les deux peuvent être OUI).
   const livraison = (targetAd.transaction && targetAd.transaction.livraison !== undefined)
     ? targetAd.transaction.livraison
     : (targetAd.shipping === true ? true : targetAd.shipping === false ? false : null);
@@ -1338,69 +1350,27 @@ window.openAdDetail = (adId) => {
 
   const livraisonLabels = { true: '📦 OUI', false: 'NON', null: '❓ Indéterminé' };
   const mainPropreLabels = { true: '🤝 OUI', false: 'NON', null: '❓ Indéterminé' };
-  let livraisonText = livraisonLabels[livraison] || '❓ Indéterminé';
+  let livraisonText = livraisonLabels[livraison];
   if (transporteur && livraison === true) livraisonText += ` (${transporteur})`;
-  setExtraVal('modalDeliveryMode', livraisonText);
-
-  // Nouvelle ligne : Livraison / Main propre séparés
-  setExtraVal('modalLivraison', livraisonLabels[livraison]);
+  setExtraVal('modalLivraison', livraisonText);
   setExtraVal('modalMainPropre', mainPropreLabels[mainPropre]);
 
-  // Likes & vues (null = information indisponible)
+  // Likes (0 si affiché réellement, null si info absente)
   const likes = (targetAd.statistiques && targetAd.statistiques.likes != null) ? targetAd.statistiques.likes : null;
-  const vues = (targetAd.statistiques && targetAd.statistiques.vues != null) ? targetAd.statistiques.vues : null;
   setExtraVal('modalLikes', likes != null ? `❤️ ${likes}` : '❓ Indisponible');
-  setExtraVal('modalVues', vues != null ? `👁️ ${vues}` : '❓ Indisponible');
 
-  // Ligne 3 : Date scraping + Type vendeur + État
+  // Date scraping
   const dateScrape = targetAd.dates?.scraping;
   setExtraVal('modalDateScraping', dateScrape ? `🕒 ${formatDateTime(dateScrape)}` : '❓ Indisponible');
+
+  // Type vendeur
   const typeVendeur = (targetAd.vendeur && targetAd.vendeur.type) ? targetAd.vendeur.type : (targetAd.isPro ? 'pro' : 'particulier');
   const typeVendeurLabel = typeVendeur === 'pro' ? '🏪 Professionnel' : '👤 Particulier';
   setExtraVal('modalTypeVendeur', typeVendeurLabel);
 
-  const etat = (targetAd.produit && targetAd.produit.condition) || (targetAd.detection && targetAd.detection.etatInferreLabel);
+  // État déclaré uniquement
+  const etat = targetAd.produit?.etat;
   setExtraVal('modalEtat', etat || '❓ Non précisé');
-
-  // Caractéristiques Produit (champs structurés)
-  const produitEl = document.getElementById('modalProduit');
-  const produitCard = document.getElementById('modalProduitCard');
-  if (produitEl && produitCard) {
-    const produitKeys = ['brand', 'model', 'color', 'size', 'capacity', 'year', 'material', 'condition', 'reference'];
-    const labels = {
-      brand: 'Marque', model: 'Modèle', color: 'Couleur', size: 'Taille',
-      capacity: 'Capacité', year: 'Année', material: 'Matière', condition: 'État déclaré', reference: 'Référence',
-    };
-    const detected = targetAd.detection || {};
-    const items = [];
-    if (targetAd.produit) {
-      for (const k of produitKeys) {
-        const v = targetAd.produit[k];
-        if (v != null && v !== '') items.push(`<div><strong>${labels[k]} :</strong> ${escapeHtml(String(v))}</div>`);
-      }
-    }
-    // Ajoute les booléens détectés dans la description
-    const triBool = (val) => val === true ? 'OUI' : (val === false ? 'NON' : null);
-    const boolFields = [
-      ['negociable', 'Négociable', targetAd.prix?.negociable],
-      ['facture', 'Facture', detected.facture],
-      ['garantie', 'Garantie', detected.garantie],
-      ['echangeAccepte', 'Échange accepté', detected.echangeAccepte],
-      ['urgent', 'Urgent', detected.urgent],
-      ['aReparer', 'À réparer', detected.aReparer],
-    ];
-    for (const [k, label, val] of boolFields) {
-      const t = triBool(val);
-      if (t) items.push(`<div><strong>${label} :</strong> <span style="color:${val === true ? '#22c55e' : '#94a3b8'};">${t}</span></div>`);
-    }
-    if (items.length > 0) {
-      produitEl.innerHTML = `<div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">${items.join('')}</div>`;
-      produitCard.classList.remove('hidden');
-    } else {
-      produitEl.innerHTML = '<em style="color:var(--text-muted);">Aucune caractéristique structurée détectée pour cette annonce.</em>';
-      produitCard.classList.remove('hidden');
-    }
-  }
   // Résumé IA : combine le résumé de l'IA Analyse (ce qu'est l'objet) et la
   // rationale de l'IA Marché (pourquoi cette estimation en €).
   let summaryText = aa.summary || '';
@@ -1412,7 +1382,14 @@ window.openAdDetail = (adId) => {
     summaryText = summaryText ? `${summaryText}\n\nSources marché : ${srcTxt}` : `Sources marché : ${srcTxt}`;
   }
   modalSummary.textContent = summaryText || 'Aucune analyse IA disponible. Lancez « Analyse IA » puis « IA Marché ».';
-  modalDescription.textContent = targetAd.description || 'Aucune description disponible.';
+  // Description : lire description.originale si objet structuré, sinon string legacy
+  let modalDescText = '';
+  if (targetAd.description && typeof targetAd.description === 'object' && typeof targetAd.description.originale === 'string') {
+    modalDescText = targetAd.description.originale;
+  } else if (typeof targetAd.description === 'string') {
+    modalDescText = targetAd.description;
+  }
+  modalDescription.textContent = modalDescText || 'Aucune description disponible.';
 
   // Analyse visuelle IA : désormais intégrée dans adAnalysis.vision (produite
   // par l'IA Analyse en un seul appel texte+vision). Fallback imageAnalysis

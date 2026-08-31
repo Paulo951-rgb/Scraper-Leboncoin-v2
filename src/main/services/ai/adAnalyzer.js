@@ -50,9 +50,16 @@ IMPORTANT :
 - Réponds UNIQUEMENT avec un JSON valide, sans préambule ni markdown.`;
 
 function buildPrompt(ad) {
-  const desc = (ad.description?.originale || ad.description?.nettoyee || ad.description || '').slice(0, MAX_DESC_CHARS);
+  // Lecture défensive de la description : peut être string ou objet {originale}
+  let desc = '';
+  if (ad.description && typeof ad.description === 'object' && typeof ad.description.originale === 'string') {
+    desc = ad.description.originale;
+  } else if (typeof ad.description === 'string') {
+    desc = ad.description;
+  }
+  desc = desc.slice(0, MAX_DESC_CHARS);
   const meta = [];
-  if (ad.price != null || ad.prix?.valeur != null) meta.push(`Prix de l'annonce: ${ad.prix?.valeur ?? ad.price} €${ad.prix?.negociable === true ? ' (négociable)' : ad.prix?.negociable === false ? ' (prix ferme)' : ''}`);
+  if (ad.price != null) meta.push(`Prix de l'annonce: ${ad.price} €`);
   if (ad.category) meta.push(`Catégorie récupérée: ${ad.category}`);
   const sellerName = ad.vendeur?.nom ?? ad.seller;
   if (sellerName) meta.push(`Vendeur: ${sellerName}${(ad.vendeur?.isPro ?? ad.isPro) ? ' (Pro)' : ''}`);
@@ -62,19 +69,14 @@ function buildPrompt(ad) {
   const livraison = ad.transaction?.livraison ?? ad.shipping;
   const mainPropre = ad.transaction?.mainPropre ?? ad.handDelivery;
   if (livraison === true) meta.push('Mode de remise: livraison possible');
-  else if (livraison === false) meta.push('Mode de remise: main propre uniquement');
-  else if (mainPropre === true) meta.push('Mode de remise: main propre');
-  const city = ad.localisation?.ville ?? ad.city;
-  const zipcode = ad.localisation?.codePostal ?? ad.zipcode;
+  if (mainPropre === true) meta.push('Mode de remise: main propre');
+  if (livraison === false && mainPropre === false) meta.push('Mode de remise: non précisé');
+  const city = ad.city;
+  const zipcode = ad.zipcode;
   if (city) meta.push(`Localisation: ${city}${zipcode ? ' ' + zipcode : ''}`);
   const likes = ad.statistiques?.likes;
-  const vues = ad.statistiques?.vues;
   if (likes != null) meta.push(`Likes: ${likes}`);
-  if (vues != null) meta.push(`Vues: ${vues}`);
-  if (ad.detection?.negociable === false) meta.push('Mention dans la description : prix ferme / non négociable');
-  if (ad.detection?.facture === true) meta.push('Mention dans la description : facture fournie');
-  if (ad.detection?.garantie === true) meta.push('Mention dans la description : garantie');
-  if (ad.detection?.aReparer === true) meta.push('Mention dans la description : à réparer / HS');
+  if (ad.produit?.etat) meta.push(`État déclaré par le vendeur: ${ad.produit.etat}`);
 
   const jsonSpec = `{
   "identifiedProduct": "Nom précis du produit réellement vendu (modèle exact si identifiable, sinon description la plus précise possible)",
