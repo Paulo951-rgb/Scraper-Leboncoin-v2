@@ -50,14 +50,31 @@ IMPORTANT :
 - Réponds UNIQUEMENT avec un JSON valide, sans préambule ni markdown.`;
 
 function buildPrompt(ad) {
-  const desc = (ad.description || '').slice(0, MAX_DESC_CHARS);
+  const desc = (ad.description?.originale || ad.description?.nettoyee || ad.description || '').slice(0, MAX_DESC_CHARS);
   const meta = [];
-  if (ad.price != null) meta.push(`Prix de l'annonce: ${ad.price} €`);
+  if (ad.price != null || ad.prix?.valeur != null) meta.push(`Prix de l'annonce: ${ad.prix?.valeur ?? ad.price} €${ad.prix?.negociable === true ? ' (négociable)' : ad.prix?.negociable === false ? ' (prix ferme)' : ''}`);
   if (ad.category) meta.push(`Catégorie récupérée: ${ad.category}`);
-  if (ad.seller) meta.push(`Vendeur: ${ad.seller}${ad.isPro ? ' (Pro)' : ''}`);
-  if (ad.sellerRating != null) meta.push(`Note vendeur: ${ad.sellerRating}${ad.sellerRatingCount != null ? ` (${ad.sellerRatingCount} avis)` : ''}`);
-  if (ad.deliveryMode && ad.deliveryMode !== 'inconnu') meta.push(`Mode de remise: ${ad.deliveryMode === 'livraison' ? 'livraison' : 'main propre'}`);
-  if (ad.city) meta.push(`Localisation: ${ad.city}${ad.zipcode ? ' ' + ad.zipcode : ''}`);
+  const sellerName = ad.vendeur?.nom ?? ad.seller;
+  if (sellerName) meta.push(`Vendeur: ${sellerName}${(ad.vendeur?.isPro ?? ad.isPro) ? ' (Pro)' : ''}`);
+  const note = ad.vendeur?.note ?? ad.sellerRating;
+  const nbAvis = ad.vendeur?.nombreAvis ?? ad.sellerRatingCount;
+  if (note != null) meta.push(`Note vendeur: ${note}${nbAvis != null ? ` (${nbAvis} avis)` : ''}`);
+  const livraison = ad.transaction?.livraison ?? ad.shipping;
+  const mainPropre = ad.transaction?.mainPropre ?? ad.handDelivery;
+  if (livraison === true) meta.push('Mode de remise: livraison possible');
+  else if (livraison === false) meta.push('Mode de remise: main propre uniquement');
+  else if (mainPropre === true) meta.push('Mode de remise: main propre');
+  const city = ad.localisation?.ville ?? ad.city;
+  const zipcode = ad.localisation?.codePostal ?? ad.zipcode;
+  if (city) meta.push(`Localisation: ${city}${zipcode ? ' ' + zipcode : ''}`);
+  const likes = ad.statistiques?.likes;
+  const vues = ad.statistiques?.vues;
+  if (likes != null) meta.push(`Likes: ${likes}`);
+  if (vues != null) meta.push(`Vues: ${vues}`);
+  if (ad.detection?.negociable === false) meta.push('Mention dans la description : prix ferme / non négociable');
+  if (ad.detection?.facture === true) meta.push('Mention dans la description : facture fournie');
+  if (ad.detection?.garantie === true) meta.push('Mention dans la description : garantie');
+  if (ad.detection?.aReparer === true) meta.push('Mention dans la description : à réparer / HS');
 
   const jsonSpec = `{
   "identifiedProduct": "Nom précis du produit réellement vendu (modèle exact si identifiable, sinon description la plus précise possible)",

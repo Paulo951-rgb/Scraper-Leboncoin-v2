@@ -349,8 +349,51 @@
                 <option value="DEAL_DESC">🟢 Meilleures Affaires d'abord</option>
                 <option value="PRICE_ASC">Prix croissant</option>
                 <option value="PRICE_DESC">Prix décroissant</option>
+                <option value="RATING_DESC">⭐ Note vendeur décroissante</option>
+                <option value="LIKES_DESC">❤️ Likes décroissants</option>
+                <option value="DATE_PUB_DESC">📅 Date publication (récentes)</option>
+                <option value="DATE_SCRAPE_DESC">🕒 Date scraping (récentes)</option>
                 <option value="DEFAULT">Ordre d'origine</option>
               </select>
+            </div>
+          </div>
+
+          <!-- NOUVELLE LIGNE DE FILTRES : livraison / main propre / type vendeur / likes min / note min -->
+          <div class="filter-row" style="margin-top:8px;">
+            <div class="form-group flex-1">
+              <label>Remise :</label>
+              <select id="filterDeliveryMode" class="filter-select">
+                <option value="ALL">Toutes remises</option>
+                <option value="LIVRAISON">📦 Livraison uniquement</option>
+                <option value="MAIN_PROPRE">🤝 Main propre uniquement</option>
+                <option value="LIVRAISON_AND_MAIN">📦🤝 Livraison + main propre</option>
+              </select>
+            </div>
+            <div class="form-group flex-1">
+              <label>Type vendeur :</label>
+              <select id="filterSellerType" class="filter-select">
+                <option value="ALL">Tous vendeurs</option>
+                <option value="PRO">🏪 Professionnels uniquement</option>
+                <option value="PART">👤 Particuliers uniquement</option>
+              </select>
+            </div>
+            <div class="form-group flex-1">
+              <label>Note vendeur min :</label>
+              <input type="number" id="filterMinRating" placeholder="0" min="0" max="5" step="0.1" class="filter-input">
+            </div>
+            <div class="form-group flex-1">
+              <label>Likes min :</label>
+              <input type="number" id="filterMinLikes" placeholder="0" min="0" step="1" class="filter-input">
+            </div>
+            <div class="form-group flex-1">
+              <label>Catégorie :</label>
+              <select id="filterCategorySelect" class="filter-select">
+                <option value="ALL">Toutes catégories</option>
+              </select>
+            </div>
+            <div class="form-group flex-1">
+              <label>Ville :</label>
+              <input type="text" id="filterCity" placeholder="🏙️ Ville..." class="filter-input">
             </div>
           </div>
 
@@ -364,18 +407,20 @@
                 <tr>
                   <th style="width:3%;">☑️</th>
                   <th style="width:3%;">⭐</th>
-                  <th style="width:25%;">Produit Identifié</th>
-                  <th style="width:10%;">Prix</th>
-                  <th style="width:12%;">Valeur Marché</th>
-                  <th style="width:12%;">Bénéfice/Perte</th>
-                  <th style="width:12%;">Verdict</th>
-                  <th style="width:18%;">Résumé IA</th>
+                  <th style="width:18%;">Produit Identifié</th>
+                  <th style="width:7%;">Prix</th>
+                  <th style="width:10%;">Valeur Marché</th>
+                  <th style="width:8%;">Bénéfice/Perte</th>
+                  <th style="width:10%;">Verdict</th>
+                  <th style="width:18%;">Vendeur</th>
+                  <th style="width:6%;">Remise</th>
+                  <th style="width:15%;">Résumé IA</th>
                   <th style="width:5%;">Actions</th>
                 </tr>
               </thead>
               <tbody id="adsTableBody">
                 <tr>
-                  <td colspan="9" class="text-center">Sélectionnez un job ou lancez une recherche</td>
+                  <td colspan="11" class="text-center">Sélectionnez un job ou lancez une recherche</td>
                 </tr>
               </tbody>
             </table>
@@ -628,6 +673,23 @@
             <span id="modalCategory">🏷️ <strong>Catégorie :</strong> <span class="modal-extra-val">-</span></span>
             <span id="modalSellerRating">⭐ <strong>Note vendeur :</strong> <span class="modal-extra-val">-</span></span>
             <span id="modalDeliveryMode">🤝 <strong>Remise :</strong> <span class="modal-extra-val">-</span></span>
+          </div>
+          <!-- NOUVELLES INFOS : livraison / main propre séparés, likes, vues, état, dates -->
+          <div class="seller-info-banner" id="modalExtraInfoBanner2" style="margin-top:6px; flex-wrap:wrap; gap:10px;">
+            <span id="modalLivraison">📦 <strong>Livraison :</strong> <span class="modal-extra-val">-</span></span>
+            <span id="modalMainPropre">🤝 <strong>Main propre :</strong> <span class="modal-extra-val">-</span></span>
+            <span id="modalLikes">❤️ <strong>Likes :</strong> <span class="modal-extra-val">-</span></span>
+            <span id="modalVues">👁️ <strong>Vues :</strong> <span class="modal-extra-val">-</span></span>
+          </div>
+          <div class="seller-info-banner" id="modalExtraInfoBanner3" style="margin-top:6px; flex-wrap:wrap; gap:10px;">
+            <span id="modalDateScraping">🕒 <strong>Date scraping :</strong> <span class="modal-extra-val">-</span></span>
+            <span id="modalTypeVendeur">👤 <strong>Type vendeur :</strong> <span class="modal-extra-val">-</span></span>
+            <span id="modalEtat">🏷️ <strong>État :</strong> <span class="modal-extra-val">-</span></span>
+          </div>
+          <!-- PRODUIT : caractéristiques dynamiques (marque, modèle, etc.) -->
+          <div class="card subcard" id="modalProduitCard" style="margin-top:10px;">
+            <h4>Caractéristiques Produit</h4>
+            <div id="modalProduit" style="font-size:0.85rem; line-height:1.5;"></div>
           </div>
           <div class="card subcard" style="margin-top:10px;">
             <h4>Résumé & Explication IA</h4>

@@ -279,6 +279,12 @@ const filterPriceMin = document.getElementById('filterPriceMin');
 const filterPriceMax = document.getElementById('filterPriceMax');
 const filterTagSelect = document.getElementById('filterTagSelect');
 const sortSelect = document.getElementById('sortSelect');
+const filterDeliveryMode = document.getElementById('filterDeliveryMode');
+const filterSellerType = document.getElementById('filterSellerType');
+const filterMinRating = document.getElementById('filterMinRating');
+const filterMinLikes = document.getElementById('filterMinLikes');
+const filterCategorySelect = document.getElementById('filterCategorySelect');
+const filterCity = document.getElementById('filterCity');
 const triggerMarketBtn = document.getElementById('triggerMarketBtn');
 
 const statTotalAds = document.getElementById('statTotalAds');
@@ -966,6 +972,7 @@ function renderHistoryTable(jobs) {
 async function loadExplorerPage() {
   allJobsCache = await window.api.getHistory();
   populateSessionDropdown(sessionSelect);
+  populateCategoryFilter();
   restoreExplorerFilters();
   renderExplorerAds();
 }
@@ -990,6 +997,13 @@ if (filterPriceMin) filterPriceMin.addEventListener('input', () => { saveExplore
 if (filterPriceMax) filterPriceMax.addEventListener('input', () => { saveExplorerFilters(); renderExplorerAds(); });
 if (filterTagSelect) filterTagSelect.addEventListener('change', () => { saveExplorerFilters(); renderExplorerAds(); });
 if (sortSelect) sortSelect.addEventListener('change', () => { saveExplorerFilters(); renderExplorerAds(); });
+// Nouveaux filtres (livraison / main propre / type vendeur / note min / likes min / catégorie / ville)
+if (filterDeliveryMode) filterDeliveryMode.addEventListener('change', () => { saveExplorerFilters(); renderExplorerAds(); });
+if (filterSellerType) filterSellerType.addEventListener('change', () => { saveExplorerFilters(); renderExplorerAds(); });
+if (filterMinRating) filterMinRating.addEventListener('input', () => { saveExplorerFilters(); renderExplorerAds(); });
+if (filterMinLikes) filterMinLikes.addEventListener('input', () => { saveExplorerFilters(); renderExplorerAds(); });
+if (filterCategorySelect) filterCategorySelect.addEventListener('change', () => { saveExplorerFilters(); renderExplorerAds(); });
+if (filterCity) filterCity.addEventListener('input', () => { saveExplorerFilters(); renderExplorerAds(); });
 
 // Changement de session : rafraîchit immédiatement tout l'explorateur (sans
 // avoir à manipuler un autre filtre pour déclencher la mise à jour).
@@ -1004,6 +1018,12 @@ function saveExplorerFilters() {
       priceMax: filterPriceMax?.value || '',
       tag: filterTagSelect?.value || 'ALL',
       sort: sortSelect?.value || 'DEFAULT',
+      deliveryMode: filterDeliveryMode?.value || 'ALL',
+      sellerType: filterSellerType?.value || 'ALL',
+      minRating: filterMinRating?.value || '',
+      minLikes: filterMinLikes?.value || '',
+      category: filterCategorySelect?.value || 'ALL',
+      city: filterCity?.value || '',
     }));
   } catch { /* quota dépassé */ }
 }
@@ -1016,7 +1036,33 @@ function restoreExplorerFilters() {
     if (saved.priceMax != null && filterPriceMax) filterPriceMax.value = saved.priceMax;
     if (saved.tag && filterTagSelect) filterTagSelect.value = saved.tag;
     if (saved.sort && sortSelect) sortSelect.value = saved.sort;
+    if (saved.deliveryMode && filterDeliveryMode) filterDeliveryMode.value = saved.deliveryMode;
+    if (saved.sellerType && filterSellerType) filterSellerType.value = saved.sellerType;
+    if (saved.minRating != null && filterMinRating) filterMinRating.value = saved.minRating;
+    if (saved.minLikes != null && filterMinLikes) filterMinLikes.value = saved.minLikes;
+    if (saved.category && filterCategorySelect) filterCategorySelect.value = saved.category;
+    if (saved.city && filterCity) filterCity.value = saved.city;
   } catch { /* JSON corrompu */ }
+}
+
+/**
+ * Peuple le sélecteur de catégorie avec les catégories distinctes trouvées dans
+ * les annonces chargées. Si une seule catégorie (« ALL ») est conservée et que
+ * le filtre courant n'est plus valide, on retombe sur « ALL ».
+ */
+function populateCategoryFilter() {
+  if (!filterCategorySelect) return;
+  const cats = new Set();
+  for (const j of allJobsCache) {
+    if (!Array.isArray(j.ads)) continue;
+    for (const a of j.ads) if (a.category) cats.add(a.category);
+  }
+  const current = filterCategorySelect.value;
+  const opts = ['<option value="ALL">Toutes catégories</option>',
+    ...[...cats].sort().map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`)];
+  filterCategorySelect.innerHTML = opts.join('');
+  if (current && cats.has(current)) filterCategorySelect.value = current;
+  else filterCategorySelect.value = 'ALL';
 }
 
 function renderExplorerAds() {
@@ -1027,6 +1073,13 @@ function renderExplorerAds() {
 
   const minP = parseFloat(filterPriceMin.value) || 0;
   const maxP = parseFloat(filterPriceMax.value) || Infinity;
+  // Nouveaux filtres
+  const deliveryFilter = filterDeliveryMode ? filterDeliveryMode.value : 'ALL';
+  const sellerTypeFilter = filterSellerType ? filterSellerType.value : 'ALL';
+  const minRating = filterMinRating && filterMinRating.value !== '' ? parseFloat(filterMinRating.value) : null;
+  const minLikes = filterMinLikes && filterMinLikes.value !== '' ? parseInt(filterMinLikes.value, 10) : null;
+  const categoryFilter = filterCategorySelect ? filterCategorySelect.value : 'ALL';
+  const cityFilter = filterCity ? filterCity.value.toLowerCase().trim() : '';
 
   let sourceAds = [];
 
@@ -1039,8 +1092,17 @@ function renderExplorerAds() {
     if (found && Array.isArray(found.ads)) sourceAds = found.ads;
   }
 
+  // Helpers lecture champs structurés / legacy
+  const livraisonOf = (a) => (a.transaction && a.transaction.livraison !== undefined) ? a.transaction.livraison : a.shipping;
+  const mainPropreOf = (a) => (a.transaction && a.transaction.mainPropre !== undefined) ? a.transaction.mainPropre : a.handDelivery;
+  const typeVendeurOf = (a) => (a.vendeur && a.vendeur.type) ? a.vendeur.type : (a.isPro ? 'pro' : 'particulier');
+  const noteOf = (a) => (a.vendeur && a.vendeur.note != null) ? a.vendeur.note : a.sellerRating;
+  const likesOf = (a) => (a.statistiques && a.statistiques.likes != null) ? a.statistiques.likes : (a.favorites_count != null ? a.favorites_count : null);
+  const datePubOf = (a) => a.dates?.publication || a.date;
+  const dateScrapeOf = (a) => a.dates?.scraping;
+
   let filtered = sourceAds.filter((a) => {
-    const fullText = `${a.title || ''} ${a.description || ''} ${a.city || ''} ${a.seller || ''}`.toLowerCase();
+    const fullText = `${a.title || ''} ${(a.description?.originale || a.description?.nettoyee || a.description) || ''} ${a.city || ''} ${a.seller || ''}`.toLowerCase();
     const matchesQuery = !query || fullText.includes(query);
 
     const price = typeof a.price === 'number' ? a.price : parseFloat(a.price) || 0;
@@ -1048,7 +1110,40 @@ function renderExplorerAds() {
 
     const matchesTag = matchesVerdictFilter(a, tagFilter);
 
-    return matchesQuery && matchesPrice && matchesTag;
+    // Livraison : 4 modes (ALL, LIVRAISON, MAIN_PROPRE, LIVRAISON_AND_MAIN)
+    let matchesDelivery = true;
+    if (deliveryFilter === 'LIVRAISON') matchesDelivery = livraisonOf(a) === true;
+    else if (deliveryFilter === 'MAIN_PROPRE') matchesDelivery = mainPropreOf(a) === true;
+    else if (deliveryFilter === 'LIVRAISON_AND_MAIN') matchesDelivery = livraisonOf(a) === true && mainPropreOf(a) === true;
+
+    // Type vendeur
+    const matchesSellerType = sellerTypeFilter === 'ALL' ||
+      (sellerTypeFilter === 'PRO' && typeVendeurOf(a) === 'pro') ||
+      (sellerTypeFilter === 'PART' && typeVendeurOf(a) === 'particulier');
+
+    // Note min : null (pas d'info) est EXCLUE — on ne retient que les annonces
+    // qui ont une note et qui sont ≥ au seuil.
+    let matchesRating = true;
+    if (minRating != null) {
+      const r = noteOf(a);
+      matchesRating = r != null && r >= minRating;
+    }
+
+    // Likes min : null exclu
+    let matchesLikes = true;
+    if (minLikes != null) {
+      const l = likesOf(a);
+      matchesLikes = l != null && l >= minLikes;
+    }
+
+    // Catégorie
+    const matchesCategory = categoryFilter === 'ALL' || (a.category && a.category === categoryFilter);
+
+    // Ville (substring insensible à la casse)
+    const matchesCity = !cityFilter || (a.city && a.city.toLowerCase().includes(cityFilter));
+
+    return matchesQuery && matchesPrice && matchesTag && matchesDelivery && matchesSellerType
+      && matchesRating && matchesLikes && matchesCategory && matchesCity;
   });
 
   if (sortMode === 'DEAL_DESC') {
@@ -1057,12 +1152,21 @@ function renderExplorerAds() {
     filtered.sort((a, b) => (a.price || 0) - (b.price || 0));
   } else if (sortMode === 'PRICE_DESC') {
     filtered.sort((a, b) => (b.price || 0) - (a.price || 0));
+  } else if (sortMode === 'RATING_DESC') {
+    // Note vendeur décroissante : null (pas d'info) part en bas
+    filtered.sort((a, b) => (noteOf(b) ?? -1) - (noteOf(a) ?? -1));
+  } else if (sortMode === 'LIKES_DESC') {
+    filtered.sort((a, b) => (likesOf(b) ?? -1) - (likesOf(a) ?? -1));
+  } else if (sortMode === 'DATE_PUB_DESC') {
+    filtered.sort((a, b) => new Date(datePubOf(b) || 0).getTime() - new Date(datePubOf(a) || 0).getTime());
+  } else if (sortMode === 'DATE_SCRAPE_DESC') {
+    filtered.sort((a, b) => new Date(dateScrapeOf(b) || 0).getTime() - new Date(dateScrapeOf(a) || 0).getTime());
   }
 
   filteredAdsCount.textContent = filtered.length;
 
   if (filtered.length === 0) {
-    adsTableBody.innerHTML = '<tr><td colspan="9" class="text-center">Aucune annonce ne correspond à votre recherche</td></tr>';
+    adsTableBody.innerHTML = '<tr><td colspan="11" class="text-center">Aucune annonce ne correspond à votre recherche</td></tr>';
     adsGridContainer.innerHTML = '<div class="text-center" style="grid-column:1/-1;">Aucune annonce ne correspond à votre recherche</div>';
     return;
   }
@@ -1080,10 +1184,24 @@ function renderExplorerAds() {
         const nameHtml = (a.adAnalysis && !a.adAnalysis._fallback && a.adAnalysis.identifiedProduct)
           ? `<strong>${escapeHtml(a.adAnalysis.identifiedProduct)}</strong><br><small style="color:var(--text-muted);">${escapeHtml(a.title)}</small>`
           : escapeHtml(a.title || 'Sans titre');
+
+        // Pastilles livraison / main propre / likes / note vendeur (visuelles)
+        const livraison = livraisonOf(a);
+        const mainPropre = mainPropreOf(a);
+        const livraisonChip = livraison === true ? ' <span title="Livraison" style="color:#38bdf8;">📦</span>'
+          : livraison === false ? '' : ' <span title="Livraison indéterminée" style="color:var(--text-muted);">📦?</span>';
+        const mainPropreChip = mainPropre === true ? ' <span title="Main propre" style="color:#22c55e;">🤝</span>'
+          : mainPropre === false ? '' : '';
+        const note = noteOf(a);
+        const noteChip = note != null ? ` <span title="Note vendeur" style="color:#facc15;">⭐${String(note).replace('.', ',')}</span>` : '';
+        const likesVal = likesOf(a);
+        const likesChip = likesVal != null ? ` <span title="Likes" style="color:#ef4444;">❤️${likesVal}</span>` : '';
+
         const valueHtml = marketValueText(ma);
         const deltaHtml = marketDeltaText(ma);
         const summaryHtml = `<div class="desc-tooltip" title="${escapeHtml(analysisSummary(a))}">${escapeHtml(analysisSummary(a))}</div>`;
-
+        const sellerChip = `<small style="color:var(--text-muted);">${escapeHtml(a.seller || 'Particulier')}${a.isPro ? ' (Pro)' : ''}</small>`;
+        const typeVendeurBadge = a.isPro ? '<span style="background:var(--accent); color:white; padding:1px 5px; border-radius:3px; font-size:0.7rem;">PRO</span>' : '<span style="background:var(--bg-secondary); padding:1px 5px; border-radius:3px; font-size:0.7rem;">PART</span>';
 
         return `
         <tr>
@@ -1094,6 +1212,8 @@ function renderExplorerAds() {
           <td>${valueHtml}</td>
           <td>${deltaHtml}</td>
           <td>${badgeHtml}</td>
+          <td>${sellerChip} ${typeVendeurBadge}${noteChip}${likesChip}</td>
+          <td>${livraisonChip}${mainPropreChip}</td>
           <td>${summaryHtml}</td>
           <td>
             <div style="display:flex; gap:4px;">
@@ -1161,6 +1281,18 @@ window.openAdDetail = (adId) => {
 
   if (!targetAd) return;
 
+  /**
+   * Formate une date ISO en JJ/MM/AAAA HH:MM:SS (FR).
+   * Renvoie la chaîne d'entrée si la date est invalide/absente.
+   */
+  function formatDateTime(iso) {
+    if (!iso) return '-';
+    const d = new Date(iso);
+    if (!Number.isFinite(d.getTime())) return iso;
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  }
+
   const ma = targetAd.marketAnalysis || {};
   const aa = targetAd.adAnalysis || {};
   modalAdTitle.textContent = identifiedName(targetAd);
@@ -1188,22 +1320,87 @@ window.openAdDetail = (adId) => {
   setExtraVal('modalCategory', targetAd.category || 'Non précisée');
 
   let ratingText = '-';
-  if (targetAd.sellerRating != null) {
-    ratingText = `${targetAd.sellerRating}/5`;
-    if (targetAd.sellerRatingCount != null) ratingText += ` (${targetAd.sellerRatingCount} avis)`;
+  const note = (targetAd.vendeur && targetAd.vendeur.note != null) ? targetAd.vendeur.note : targetAd.sellerRating;
+  const nbAvis = (targetAd.vendeur && targetAd.vendeur.nombreAvis != null) ? targetAd.vendeur.nombreAvis : targetAd.sellerRatingCount;
+  if (note != null) {
+    ratingText = `${note}/5`;
+    if (nbAvis != null) ratingText += ` (${nbAvis} avis)`;
   }
-  setExtraVal('modalSellerRating', targetAd.sellerRating != null ? ratingText : 'Aucune note');
+  setExtraVal('modalSellerRating', note != null ? ratingText : 'Aucune note');
 
-  const deliveryLabels = {
-    livraison: '📦 Livraison',
-    main_propre: '🤝 Main propre',
-    inconnu: 'ℹ️ Non précisée',
-  };
-  let deliveryText = deliveryLabels[targetAd.deliveryMode] || 'ℹ️ Non précisée';
-  if (targetAd.deliveryLabel && targetAd.deliveryMode === 'livraison') {
-    deliveryText += ` — ${targetAd.deliveryLabel}`;
+  const livraison = (targetAd.transaction && targetAd.transaction.livraison !== undefined)
+    ? targetAd.transaction.livraison
+    : (targetAd.shipping === true ? true : targetAd.shipping === false ? false : null);
+  const mainPropre = (targetAd.transaction && targetAd.transaction.mainPropre !== undefined)
+    ? targetAd.transaction.mainPropre
+    : (targetAd.handDelivery === true ? true : targetAd.handDelivery === false ? false : null);
+  const transporteur = (targetAd.transaction && targetAd.transaction.transporteur) || targetAd.deliveryLabel;
+
+  const livraisonLabels = { true: '📦 OUI', false: 'NON', null: '❓ Indéterminé' };
+  const mainPropreLabels = { true: '🤝 OUI', false: 'NON', null: '❓ Indéterminé' };
+  let livraisonText = livraisonLabels[livraison] || '❓ Indéterminé';
+  if (transporteur && livraison === true) livraisonText += ` (${transporteur})`;
+  setExtraVal('modalDeliveryMode', livraisonText);
+
+  // Nouvelle ligne : Livraison / Main propre séparés
+  setExtraVal('modalLivraison', livraisonLabels[livraison]);
+  setExtraVal('modalMainPropre', mainPropreLabels[mainPropre]);
+
+  // Likes & vues (null = information indisponible)
+  const likes = (targetAd.statistiques && targetAd.statistiques.likes != null) ? targetAd.statistiques.likes : null;
+  const vues = (targetAd.statistiques && targetAd.statistiques.vues != null) ? targetAd.statistiques.vues : null;
+  setExtraVal('modalLikes', likes != null ? `❤️ ${likes}` : '❓ Indisponible');
+  setExtraVal('modalVues', vues != null ? `👁️ ${vues}` : '❓ Indisponible');
+
+  // Ligne 3 : Date scraping + Type vendeur + État
+  const dateScrape = targetAd.dates?.scraping;
+  setExtraVal('modalDateScraping', dateScrape ? `🕒 ${formatDateTime(dateScrape)}` : '❓ Indisponible');
+  const typeVendeur = (targetAd.vendeur && targetAd.vendeur.type) ? targetAd.vendeur.type : (targetAd.isPro ? 'pro' : 'particulier');
+  const typeVendeurLabel = typeVendeur === 'pro' ? '🏪 Professionnel' : '👤 Particulier';
+  setExtraVal('modalTypeVendeur', typeVendeurLabel);
+
+  const etat = (targetAd.produit && targetAd.produit.condition) || (targetAd.detection && targetAd.detection.etatInferreLabel);
+  setExtraVal('modalEtat', etat || '❓ Non précisé');
+
+  // Caractéristiques Produit (champs structurés)
+  const produitEl = document.getElementById('modalProduit');
+  const produitCard = document.getElementById('modalProduitCard');
+  if (produitEl && produitCard) {
+    const produitKeys = ['brand', 'model', 'color', 'size', 'capacity', 'year', 'material', 'condition', 'reference'];
+    const labels = {
+      brand: 'Marque', model: 'Modèle', color: 'Couleur', size: 'Taille',
+      capacity: 'Capacité', year: 'Année', material: 'Matière', condition: 'État déclaré', reference: 'Référence',
+    };
+    const detected = targetAd.detection || {};
+    const items = [];
+    if (targetAd.produit) {
+      for (const k of produitKeys) {
+        const v = targetAd.produit[k];
+        if (v != null && v !== '') items.push(`<div><strong>${labels[k]} :</strong> ${escapeHtml(String(v))}</div>`);
+      }
+    }
+    // Ajoute les booléens détectés dans la description
+    const triBool = (val) => val === true ? 'OUI' : (val === false ? 'NON' : null);
+    const boolFields = [
+      ['negociable', 'Négociable', targetAd.prix?.negociable],
+      ['facture', 'Facture', detected.facture],
+      ['garantie', 'Garantie', detected.garantie],
+      ['echangeAccepte', 'Échange accepté', detected.echangeAccepte],
+      ['urgent', 'Urgent', detected.urgent],
+      ['aReparer', 'À réparer', detected.aReparer],
+    ];
+    for (const [k, label, val] of boolFields) {
+      const t = triBool(val);
+      if (t) items.push(`<div><strong>${label} :</strong> <span style="color:${val === true ? '#22c55e' : '#94a3b8'};">${t}</span></div>`);
+    }
+    if (items.length > 0) {
+      produitEl.innerHTML = `<div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">${items.join('')}</div>`;
+      produitCard.classList.remove('hidden');
+    } else {
+      produitEl.innerHTML = '<em style="color:var(--text-muted);">Aucune caractéristique structurée détectée pour cette annonce.</em>';
+      produitCard.classList.remove('hidden');
+    }
   }
-  setExtraVal('modalDeliveryMode', deliveryText);
   // Résumé IA : combine le résumé de l'IA Analyse (ce qu'est l'objet) et la
   // rationale de l'IA Marché (pourquoi cette estimation en €).
   let summaryText = aa.summary || '';

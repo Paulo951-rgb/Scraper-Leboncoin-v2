@@ -84,7 +84,7 @@ renderer/                    app.js, index.html, styles.css, widget.html, aiStud
   toujours passer par `getSearchProvider()` (abstraction DuckDuckGo/etc.).
 
 ## Tests
-- `node test/regression.test.js` → 588 assertions (syntaxe + stubs Electron).
+- `node test/regression.test.js` → 709 assertions (syntaxe + stubs Electron).
 - Le test stub `electron` : BrowserWindow a `webContents.send` mais PAS `isDestroyed`.
 - Avant tout commit : `node --check` sur les fichiers modifiés + lancer la suite.
 - aiCache est testé en isolation (variable `_aiCacheUnderTest` pour éviter la
@@ -250,8 +250,98 @@ renderer/                    app.js, index.html, styles.css, widget.html, aiStud
 
 ## Commandes
 - Lancer l'app : `npm start` (electron --max-old-space-size=8192 .)
-- Tests : `npm test` (ou `node test/regression.test.js`) — 640 assertions
+- Tests : `npm test` (ou `node test/regression.test.js`) — 709 assertions
 - Branche stable : `refactor/professional-architecture`
+
+## Améliorations globales (session 2026-08, 6e passe — enrichissement données)
+- **Module `services/scraping/adFields.js`** : centralise tous les extracteurs
+  défensifs en un module pur réutilisable depuis n'importe quel composant
+  (pipeline, IPC, adAnalyzer). Avant, `extractDeliveryInfo`, `extractSellerRating`,
+  etc. vivaient dans le pipeline et étaient dupliquées / fragmentées.
+  Exports : `extractSeller`, `extractDates`, `extractAttributes`, `extractPrice`,
+  `extractTransaction`, `extractStats`, `extractPhotos`, `extractDescription`,
+  `detectInDescription`, `inferCondition`, `scraperQuality`, `zipcodeToDepartment`,
+  `firstDefined`, `firstNonNull`. Convention : tout champ non trouvé = `null`,
+  JAMAIS d'invention.
+- **Schéma annonce v2 (champs structurés)** : en plus des champs legacy
+  préservés pour rétro-compat (id, price, shipping, seller, etc.), chaque
+  annonce normalisée expose maintenant des sous-objets typés :
+  - `prix{valeur,devise,original,negociable}` : prix numérique séparé du
+    symbole €, prix original détectable (baisse), bool négociable.
+  - `vendeur{nom,nomMagasin,type,id,isPro,note,noteSur,nombreAvis,
+    urlProfil,ancienneteJours,siren}` : vendeur complet structuré.
+  - `transaction{livraison,mainPropre,mode,transporteur}` : livraison
+    ET main propre comme booléens SÉPARÉS (au lieu de l'ancien mode unique).
+  - `statistiques{likes,vues}` : 0 ≠ null (0 = Leboncoin affiche 0,
+    null = info indisponible).
+  - `dates{publication,modification,scraping,statut}` : publication ≠
+    scraping. `scraping` = ISO string au moment de la normalisation
+    (rafraîchi à chaque `writeOutputs`).
+  - `produit{brand,model,color,size,capacity,year,material,condition,
+    reference,attributs}` : champs mappés + objet générique `attributs`
+    pour les attributs dynamiques non mappés.
+  - `photos{count,urls,miniatures,principale,miniaturePrincipale}` :
+    urls + miniature + principale.
+  - `localisation{ville,codePostal,departement}` : département dérivé
+    du CP (2 ou 3 chiffres, gère Corse 2A/2B et DOM-TOM 97x/98x).
+  - `description{originale,nettoyee,longueur}` : description originale
+    conservée TELLE QUELLE (jamais résumée), version nettoyée séparée.
+  - `detection{negociable,facture,garantie,etatNeuf,tresBonet,bonetat,
+    etatCorrect,aReparer,fonctionne,urgent,echangeAccepte,
+    remiseEnMainPropre,livraisonPossible,etatInferre,etatInferreLabel}` :
+    analyse de la description par regex (confirm=true/false/null).
+  - `scraping{statut,champsRecuperes,champsTotal,champsIndisponibles,
+    champsManquants[]}` : qualité du scraping par annonce.
+- **TXT structuré** : `toReadableBlock` réécrit pour exposer toutes les
+  sections (GÉNÉRAL / VENDEUR / TRANSACTION / STATISTIQUES / DATES / PRODUIT /
+  PHOTOS / DESCRIPTION / QUALITÉ DU SCRAPING) avec dates ISO lisibles
+  (`2026-08-31 22:43:15`) et `null` explicite pour toute donnée absente.
+- **Exports XLSX/CSV enrichis** : ExcelExporter expose désormais 35 colonnes
+  XLSX et 42 colonnes CSV (séparées par `;`, CRLF, BOM UTF-8). Les colonnes
+  clés incluent : ID, Titre, Produit Identifié IA, Prix, Prix Original,
+  Négociable, Catégorie, Sous-catégorie, Ville, CP, Département, Vendeur,
+  Type Vendeur, Note Vendeur, Nb Avis Vendeur, **Livraison + Main Propre
+  SÉPARÉS**, Transporteur, Likes, Vues, Marque, Modèle, État, Nb Photos,
+  Facture, Garantie, Échange, Urgent, État Détecté, Verdict IA Marché,
+  Valeur Marché, Fourchette Marché, Bénéfice/Perte, Résumé IA,
+  Justification Marché, **Date Publication + Date Scraping**, Statut Annonce,
+  Statut Scraping, Lien. Ordre FIXE pour exploitation Python/pandas.
+- **Filtres UI enrichis (renderer)** : ligne 2 de filtres dans l'Explorateur
+  avec 6 contrôles : Mode de remise (toutes/livraison/main propre/
+  livraison+main propre), Type vendeur (tous/pro/particulier), Note vendeur
+  min (0-5, step 0.1), Likes min, Catégorie (peuplée dynamiquement),
+  Ville (substring). Tri additionnels : Note vendeur décroissante,
+  Likes décroissants, Date publication (récentes), Date scraping (récentes).
+  Tous les filtres null-safe (`null` exclu pour note min / likes min).
+- **Historique cross-session (`buildAdHistory`)** : nouvelle fonction dans
+  `services/jobs/jobHistory.js` qui agrège toutes les sessions pour détecter
+  les changements par annonce (première/dernière vue, delta prix + baisse/
+  hausse en €, delta likes + direction, changement de statut, disparition).
+  Tri par activité décroissante. Accessible via `JobHistoryManager.getAdHistory()`
+  / IPC `job:getAdHistory` / preload `getAdHistory()`. C'est la base d'un
+  futur onglet « Annonces dont le prix baisse ».
+- **IA 1 enrichie** : `adAnalyzer.buildPrompt` injecte maintenant dans le
+  prompt tous les nouveaux champs structurés (négociable/facture/garantie
+  détectés dans la description, likes/vues, type vendeur, mode de remise
+  détaillé) — l'IA peut ainsi fonder son identification sur plus de
+  contexte sans avoir à le deviner.
+- **Détails annonce (modal)** : 3 nouvelles lignes d'infos :
+  - Ligne 2 : Livraison OUI/NON + Main propre OUI/NON (séparés), Likes,
+    Vues.
+  - Ligne 3 : Date scraping (formatée JJ/MM/AAAA HH:MM:SS), Type vendeur,
+    État (déclaré ou détecté).
+  - Nouvelle card « Caractéristiques Produit » : grille 2 colonnes avec
+    marque/modèle/couleur/taille/capacité/année/matière/état/référence
+    + booléens détectés (négociable/facture/garantie/échange/urgent/
+    à réparer). Card masquée si vide.
+- **Compatibilité ascendante** : les anciens champs (`shipping`, `handDelivery`,
+  `deliveryMode`, `seller`, `sellerRating`, `category`, `date`, `images`) sont
+  TOUJOURS préservés (legacy) en plus des nouveaux. L'Excel/CSV lisent les
+  champs legacy ET structurés (fallback). Les filtres renderer lisent les
+  deux (`livraisonOf(a)` = `ad.transaction?.livraison ?? ad.shipping`).
+  Toute l'API existante continue de fonctionner sans changement.
+- **Tests** : 709 assertions (était 640). Ajout de tests fonctionnels pour
+  chaque extracteur adFields, les colonnes enrichies, et buildAdHistory.
 
 ## Améliorations globales (session 2026-08, 5e passe)
 - **Vérif Chromium (`app:checkChromium`)** : feature documentée mais MANQUANTE
