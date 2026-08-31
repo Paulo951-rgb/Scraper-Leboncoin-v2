@@ -53,8 +53,11 @@ function parseArgs(argv) {
       case '--out':
         opts.outDir = argv[++i];
         break;
-      case '--speed':
+       case '--speed':
         opts.speed = argv[++i];
+        break;
+      case '--user-agent':
+        opts.userAgent = argv[++i];
         break;
       default:
         if (a.startsWith('--')) throw new CliError(`Option inconnue : ${a}`);
@@ -522,6 +525,12 @@ class DescriptionEnricher {
     this.logger = logger;
     this.consecutiveBlocks = 0;
     this.shouldStopAll = false;
+    // 🛑 FIX : UA FIXE pour toute la durée de l'enrichissement. Avant,
+    // getRandomUserAgent() était appelé dans createStealthContext → UA différent
+    // à chaque recyclage de contexte (tous les 200 produits). Le UA choisi ici
+    // peut être fourni par HarCapturer (opts.userAgent) pour garantir la cohérence
+    // d'empreinte avec la phase de capture (mêmes cookies + même UA → 403 évité).
+    this._userAgent = opts.userAgent || getRandomUserAgent();
     // Rate limiting adaptatif : ajuste dynamiquement les délais selon les
     // signaux du serveur (latence, 429/403, erreurs réseau).
     this.rateLimiter = new AdaptiveRateLimiter({
@@ -644,7 +653,7 @@ class DescriptionEnricher {
 
     const createStealthContext = async () => {
       const contextOptions = {
-        userAgent: getRandomUserAgent(),
+        userAgent: this._userAgent,
         locale: 'fr-FR',
         viewport: { width: 1366, height: 850 },
       };

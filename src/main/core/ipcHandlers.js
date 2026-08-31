@@ -274,9 +274,11 @@ function setupIpcHandlers(getMainWindow) {
         harPath,
         outDir: resultsDir,
         noDesc,
+        fresh: true,
         limit: limit ? parseInt(limit, 10) : undefined,
         speed: userSettings.scrapeSpeed || 'fast',
         headless: userSettings.headless !== false,
+        userAgent: activeCapturer ? activeCapturer._userAgent : undefined,
       });
       sendLog({ level: 'debug', message: `[job:start] Phase pipeline terminée en ${Math.round((Date.now() - t0Pipeline) / 1000)}s.` });
 
@@ -295,91 +297,90 @@ function setupIpcHandlers(getMainWindow) {
         if (!valid || !Array.isArray(ads)) {
           sendLog({ level: 'warn', message: `[job:start] annonces.json illisible (${reason || 'format inattendu'}) — étapes suivantes (IA/Excel) ignorées pour ce job.` });
           sessionStats.warnings++;
-        } else {
-        let adsWithAi = ads;
-        sessionStats.adsKept = ads.length;
-        if (sessionStats.adsFound === 0) sessionStats.adsFound = ads.length;
-        sendLog({ level: 'debug', message: `[job:start] annonces.json lu : ${summarizeAds(adsWithAi)}.` });
-
-        // 🧠 IA ANALYSE (Texte + Vision) — uniquement si « Analyse IA » cochée.
-        // L'IA Analyse reconstitue ce qu'est réellement l'objet vendu en croisant
-        // titre + description + données scraper + photos. Pas de score ni de
-        // scam score : juste un résumé précis + les attributs clés (modèle, état,
-        // défauts, accessoires…). Résultat stocké dans ad.adAnalysis.
-        if (autoAiMarket) {
-          // 🩺 Health-check Ollama avant l'analyse (si provider ollama)
-          if (aiConfig?.provider === 'ollama' || !aiConfig?.provider) {
-            const { checkModelAvailable } = require('../services/ai/ollamaHealth');
-            const ollamaUrl = aiConfig.ollamaUrl || 'http://127.0.0.1:11434';
-            const modelName = aiConfig.visionModel || aiConfig.model || 'llava';
-            sendLog({ level: 'debug', message: `[IA] Health-check Ollama (${ollamaUrl}, modèle ${modelName})...` });
-            const health = await checkModelAvailable(ollamaUrl, modelName);
-            if (!health.ok) {
-              sendLog({ level: 'warn', message: `🩺 ${health.message} — l'analyse IA va échouer pour chaque annonce (fallback automatique appliqué).` });
-            } else {
-              sendLog({ level: 'debug', message: `🩺 ${health.message}` });
-            }
-          }
-
-          sendStatus({ state: 'processing', message: 'Analyse IA des annonces (texte + vision)...' });
-          const visionModel = aiConfig?.visionModel || 'llava';
-          sendLog({ level: 'info', message: `🧠 Lancement de l'IA Analyse (${ads.length} annonces, texte + ${analyzeImages ? 'vision activée' : 'vision si photos'}, parallèle x${userSettings.aiConcurrency || 4}, modèle ${visionModel})...` });
-
-          const t0Ai = Date.now();
-          const analysisConfig = {
-            provider: aiConfig?.provider || 'ollama',
-            ...(aiConfig?.ollamaUrl ? { ollamaUrl: aiConfig.ollamaUrl } : {}),
-            ...(aiConfig?.model ? { textModel: aiConfig.model } : {}),
-            ...(visionModel ? { visionModel } : {}),
-          };
-          adsWithAi = await AdAnalyzer.analyzeAds(adsWithAi, analysisConfig, {
-            concurrency: userSettings.aiConcurrency || 4,
-            signal: activeCancel,
-            onProgress: (prog) => sendProgress({
-              percent: 75 + Math.round((prog.percent / 100) * 25),
-              status: prog.status,
-            }),
-            onLog: (data) => { sendLog(data); if (data.level === 'error') sessionStats.aiErrors++; },
-          });
-          const aiElapsed = Math.round((Date.now() - t0Ai) / 1000);
-          const analyzedCount = adsWithAi.filter((a) => a.adAnalysis && !a.adAnalysis._fallback).length;
-          sessionStats.aiAnalyzed = analyzedCount;
-          sessionStats.aiFallback = adsWithAi.length - analyzedCount;
-          if (activeCancel && activeCancel.cancelled) {
-            stoppedEarly = true;
-            sessionStats.stoppedEarly = true;
-            sendLog({ level: 'warn', message: `⏹️ IA Analyse interrompue : ${analyzedCount}/${adsWithAi.length} annonce(s) analysée(s). Les résultats partiels sont sauvegardés.` });
           } else {
-            sendLog({ level: 'info', message: `✅ IA Analyse terminée en ${aiElapsed}s (${analyzedCount}/${adsWithAi.length} annonces analysées, ${adsWithAi.length - analyzedCount} fallback).` });
-          }
-          sendLog({ level: 'debug', message: `[job:start] Phase IA Analyse terminée en ${aiElapsed}s.` });
+            let adsWithAi = ads;
+            sessionStats.adsKept = ads.length;
+            if (sessionStats.adsFound === 0) sessionStats.adsFound = ads.length;
+            sendLog({ level: 'debug', message: `[job:start] annonces.json lu : ${summarizeAds(adsWithAi)}.` });
 
-          writeWithChecksum(jsonPath, adsWithAi, null, 2);
-          writeSummaryFile(adsWithAi, path.join(path.dirname(jsonPath), 'resumes-ia.json'));
-        } else {
-          sendLog({ level: 'debug', message: '[job:start] IA Analyse ignorée (autoAiMarket=false).' });
-        }
+            // 🧠 IA ANALYSE (Texte + Vision) — uniquement si « Analyse IA » cochée.
+            // L'IA Analyse reconstitue ce qu'est réellement l'objet vendu en croisant
+            // titre + description + données scraper + photos. Pas de score ni de
+            // scam score : juste un résumé précis + les attributs clés (modèle, état,
+            // défauts, accessoires…). Résultat stocké dans ad.adAnalysis.
+            if (autoAiMarket) {
+              // 🩺 Health-check Ollama avant l'analyse (si provider ollama)
+              if (aiConfig?.provider === 'ollama' || !aiConfig?.provider) {
+                const ollamaUrl = aiConfig.ollamaUrl || 'http://127.0.0.1:11434';
+                const modelName = aiConfig.visionModel || aiConfig.model || 'llava';
+                sendLog({ level: 'debug', message: `[IA] Health-check Ollama (${ollamaUrl}, modèle ${modelName})...` });
+                const health = await checkModelAvailable(ollamaUrl, modelName);
+                if (!health.ok) {
+                  sendLog({ level: 'warn', message: `🩺 ${health.message} — l'analyse IA va échouer pour chaque annonce (fallback automatique appliqué).` });
+                } else {
+                  sendLog({ level: 'debug', message: `🩺 ${health.message}` });
+                }
+              }
 
-        await ExcelExporter.exportToXlsx(adsWithAi, xlsxPath);
-        sendLog({ level: 'info', message: '📊 Export Excel (.xlsx) généré avec succès !' });
-        // Export CSV jumeau (compatible Excel FR, BOM UTF-8) : permet l'import
-        // dans un tableur alternatif ou un script sans dépendre d'Excel.
-        const csvPath = path.join(resultsDir, 'annonces.csv');
-        try {
-          await ExcelExporter.exportToCsv(adsWithAi, csvPath);
-          sendLog({ level: 'debug', message: `📄 Export CSV généré : ${csvPath}` });
-        } catch (csvErr) {
-          sendLog({ level: 'warn', message: `Export CSV impossible : ${csvErr.message}` });
-        }
+              sendStatus({ state: 'processing', message: 'Analyse IA des annonces (texte + vision)...' });
+              const visionModel = aiConfig?.visionModel || 'llava';
+              sendLog({ level: 'info', message: `🧠 Lancement de l'IA Analyse (${ads.length} annonces, texte + ${analyzeImages ? 'vision activée' : 'vision si photos'}, parallèle x${userSettings.aiConcurrency || 4}, modèle ${visionModel})...` });
 
-        // Note : la notification « Très bonne affaire » est déclenchée par le
-        // handler market:analyze (IA Marché, action manuelle) — pas ici. Pendant
-        // le job:start, l'IA Marché n'est pas lancée (seule l'IA Analyse l'est).
-        const analyzed = adsWithAi.filter((a) => a.adAnalysis && !a.adAnalysis._fallback).length;
-        if (analyzed > 0) {
-          sendLog({ level: 'debug', message: `[job:start] ${analyzed} annonce(s) analysée(s) par l'IA (résumés produits + attributs).` });
-        }
-        } // fin du else (annonces.json lisible)
+              const t0Ai = Date.now();
+              const analysisConfig = {
+                provider: aiConfig?.provider || 'ollama',
+                ...(aiConfig?.ollamaUrl ? { ollamaUrl: aiConfig.ollamaUrl } : {}),
+                ...(aiConfig?.model ? { textModel: aiConfig.model } : {}),
+                ...(visionModel ? { visionModel } : {}),
+              };
+              adsWithAi = await AdAnalyzer.analyzeAds(adsWithAi, analysisConfig, {
+                concurrency: userSettings.aiConcurrency || 4,
+                signal: activeCancel,
+                onProgress: (prog) => sendProgress({
+                  percent: 75 + Math.round((prog.percent / 100) * 25),
+                  status: prog.status,
+                }),
+                onLog: (data) => { sendLog(data); if (data.level === 'error' || data.level === 'warn') sessionStats.aiErrors++; },
+              });
+              const aiElapsed = Math.round((Date.now() - t0Ai) / 1000);
+              const analyzedCount = adsWithAi.filter((a) => a.adAnalysis && !a.adAnalysis._fallback).length;
+              sessionStats.aiAnalyzed = analyzedCount;
+              sessionStats.aiFallback = adsWithAi.length - analyzedCount;
+              if (activeCancel && activeCancel.cancelled) {
+                stoppedEarly = true;
+                sessionStats.stoppedEarly = true;
+                sendLog({ level: 'warn', message: `⏹️ IA Analyse interrompue : ${analyzedCount}/${adsWithAi.length} annonce(s) analysée(s). Les résultats partiels sont sauvegardés.` });
+              } else {
+                sendLog({ level: 'info', message: `✅ IA Analyse terminée en ${aiElapsed}s (${analyzedCount}/${adsWithAi.length} annonces analysées, ${adsWithAi.length - analyzedCount} fallback).` });
+              }
+              sendLog({ level: 'debug', message: `[job:start] Phase IA Analyse terminée en ${aiElapsed}s.` });
+
+              writeWithChecksum(jsonPath, adsWithAi, null, 2);
+              writeSummaryFile(adsWithAi, path.join(path.dirname(jsonPath), 'resumes-ia.json'));
+            } else {
+              sendLog({ level: 'debug', message: '[job:start] IA Analyse ignorée (autoAiMarket=false).' });
+            }
+
+            await ExcelExporter.exportToXlsx(adsWithAi, xlsxPath);
+            sendLog({ level: 'info', message: '📊 Export Excel (.xlsx) généré avec succès !' });
+            // Export CSV jumeau (compatible Excel FR, BOM UTF-8) : permet l'import
+            // dans un tableur alternatif ou un script sans dépendre d'Excel.
+            const csvPath = path.join(resultsDir, 'annonces.csv');
+            try {
+              await ExcelExporter.exportToCsv(adsWithAi, csvPath);
+              sendLog({ level: 'debug', message: `📄 Export CSV généré : ${csvPath}` });
+            } catch (csvErr) {
+              sendLog({ level: 'warn', message: `Export CSV impossible : ${csvErr.message}` });
+            }
+
+            // Note : la notification « Très bonne affaire » est déclenchée par le
+            // handler market:analyze (IA Marché, action manuelle) — pas ici. Pendant
+            // le job:start, l'IA Marché n'est pas lancée (seule l'IA Analyse l'est).
+            const analyzed = adsWithAi.filter((a) => a.adAnalysis && !a.adAnalysis._fallback).length;
+            if (analyzed > 0) {
+              sendLog({ level: 'debug', message: `[job:start] ${analyzed} annonce(s) analysée(s) par l'IA (résumés produits + attributs).` });
+            }
+          } // fin du else (annonces.json lisible)
       } else {
         sendLog({ level: 'warn', message: `[job:start] annonces.json introuvable après pipeline : ${jsonPath} — le scraping a peut-être échoué silencieusement.` });
       }
@@ -504,7 +505,6 @@ function setupIpcHandlers(getMainWindow) {
     // Sans Ollama, toutes les annonces tombent en fallback instantané — on le
     // détecte AVANT pour donner un message clair au lieu d'un "0/N réussi" muet.
     if (marketAiConfig.provider === 'ollama' || !marketAiConfig.provider) {
-      const { checkModelAvailable } = require('../services/ai/ollamaHealth');
       const ollamaUrl = marketAiConfig.ollamaUrl || 'http://127.0.0.1:11434';
       const modelName = marketAiConfig.textModel || 'llama3';
       sendLog({ level: 'debug', message: `[IA Marché] Health-check Ollama (${ollamaUrl}, modèle ${modelName})...` });
@@ -779,7 +779,6 @@ function setupIpcHandlers(getMainWindow) {
 
   // 🩺 Health-check Ollama (appelable depuis le renderer pour afficher le statut)
   ipcMain.handle('ollama:health', async (event, { ollamaUrl, model } = {}) => {
-    const { checkModelAvailable } = require('../services/ai/ollamaHealth');
     const url = ollamaUrl || 'http://127.0.0.1:11434';
     const modelName = model || 'llama3';
     return await checkModelAvailable(url, modelName);

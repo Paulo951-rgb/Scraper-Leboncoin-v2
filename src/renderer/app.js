@@ -303,6 +303,14 @@ const aiVisionModelEl = document.getElementById('aiVisionModel');
 const analyzeImages = { checked: true }; // rétro-compat : la vision est désormais intégrée à l'IA Analyse
 const aiProvider = document.getElementById('aiProvider');
 const aiModelName = document.getElementById('aiModelName');
+const ollamaUrlEl = document.getElementById('ollamaUrl');
+
+// Persistance de l'URL Ollama
+if (ollamaUrlEl) {
+  ollamaUrlEl.value = localStorage.getItem('ollama-url') || 'http://127.0.0.1:11434';
+  ollamaUrlEl.addEventListener('change', (e) => localStorage.setItem('ollama-url', e.target.value));
+}
+const getOllamaUrl = () => (ollamaUrlEl && ollamaUrlEl.value ? ollamaUrlEl.value : 'http://127.0.0.1:11434');
 
 // Persistance du modèle vision.
 if (aiVisionModelEl) {
@@ -422,6 +430,7 @@ function collectSearchConfig() {
     proxyUrl: proxyUrl.value.trim(),
     aiProvider: aiProvider.value,
     aiModelName: aiModelName.value.trim() || 'llama3',
+    ollamaUrl: getOllamaUrl(),
     aiVisionModel: localStorage.getItem('ai-vision-model') || 'llava',
     searchProvider: (searchProviderSelect && searchProviderSelect.value) || 'duckduckgo',
   };
@@ -444,6 +453,10 @@ function applySearchConfig(cfg) {
   if (cfg.aiModelName != null) {
     aiModelName.value = cfg.aiModelName;
     localStorage.setItem('ai-model-name', cfg.aiModelName);
+  }
+  if (cfg.ollamaUrl != null) {
+    if (ollamaUrlEl) ollamaUrlEl.value = cfg.ollamaUrl;
+    localStorage.setItem('ollama-url', cfg.ollamaUrl);
   }
   if (cfg.aiVisionModel != null) {
     if (aiVisionModelEl) aiVisionModelEl.value = cfg.aiVisionModel;
@@ -670,7 +683,7 @@ function renderMarketBadge(ma) {
   const sign = delta > 0 ? '+' : '';
   if (label === 'Très bonne affaire') return `<span class="tag-deal-super">🟢🟢 Très bonne affaire (${sign}${delta} €)</span>`;
   if (label === 'Bonne affaire') return `<span class="tag-deal-good">🟢 Bonne affaire (${sign}${delta} €)</span>`;
-  if (label === 'Très cher') return `<span class="tag-deal-superhigh">🔴 Trop cher (${sign}${delta} €)</span>`;
+  if (label === 'Très cher') return `<span class="tag-deal-superhigh">🔴🔴 Très cher (${sign}${delta} €)</span>`;
   if (label === 'Trop cher') return `<span class="tag-deal-superhigh">🔴 Trop cher (${sign}${delta} €)</span>`;
   return `<span class="tag-deal-normal">${label} (${sign}${delta} €)</span>`;
 }
@@ -782,6 +795,7 @@ startBtn.addEventListener('click', () => {
       provider: aiProvider.value,
       model: aiModelName.value.trim() || 'llama3',
       visionModel: localStorage.getItem('ai-vision-model') || 'llava',
+      ollamaUrl: getOllamaUrl(),
       apiKey: getAiApiKey(),
     },
   };
@@ -831,6 +845,7 @@ triggerMarketBtn.addEventListener('click', async () => {
         provider: aiProvider.value,
         model: aiModelName.value.trim() || 'llama3',
         visionModel: localStorage.getItem('ai-vision-model') || 'llava',
+        ollamaUrl: getOllamaUrl(),
         apiKey: getAiApiKey(),
       },
       searchConfig: {
@@ -851,6 +866,7 @@ triggerMarketBtn.addEventListener('click', async () => {
     alert(`Erreur d'analyse : ${err.message}`);
   } finally {
     triggerMarketBtn.disabled = false;
+    stopBtn.disabled = true;
   }
 });
 
@@ -1071,7 +1087,7 @@ function renderExplorerAds() {
 
         return `
         <tr>
-          <td class="text-center"><input type="checkbox" ${isChecked ? 'checked' : ''} onchange="toggleCompare('${a.id}')"></td>
+          <td class="text-center"><input type="checkbox" ${isChecked ? 'checked' : ''} onchange="toggleCompare('${escapePath(a.id)}')"></td>
           <td class="text-center">${starIcon}</td>
           <td>${nameHtml}</td>
           <td><strong>${a.price != null ? a.price + ' €' : '-'}</strong></td>
