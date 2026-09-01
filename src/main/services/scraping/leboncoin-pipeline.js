@@ -16,14 +16,12 @@ const { AdaptiveRateLimiter } = require('../../utils/rateLimiter');
 const adFields = require('./adFields');
 
 const DEFAULTS = Object.freeze({
-  // Mode rapide : fetchs parallèles (Promise.all) comme le code original.
-  // batchSize = nb d'annonces par batch en parallèle. La détection 403 et
-  // l'arrêt préventif après 3 blocages consécutifs restent actifs.
+  // Valeurs par défaut pour les options du pipeline.
   minDelayMs: 500,
   maxDelayMs: 1000,
   headless: false,
   outDir: '.',
-  batchSize: 10,
+  concurrency: 10,
   recycleContextEvery: 200, // Recycler la mémoire tous les 200 produits extraits
 });
 
@@ -219,19 +217,9 @@ function firstDefined(...vals) {
   return null;
 }
 
-/**
- * Wrapper mince conservé pour les call sites existants.
- * Délègue au module adFields (source unique de vérité).
- */
-function extractDeliveryInfo(raw) {
-  const t = adFields.extractTransaction(raw);
-  return { shipping: t.livraison, handDelivery: t.mainPropre };
-}
-
-function extractSellerRating(raw) {
-  const s = adFields.extractSeller(raw);
-  return { sellerRating: s.note, sellerRatingCount: null };
-}
+// Note : les wrappers extractDeliveryInfo et extractSellerRating ont été
+// supprimés car la structure plate expose directement livraison, mainPropre,
+// vendeurNom, vendeurNote, etc. via normalizeAd().
 
 /**
  * Normalise une annonce brute Leboncoin en structure PLATE et SIMPLE.

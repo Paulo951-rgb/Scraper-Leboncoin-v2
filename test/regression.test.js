@@ -713,8 +713,10 @@ assert(!/\bdepartment\b/.test(adFieldsCheck), 'adFields: aucun department (champ
 assert(!/\bcategory\b/.test(adFieldsCheck), 'adFields: aucun category (champ supprimé)');
 
 // Pipeline : helpers wrappers (compatibilité interne) présents
-assert(/function extractDeliveryInfo/.test(pipelineCode), 'pipeline: extractDeliveryInfo wrapper');
-assert(/function extractSellerRating/.test(pipelineCode), 'pipeline: extractSellerRating wrapper');
+// Les wrappers extractDeliveryInfo/extractSellerRating ont été supprimés
+// car la structure plate expose directement les champs via normalizeAd().
+assert(!/function extractDeliveryInfo/.test(pipelineCode), 'pipeline: extractDeliveryInfo supprimé (structure plate)');
+assert(!/function extractSellerRating/.test(pipelineCode), 'pipeline: extractSellerRating supprimé (structure plate)');
 
 // normalizeAd : produit les champs plats (scraping pur)
 assert(/prix,/.test(pipelineCode), 'pipeline: normalizeAd produit prix');
@@ -1108,7 +1110,7 @@ assert(/pas.*envoi|retrait.*place|venir.*chercher/.test(adFieldsDeliveryCode), '
 assert(/Array\.isArray\(raw\?\.attributes\) && raw\.attributes\.length > 0/.test(adFieldsDeliveryCode), 'adFields: extractTransaction default livraison=NON quand attributes présent sans shipping');
 // Le wrapper pipeline délègue au module adFields
 const pipeCodeDelivery = fs.readFileSync(path.join(base, 'services/scraping/leboncoin-pipeline.js'), 'utf8');
-assert(/function extractDeliveryInfo\(\s*raw\s*\)\s*\{[\s\S]{0,200}adFields\.extractTransaction/.test(pipeCodeDelivery), 'pipeline: extractDeliveryInfo délègue à adFields.extractTransaction');
+// extractDeliveryInfo a été supprimé (structure plate)
 // Enrichissement appliqué même sans description
 assert(!/if \(parsed\.description\) \{[^}]*if \(parsed\.livraison/.test(pipeCodeDelivery.replace(/\s+/g, ' ')), 'pipeline: enrichissement delivery n\'est PAS conditionnel à parsed.description');
 // livraison=false par défaut quand attributes présent sans shipping

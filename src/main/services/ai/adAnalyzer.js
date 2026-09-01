@@ -59,7 +59,8 @@ function buildPrompt(ad) {
   }
   desc = desc.slice(0, MAX_DESC_CHARS);
   const meta = [];
-  if (ad.price != null) meta.push(`Prix de l'annonce: ${ad.price} €`);
+  const prix = ad.prix ?? ad.price;
+  if (prix != null) meta.push(`Prix de l'annonce: ${prix} €`);
   if (ad.category) meta.push(`Catégorie récupérée: ${ad.category}`);
   const sellerName = ad.vendeur?.nom ?? ad.seller;
   if (sellerName) meta.push(`Vendeur: ${sellerName}${(ad.vendeur?.isPro ?? ad.isPro) ? ' (Pro)' : ''}`);

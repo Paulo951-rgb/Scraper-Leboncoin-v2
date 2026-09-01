@@ -41,8 +41,8 @@ function buildAdHistory(allJobs) {
     const first = occurrences[0];
     const last = occurrences[occurrences.length - 1];
 
-    const priceFirst = typeof first.ad.price === 'number' ? first.ad.price : parseFloat(first.ad.price);
-    const priceLast = typeof last.ad.price === 'number' ? last.ad.price : parseFloat(last.ad.price);
+    const priceFirst = typeof (first.ad.prix ?? first.ad.price) === 'number' ? first.ad.prix ?? first.ad.price : parseFloat(first.ad.prix ?? first.ad.price);
+    const priceLast = typeof (last.ad.prix ?? last.ad.price) === 'number' ? last.ad.prix ?? last.ad.price : parseFloat(last.ad.prix ?? last.ad.price);
     let priceChange = null;
     if (Number.isFinite(priceFirst) && Number.isFinite(priceLast) && priceFirst !== priceLast) {
       const delta = priceLast - priceFirst;

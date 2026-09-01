@@ -56,7 +56,7 @@ function formatMs(ms) {
 function summarizeAds(ads) {
   if (!Array.isArray(ads)) return '(pas un tableau)';
   if (ads.length === 0) return '0 annonce';
-  const withPrice = ads.filter((a) => a.price != null && !isNaN(parseFloat(a.price))).length;
+  const withPrice = ads.filter((a) => (a.prix ?? a.price) != null && !isNaN(parseFloat(a.prix ?? a.price))).length;
   const withDesc = ads.filter((a) => a.description).length;
   const withUrl = ads.filter((a) => a.url).length;
   const withImages = ads.filter((a) => Array.isArray(a.images) && a.images.length > 0).length;

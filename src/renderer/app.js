@@ -1162,9 +1162,9 @@ function renderExplorerAds() {
   if (sortMode === 'DEAL_DESC') {
     filtered.sort((a, b) => (b.marketAnalysis?.deltaEur ?? -Infinity) - (a.marketAnalysis?.deltaEur ?? -Infinity));
   } else if (sortMode === 'PRICE_ASC') {
-    filtered.sort((a, b) => (a.price || 0) - (b.price || 0));
+    filtered.sort((a, b) => ((a.prix ?? a.price) || 0) - ((b.prix ?? b.price) || 0));
   } else if (sortMode === 'PRICE_DESC') {
-    filtered.sort((a, b) => (b.price || 0) - (a.price || 0));
+    filtered.sort((a, b) => ((b.prix ?? b.price) || 0) - ((a.prix ?? a.price) || 0));
   } else if (sortMode === 'RATING_DESC') {
     filtered.sort((a, b) => (noteOf(b) ?? -1) - (noteOf(a) ?? -1));
   } else if (sortMode === 'LIKES_DESC') {
