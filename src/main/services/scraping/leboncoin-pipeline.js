@@ -223,41 +223,29 @@ function firstDefined(...vals) {
  * Wrapper mince conservé pour les call sites existants.
  * Délègue au module adFields (source unique de vérité).
  */
-function extractCategory(raw) {
-  return adFields.firstDefined(
-    raw.category_name,
-    raw.category?.name,
-    raw.category?.label,
-    raw.category_label,
-    raw.category_name_json,
-    null
-  );
-}
-
 function extractDeliveryInfo(raw) {
   const t = adFields.extractTransaction(raw);
-  return { shipping: t.livraison, handDelivery: t.mainPropre, deliveryMode: t.mode, deliveryLabel: t.transporteur };
+  return { shipping: t.livraison, handDelivery: t.mainPropre };
 }
 
 function extractSellerRating(raw) {
   const s = adFields.extractSeller(raw);
-  return { sellerRating: s.note, sellerRatingCount: s.nombreAvis };
+  return { sellerRating: s.note, sellerRatingCount: null };
 }
 
 /**
- * Normalise une annonce brute Leboncoin en structure complète et stable.
+ * Normalise une annonce brute Leboncoin en structure PLATE et SIMPLE.
  *
- * Structure v2 (champs minimalistes — SCRAPING PUR, indépendant de l'IA) :
- *  - GÉNÉRAL     : id, title, url, price, category, subCategory
- *  - LOCALISATION: city, zipcode, department
- *  - VENDEUR     : nom, type, id, note, nombreAvis, urlProfil, ancienneteJours
- *  - TRANSACTION : livraison, mainPropre (séparés), transporteur
- *  - STATISTIQUES: likes
- *  - DATES       : publication, modification, scraping, statut
- *  - PRODUIT     : etat (État déclaré uniquement)
- *  - PHOTOS      : count, urls, principale
- *  - DESCRIPTION : originale (string), longueur
- *  - SCRAPING    : qualité (statut, champs récupérés, manquants)
+ * Structure v3 (SCRAPING PUR, indépendant de l'IA) :
+ *   id, title, url, prix,
+ *   city, zipcode,
+ *   vendeurNom, vendeurType, vendeurId, vendeurNote, vendeurUrlProfil, vendeurAncienneteJours,
+ *   livraison, mainPropre,
+ *   likes,
+ *   datePublication, dateModification, dateScraping,
+ *   etat,
+ *   photosCount, photosUrls,
+ *   description
  *
  * L'IA peut ensuite enrichir cette structure avec ses propres champs
  * (adAnalysis, marketAnalysis) SANS JAMAIS scraper Leboncoin elle-même.
@@ -265,122 +253,56 @@ function extractSellerRating(raw) {
 function normalizeAd(raw) {
   const id = adFields.firstDefined(raw.list_id, raw.id, raw.ad_id);
   const title = adFields.firstDefined(raw.subject, raw.title, raw.name);
-  const desc = adFields.extractDescription(raw);
+  const description = adFields.extractDescription(raw);
   const url = adFields.firstDefined(raw.url, id ? `https://www.leboncoin.fr/ad/${id}.htm` : null);
 
   const city = adFields.firstDefined(raw.location?.city, raw.location?.city_label, raw.city);
   const zipcode = adFields.firstDefined(raw.location?.zipcode, raw.location?.zip_code);
-  const department = adFields.zipcodeToDepartment(zipcode);
 
   const seller = adFields.extractSeller(raw);
   const transaction = adFields.extractTransaction(raw);
   const dates = adFields.extractDates(raw);
-  const priceObj = adFields.extractPrice(raw);
-  const stats = adFields.extractStats(raw);
+  const prix = adFields.extractPrice(raw);
+  const likes = adFields.extractLikes(raw);
   const photos = adFields.extractPhotos(raw);
   const etat = adFields.extractCondition(raw);
 
-  const category = extractCategory(raw);
-  const subCategory = adFields.firstDefined(
-    raw.subcategory_name,
-    raw.sub_category_name,
-    raw.subcategory,
-    raw?.category?.sub_category_name,
-    null
-  );
-
-  // Date de scraping = maintenant (date d'extraction par NOTRE logiciel).
-  // Toujours ISO string pour exploitation machine. Distincte de
-  // dates.publication (date à laquelle Leboncoin a publié l'annonce).
   const scrapedAt = new Date().toISOString();
 
-  const ad = {
-    // GÉNÉRAL
+  return {
     id: id != null ? String(id) : null,
     title: title || null,
     url: url || null,
-    category: category || null,
-    subCategory: subCategory || null,
-
-    // PRIX
-    prix: priceObj.valeur,
-    devise: priceObj.devise,
-
-    // LOCALISATION
+    prix,
     city: city || null,
     zipcode: zipcode || null,
-    department: department,
 
-    // VENDEUR
-    vendeur: {
-      nom: seller.nom,
-      type: seller.type,
-      id: seller.id,
-      note: seller.note,
-      nombreAvis: seller.nombreAvis,
-      urlProfil: seller.urlProfil,
-      ancienneteJours: seller.ancienneteJours,
-    },
+    vendeurNom: seller.nom,
+    vendeurType: seller.type,
+    vendeurId: seller.id,
+    vendeurNote: seller.note,
+    vendeurUrlProfil: seller.urlProfil,
+    vendeurAncienneteJours: seller.ancienneteJours,
 
-    // TRANSACTION
-    transaction: {
-      livraison: transaction.livraison,
-      mainPropre: transaction.mainPropre,
-      transporteur: transaction.transporteur,
-    },
+    livraison: transaction.livraison,
+    mainPropre: transaction.mainPropre,
 
-    // STATISTIQUES
-    statistiques: {
-      likes: stats.likes,
-    },
+    likes,
 
-    // DATES
-    dates: {
-      publication: dates.publication,
-      modification: dates.modification,
-      scraping: scrapedAt,
-      statut: dates.statut,
-    },
+    datePublication: dates.publication,
+    dateModification: dates.modification,
+    dateScraping: scrapedAt,
 
-    // PRODUIT (État déclaré uniquement)
-    produit: {
-      etat: etat,
-    },
+    etat,
 
-    // PHOTOS
-    photos: {
-      count: photos.count,
-      urls: photos.urls,
-      principale: photos.principale,
-    },
+    photosCount: photos.count,
+    photosUrls: photos.urls,
 
-    // DESCRIPTION
-    description: {
-      originale: desc.originale,
-      longueur: desc.longueur,
-    },
+    description,
 
-    // Champs legacy conservés pour rétro-compatibilité interne minimale
-    // (rendu de l'interface). Ne PAS les utiliser pour de nouveaux exports.
-    seller: seller.nom,
-    isPro: seller.isPro,
-    images: photos.urls,
-    main_image: photos.principale,
-    shipping: transaction.livraison,
-    handDelivery: transaction.mainPropre,
-    deliveryMode: transaction.livraison === true ? 'livraison'
-      : (transaction.mainPropre === true ? 'main_propre' : 'inconnu'),
-    deliveryLabel: transaction.transporteur,
-    sellerRating: seller.note,
-    sellerRatingCount: seller.nombreAvis,
-    date: dates.publication,
-
+    // Champs legacy pour rétro-compatibilité interne (renderer)
     raw,
   };
-
-  // Métadonnées de qualité du scraping (champs réellement présents).
-  ad.scraping = adFields.scraperQuality(ad);
-  return ad;
 }
 
 // Fusionne deux annonces en préservant les valeurs non-nulles : on ne remplace
@@ -499,7 +421,7 @@ class DescriptionEnricher {
   }
 
   parseHtmlDescription(html, adId) {
-    if (!html) return { description: null, livraison: null, mainPropre: null, category: null, note: null, nombreAvis: null, transporteur: null, etat: null };
+    if (!html) return { description: null, livraison: null, mainPropre: null, note: null, etat: null };
     const match = html.match(/<script\s+id="__NEXT_DATA__"\s+type="application\/json">\s*([\s\S]*?)\s*<\/script>/i);
     if (match && match[1]) {
       try {
@@ -510,38 +432,26 @@ class DescriptionEnricher {
         const body = target?.body || target?.description;
         const descriptionText = (typeof body === 'string') ? body : (body && typeof body.text === 'string' ? body.text : null);
 
-        // Extraction enrichie depuis la page de détail (qui contient souvent
-        // PLUS de données que la liste de recherche).
         const transaction = target ? adFields.extractTransaction(target) : null;
         const seller = target ? adFields.extractSeller(target) : null;
-        const photos = target ? adFields.extractPhotos(target) : null;
-        const dates = target ? adFields.extractDates(target) : null;
         const etat = target ? adFields.extractCondition(target) : null;
 
         return {
           description: descriptionText ? cleanText(descriptionText) : null,
           livraison: transaction ? transaction.livraison : null,
           mainPropre: transaction ? transaction.mainPropre : null,
-          transporteur: transaction ? transaction.transporteur : null,
-          category: target ? extractCategory(target) : null,
           note: seller ? seller.note : null,
-          nombreAvis: seller ? seller.nombreAvis : null,
-          sellerName: seller ? seller.nom : null,
-          sellerType: seller ? seller.type : null,
           etat,
-          publicationDate: dates ? dates.publication : null,
-          photoUrls: photos ? photos.urls : null,
         };
       } catch { /* Ignorer */ }
     }
-    return { description: null, livraison: null, mainPropre: null, category: null, note: null, nombreAvis: null, transporteur: null, etat: null };
+    return { description: null, livraison: null, mainPropre: null, note: null, etat: null };
   }
 
   async enrichAll(ads, writeOutputs) {
-    // Cible : annonces SANS description (ou description vide) et qui ont une URL
-    const targets = ads.filter((a) => a.url && !(a.description && a.description.originale));
+    const targets = ads.filter((a) => a.url && !a.description);
     const noUrlCount = ads.filter((a) => !a.url).length;
-    const alreadyHasDesc = ads.filter((a) => a.description && a.description.originale).length;
+    const alreadyHasDesc = ads.filter((a) => a.description).length;
     if (targets.length === 0) {
       this.logger.info('Toutes les annonces ont déjà une description !');
       this.logger.debug(`[DescriptionEnricher] Rien à faire : ${alreadyHasDesc} avec description, ${noUrlCount} sans URL.`);
@@ -637,37 +547,19 @@ class DescriptionEnricher {
         if (res && res.html) {
           const parsed = this.parseHtmlDescription(res.html, ad.id);
           // Enrichissement des champs extraits de la page de détail.
-          // IMPORTANT : on applique les infos de livraison (livraison, mainPropre)
-          // MÊME si la description n'a pas été trouvée — sur la page de détail,
-          // les __NEXT_DATA__ contiennent souvent les attributs de livraison
-          // dans un objet séparé du body.
           let enriched = false;
-          if (parsed.livraison != null && ad.transaction?.livraison == null) { ad.transaction.livraison = parsed.livraison; enriched = true; }
-          if (parsed.mainPropre != null && ad.transaction?.mainPropre == null) { ad.transaction.mainPropre = parsed.mainPropre; enriched = true; }
-          if (parsed.transporteur && !ad.transaction?.transporteur) { ad.transaction.transporteur = parsed.transporteur; enriched = true; }
-          if (parsed.category && !ad.category) { ad.category = parsed.category; enriched = true; }
-          if (parsed.note != null && ad.vendeur?.note == null) { ad.vendeur.note = parsed.note; enriched = true; }
-          if (parsed.nombreAvis != null && ad.vendeur?.nombreAvis == null) { ad.vendeur.nombreAvis = parsed.nombreAvis; enriched = true; }
-          if (parsed.sellerName && !ad.vendeur?.nom) { ad.vendeur.nom = parsed.sellerName; enriched = true; }
-          if (parsed.sellerType && !ad.vendeur?.type) { ad.vendeur.type = parsed.sellerType; enriched = true; }
-          if (parsed.etat && !ad.produit?.etat) { ad.produit.etat = parsed.etat; enriched = true; }
-          if (parsed.publicationDate && !ad.dates?.publication) { ad.dates.publication = parsed.publicationDate; enriched = true; }
-          if (Array.isArray(parsed.photoUrls) && parsed.photoUrls.length > 0 && ad.photos?.count === 0) {
-            ad.photos = { count: parsed.photoUrls.length, urls: parsed.photoUrls, principale: parsed.photoUrls[0] };
-            enriched = true;
-          }
+          if (parsed.livraison != null && ad.livraison == null) { ad.livraison = parsed.livraison; enriched = true; }
+          if (parsed.mainPropre != null && ad.mainPropre == null) { ad.mainPropre = parsed.mainPropre; enriched = true; }
+          if (parsed.note != null && ad.vendeurNote == null) { ad.vendeurNote = parsed.note; enriched = true; }
+          if (parsed.etat && !ad.etat) { ad.etat = parsed.etat; enriched = true; }
 
           if (parsed.description) {
-            // Remplace la description normalisée par la version détaillée.
-            // Garantit qu'on stocke une STRING (corrige le bug "[object Object]").
             const text = String(parsed.description);
-            ad.description = { originale: text, longueur: text.length };
+            ad.description = text;
             successCount++;
             this.consecutiveBlocks = 0;
             this.logger.info(`✅ [${done}/${targets.length}] ${(ad.title || '').slice(0, 50)}`);
           } else if (enriched) {
-            // Pas de description, mais on a quand même enrichi des attributs
-            // (livraison, vendeur, état, etc.) depuis les __NEXT_DATA__.
             successCount++;
             this.consecutiveBlocks = 0;
             this.logger.info(`✅ [${done}/${targets.length}] ${(ad.title || '').slice(0, 50)} (attributs enrichis, description absente)`);
@@ -761,125 +653,76 @@ class DescriptionEnricher {
 // EXPORTATION DES FICHIERS
 // -------------------------------------------------------------------------
 
+function _fmtDate(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return null;
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
 function _boolTri(v) {
   if (v === true) return 'OUI';
   if (v === false) return 'NON';
   return 'null';
 }
 
-function _fmtDate(iso) {
-  if (!iso) return null;
-  const d = new Date(iso);
-  if (!Number.isFinite(d.getTime())) return null;
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-}
-
-function _fmtIso(iso) {
-  if (!iso) return '-';
-  const d = new Date(iso);
-  if (!Number.isFinite(d.getTime())) return iso;
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-}
-
 /**
- * Bloc TXT lisible d'une annonce. Structure FIXE demandée par l'utilisateur :
- *   GÉNÉRAL (ID, Titre, URL, Prix, Catégorie, Sous-catégorie, Ville, CP, Dept)
- *   VENDEUR (Nom, Type, ID, Note, Avis, URL profil, Ancienneté)
- *   TRANSACTION (Livraison, Main propre) — INDÉPENDANTS
- *   STATISTIQUES (Likes)
- *   DATES (Publication, Modification, Scraping, Statut)
- *   PRODUIT (État déclaré — uniquement)
- *   PHOTOS (Nombre, Principale, URLs)
- *   DESCRIPTION (Longueur + texte original)
- *   QUALITÉ DU SCRAPING
- * Toute valeur absente est `null`. Aucune invention.
+ * Bloc TXT lisible d'une annonce. Structure SIMPLE et COMPACTE demandée :
+ *   ID, Titre, URL, Prix, Ville, Code postal
+ *   Nom, Type, ID vendeur, Note vendeur, URL profil, Date de création du compte
+ *   Livraison, Main propre, Likes
+ *   Date publication / dernière modification, Date scraping
+ *   État déclaré
+ *   Nombre + Photos
+ *   DESCRIPTION
  */
 function toReadableBlock(ad, index) {
-  const photos = ad.photos || {};
-  const urls = Array.isArray(photos.urls) ? photos.urls : (Array.isArray(ad.images) ? ad.images : []);
+  const urls = Array.isArray(ad.photosUrls) ? ad.photosUrls : [];
   const imgLines = urls.length > 0
     ? urls.map((img, i) => `  - Photo ${i + 1} : ${img}`).join('\n')
     : '  - Aucune photo';
 
-  const note = ad.vendeur?.note;
-  const nbAvis = ad.vendeur?.nombreAvis;
-  const ratingLine = note != null
-    ? `Note vendeur    : ${note}/5${nbAvis != null ? ` (${nbAvis} avis)` : ''}`
-    : 'Note vendeur    : null';
+  const note = ad.vendeurNote;
+  const noteLine = note != null ? `${note}/5` : 'null';
 
-  const livraison = ad.transaction?.livraison;
-  const mainPropre = ad.transaction?.mainPropre;
-  const transporteur = ad.transaction?.transporteur;
-  const livraisonLine = transporteur && livraison === true
-    ? `Livraison          : OUI (${transporteur})`
-    : `Livraison          : ${_boolTri(livraison)}`;
-  const mainPropreLine = `Main propre        : ${_boolTri(mainPropre)}`;
-
-  // Description : GARANTIR qu'on n'affiche JAMAIS [object Object].
-  // Le texte doit être une string (jamais un objet).
-  let descText = null;
-  if (ad.description && typeof ad.description === 'object' && typeof ad.description.originale === 'string') {
-    descText = ad.description.originale;
-  } else if (typeof ad.description === 'string') {
-    descText = ad.description;
-  }
-  const descLongueur = (ad.description && typeof ad.description === 'object' && typeof ad.description.longueur === 'number')
-    ? ad.description.longueur
-    : (descText ? descText.length : 0);
+  const datePub = _fmtDate(ad.datePublication);
+  const dateMod = _fmtDate(ad.dateModification);
+  const datePubModLine = (datePub && dateMod && datePub !== dateMod)
+    ? `${datePub} / ${dateMod}`
+    : (datePub || 'null');
 
   const lines = [
     `===== ANNONCE ${index + 1} =====`,
     '',
-    'GÉNÉRAL',
     `ID                 : ${ad.id ?? 'null'}`,
     `Titre              : ${ad.title ?? 'null'}`,
     `URL                : ${ad.url ?? 'null'}`,
     `Prix               : ${ad.prix != null ? ad.prix + ' €' : 'null'}`,
-    `Catégorie          : ${ad.category ?? 'null'}`,
-    `Sous-catégorie     : ${ad.subCategory ?? 'null'}`,
     `Ville              : ${ad.city ?? 'null'}`,
     `Code postal        : ${ad.zipcode ?? 'null'}`,
-    `Département        : ${ad.department ?? 'null'}`,
     '',
-    'VENDEUR',
-    `Nom                : ${ad.vendeur?.nom ?? ad.seller ?? 'null'}`,
-    `Type               : ${ad.vendeur?.type ?? (ad.isPro ? 'pro' : 'particulier')}`,
-    `ID vendeur         : ${ad.vendeur?.id ?? 'null'}`,
-    ratingLine,
-    `URL profil         : ${ad.vendeur?.urlProfil ?? 'null'}`,
-    `Ancienneté (jours) : ${ad.vendeur?.ancienneteJours ?? 'null'}`,
+    `Nom                : ${ad.vendeurNom ?? 'null'}`,
+    `Type               : ${ad.vendeurType ?? 'null'}`,
+    `ID vendeur         : ${ad.vendeurId ?? 'null'}`,
+    `Note vendeur       : ${noteLine}`,
+    `URL profil         : ${ad.vendeurUrlProfil ?? 'null'}`,
+    `Date de création du compte : ${ad.vendeurAncienneteJours ?? 'null'}`,
     '',
-    'TRANSACTION',
-    livraisonLine,
-    mainPropreLine,
+    `Livraison          : ${_boolTri(ad.livraison)}`,
+    `Main propre        : ${_boolTri(ad.mainPropre)}`,
+    `Likes de l'annonce : ${ad.likes ?? 'null'}`,
     '',
-    'STATISTIQUES',
-    `Likes              : ${ad.statistiques?.likes ?? 'null'}`,
+    `Date publication / dernière modification : ${datePubModLine}`,
+    `Date scraping                            : ${_fmtDate(ad.dateScraping) ?? 'null'}`,
     '',
-    'DATES',
-    `Date publication   : ${_fmtIso(ad.dates?.publication) ?? 'null'}`,
-    `Date modification  : ${_fmtIso(ad.dates?.modification) ?? 'null'}`,
-    `Date scraping      : ${_fmtIso(ad.dates?.scraping) ?? 'null'}`,
-    `Statut annonce     : ${ad.dates?.statut ?? 'null'}`,
+    `État déclaré       : ${ad.etat ?? 'null'}`,
     '',
-    'PRODUIT',
-    `État déclaré       : ${ad.produit?.etat ?? 'null'}`,
-    '',
-    'PHOTOS',
     `Nombre             : ${urls.length}`,
-    `Photo principale   : ${urls[0] ?? 'null'}`,
     imgLines,
     '',
-    'DESCRIPTION',
-    `Longueur           : ${descLongueur} caractères`,
-    descText || '(non disponible)',
-    '',
-    'QUALITÉ DU SCRAPING',
-    `Statut             : ${ad.scraping?.statut ?? 'unknown'}`,
-    `Champs récupérés   : ${ad.scraping?.champsRecuperes ?? 0}/${ad.scraping?.champsTotal ?? 0}`,
-    `Champs manquants   : ${(ad.scraping?.champsManquants || []).join(', ') || 'aucun'}`,
+    `DESCRIPTION :`,
+    ad.description || '(non disponible)',
     '',
     '========================',
     '',
@@ -892,16 +735,9 @@ function writeOutputsFactory(outDir, opts) {
   const txtPath = path.join(outDir, 'annonces.txt');
 
   return function writeOutputs(ads) {
-    // Rafraîchit la date de scraping et la qualité du scraping pour chaque
-    // annonce avant l'écriture (les timestamps doivent correspondre à
-    // l'écriture disque la plus récente).
     for (const ad of ads) {
       if (ad && typeof ad === 'object') {
-        if (!ad.dates) ad.dates = {};
-        ad.dates.scraping = new Date().toISOString();
-        // Recalcule la qualité : certains champs peuvent avoir été enrichis
-        // par le DescriptionEnricher (description, livraison, vendeur...).
-        ad.scraping = adFields.scraperQuality(ad);
+        if (!ad.dateScraping) ad.dateScraping = new Date().toISOString();
       }
     }
     writeWithChecksum(jsonPath, ads, null, 2);

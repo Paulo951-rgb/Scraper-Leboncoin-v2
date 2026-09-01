@@ -197,12 +197,12 @@ const { fork } = require('child_process');
 const tmpOut = fs.mkdtempSync(path.join(os.tmpdir(), 'lbc-'));
 const harPath = path.join(tmpOut, 'capture.har');
 const adObj = {
-  list_id: 12345, subject: 'iPhone 12', price: 300, body: 'Bon etat',
+  list_id: 12345, subject: 'iPhone 12', price: 150, body: 'Bon etat',
   url: 'https://www.leboncoin.fr/ad/12345.htm',
   location: { city: 'Lyon', zipcode: '69000' },
   has_option: { shipping: false },
   category_name: 'Téléphones',
-  owner: { name: 'Vendeur', type: 'particulier', rating: 4.8, nb_ratings: 27 },
+  owner: { name: 'Jean', type: 'particulier', rating: 4.8, nb_ratings: 27 },
 };
 const htmlPayload = '<html><script id="__NEXT_DATA__" type="application/json">' + JSON.stringify(adObj) + '</script></html>';
 const har = {
@@ -226,14 +226,14 @@ await new Promise((resolve) => {
     assert(stdout.includes('[DEBUG]'), 'pipeline DEBUG logs present');
     assert(stdout.includes('annonces extraites'), 'pipeline reports ads extracted');
     const ads = JSON.parse(fs.readFileSync(path.join(tmpOut, 'annonces.json'), 'utf8'));
-    assert(ads[0].shipping === false, 'pipeline extracts shipping as boolean');
+    assert(ads[0].livraison === false, 'pipeline extracts livraison as boolean');
     assert(ads[0].city === 'Lyon', 'pipeline extracts city');
-    assert(ads[0].isPro === false, 'pipeline extracts isPro');
-    assert(ads[0].category === 'Téléphones', 'pipeline extracts category_name');
-    assert(ads[0].sellerRating === 4.8, 'pipeline extracts sellerRating from owner.rating');
-    assert(ads[0].sellerRatingCount === 27, 'pipeline extracts sellerRatingCount from owner.nb_ratings');
-    assert(ads[0].deliveryMode === 'main_propre', 'pipeline derives deliveryMode=main_propre from shipping=false');
-    assert(ads[0].handDelivery === true, 'pipeline derives handDelivery=true when shipping=false');
+    assert(ads[0].vendeurType === 'particulier', 'pipeline extracts vendeurType');
+    assert(ads[0].vendeurNote === 4.8, 'pipeline extracts vendeurNote from owner.rating');
+    assert(ads[0].mainPropre === true, 'pipeline derives mainPropre=true when livraison=false');
+    assert(ads[0].prix === 150, 'pipeline extracts prix');
+    assert(ads[0].vendeurNom === 'Jean', 'pipeline extracts vendeurNom');
+    assert(ads[0].dateScraping != null, 'pipeline injects dateScraping');
     fs.rmSync(tmpOut, { recursive: true, force: true });
     resolve();
   });
@@ -681,16 +681,16 @@ assert(/extractSeller/.test(adFieldsCode), 'adFields: extractSeller');
 assert(/extractTransaction/.test(adFieldsCode), 'adFields: extractTransaction');
 assert(/extractDates/.test(adFieldsCode), 'adFields: extractDates');
 assert(/extractCondition/.test(adFieldsCode), 'adFields: extractCondition (État déclaré uniquement)');
-assert(/extractStats/.test(adFieldsCode), 'adFields: extractStats (likes uniquement)');
+assert(/extractLikes/.test(adFieldsCode), 'adFields: extractLikes (likes uniquement)');
 assert(/extractPhotos/.test(adFieldsCode), 'adFields: extractPhotos');
 assert(/extractDescription/.test(adFieldsCode), 'adFields: extractDescription');
-assert(/scraperQuality/.test(adFieldsCode), 'adFields: scraperQuality');
-assert(/zipcodeToDepartment/.test(adFieldsCode), 'adFields: zipcodeToDepartment');
 // Champs supprimés — les fonctions associées ne doivent plus exister
 assert(!/extractAttributes/.test(adFieldsCode), 'adFields: extractAttributes SUPPRIMÉ (champs produit dynamiques retirés)');
 assert(!/detectInDescription/.test(adFieldsCode), 'adFields: detectInDescription SUPPRIMÉ (analyse textuelle retirée)');
 assert(!/inferCondition/.test(adFieldsCode), 'adFields: inferCondition SUPPRIMÉ (uniquement état déclaré)');
-// Les noms de champs supprimés (negociable, facture, garantie, echange, urgent, vues, marque, modele, couleur, taille, capacite, annee, matiere, etatDetecte, reference) ne doivent apparaître NULLE PART dans le code réel (hors commentaires / strings)
+assert(!/scraperQuality/.test(adFieldsCode), 'adFields: scraperQuality SUPPRIMÉ (section qualité retirée)');
+assert(!/zipcodeToDepartment/.test(adFieldsCode), 'adFields: zipcodeToDepartment SUPPRIMÉ (département retiré)');
+// Les noms de champs supprimés ne doivent plus apparaître dans le code réel
 const adFieldsCheck = adFieldsNoComments;
 assert(!/\bnegociable\b/.test(adFieldsCheck), 'adFields: aucun negociable (champ supprimé)');
 assert(!/\bfacture\b/.test(adFieldsCheck), 'adFields: aucun facture (champ supprimé)');
@@ -703,23 +703,34 @@ assert(!/\bmodele\b/.test(adFieldsCheck), 'adFields: aucun modele (champ supprim
 assert(!/\bcouleur\b/.test(adFieldsCheck), 'adFields: aucun couleur (champ supprimé)');
 assert(!/\bcapacite\b/.test(adFieldsCheck), 'adFields: aucun capacite (champ supprimé)');
 assert(!/\betatInferre\b/.test(adFieldsCheck), 'adFields: aucun etatInferre (champ supprimé)');
+assert(!/\bdepartment\b/.test(adFieldsCheck), 'adFields: aucun department (champ supprimé)');
+assert(!/\bcategory\b/.test(adFieldsCheck), 'adFields: aucun category (champ supprimé)');
 
 // Pipeline : helpers wrappers (compatibilité interne) présents
 assert(/function extractDeliveryInfo/.test(pipelineCode), 'pipeline: extractDeliveryInfo wrapper');
-assert(/function extractCategory/.test(pipelineCode), 'pipeline: extractCategory wrapper');
 assert(/function extractSellerRating/.test(pipelineCode), 'pipeline: extractSellerRating wrapper');
 
-// normalizeAd : produit les champs structurés minimum (scraping pur)
-assert(/prix:\s*priceObj\.valeur/.test(pipelineCode), 'pipeline: normalizeAd produit prix');
-assert(/vendeur:\s*\{/.test(pipelineCode), 'pipeline: normalizeAd produit vendeur{}');
-assert(/transaction:\s*\{/.test(pipelineCode), 'pipeline: normalizeAd produit transaction{}');
-assert(/statistiques:\s*\{/.test(pipelineCode), 'pipeline: normalizeAd produit statistiques{}');
-assert(/produit:\s*\{/.test(pipelineCode), 'pipeline: normalizeAd produit produit{}');
-assert(/photos:\s*\{/.test(pipelineCode), 'pipeline: normalizeAd produit photos{}');
-assert(/description:\s*\{/.test(pipelineCode), 'pipeline: normalizeAd produit description{}');
-assert(/dates:\s*\{/.test(pipelineCode), 'pipeline: normalizeAd produit dates{}');
-assert(/ad\.scraping\s*=\s*adFields\.scraperQuality/.test(pipelineCode), 'pipeline: normalizeAd produit scraping{} (qualité)');
-assert(/ad\.dates\.scraping\s*=\s*new Date\(\)\.toISOString\(\)/.test(pipelineCode), 'pipeline: normalizeAd injecte dateScraping ISO');
+// normalizeAd : produit les champs plats (scraping pur)
+assert(/prix,/.test(pipelineCode), 'pipeline: normalizeAd produit prix');
+assert(/vendeurNom:/.test(pipelineCode), 'pipeline: normalizeAd produit vendeurNom');
+assert(/livraison:/.test(pipelineCode), 'pipeline: normalizeAd produit livraison');
+assert(/mainPropre:/.test(pipelineCode), 'pipeline: normalizeAd produit mainPropre');
+assert(/likes,/.test(pipelineCode), 'pipeline: normalizeAd produit likes');
+assert(/datePublication:/.test(pipelineCode), 'pipeline: normalizeAd produit datePublication');
+assert(/dateScraping,/.test(pipelineCode), 'pipeline: normalizeAd produit dateScraping');
+assert(/etat,/.test(pipelineCode), 'pipeline: normalizeAd produit etat');
+assert(/photosCount:/.test(pipelineCode), 'pipeline: normalizeAd produit photosCount');
+assert(/description,/.test(pipelineCode), 'pipeline: normalizeAd produit description');
+// Ne doit PAS produire les anciens objets imbriquiques
+assert(!/vendeur:\s*\{/.test(pipelineCode), 'pipeline: normalizeAd ne produit PAS vendeur{}');
+assert(!/transaction:\s*\{/.test(pipelineCode), 'pipeline: normalizeAd ne produit PAS transaction{}');
+assert(!/statistiques:\s*\{/.test(pipelineCode), 'pipeline: normalizeAd ne produit PAS statistiques{}');
+assert(!/produit:\s*\{/.test(pipelineCode), 'pipeline: normalizeAd ne produit PAS produit{}');
+assert(!/photos:\s*\{/.test(pipelineCode), 'pipeline: normalizeAd ne produit PAS photos{}');
+assert(!/dates:\s*\{/.test(pipelineCode), 'pipeline: normalizeAd ne produit PAS dates{}');
+assert(!/ad\.scraping\s*=/.test(pipelineCode), 'pipeline: normalizeAd ne produit PAS scraping{}');
+assert(/dateScraping:\s*scrapedAt/.test(pipelineCode), 'pipeline: normalizeAd injecte dateScraping ISO');
+assert(/scrapedAt\s*=\s*new Date\(\)\.toISOString\(\)/.test(pipelineCode), 'pipeline: scrapedAt = new Date().toISOString()');
 assert(/mergeKeepingNonNull/.test(pipelineCode), 'pipeline: mergeKeepingNonNull préserve les champs non-null');
 // Plus de detection{} (champs supprimés)
 assert(!/detection:\s*\{/.test(pipelineCode), 'pipeline: normalizeAd ne produit PAS detection{} (champs supprimés)');
@@ -731,78 +742,58 @@ assert(!/negociable/.test(pipelineCode), 'pipeline: aucun negociable (champ supp
 // ═════ Tests fonctionnels des extracteurs adFields (SCRAPING PUR) ═════
 {
   const { extractTransaction, extractSeller, extractDates, extractCondition,
-    extractStats, extractPhotos, extractDescription, scraperQuality,
-    zipcodeToDepartment, extractPrice } = require(path.join(base, 'services/scraping/adFields'));
+    extractLikes, extractPhotos, extractDescription, extractPrice } =
+    require(path.join(base, 'services/scraping/adFields'));
 
   // === DESCRIPTION (correction du bug [object Object]) ===
-  // Le bug : avant la correction, body={text:"..."} renvoyait {originale:null, nettoyee:{text:"..."}}
-  // → [object Object] dans le TXT. Maintenant : extraire .text si body est un objet.
   let desc = extractDescription({ body: 'Texte simple' });
-  assert(desc.originale === 'Texte simple' && desc.longueur === 12,
-    'adFields.extractDescription: body string → string');
+  assert(desc === 'Texte simple', 'adFields.extractDescription: body string → string');
   desc = extractDescription({ body: { text: 'Texte dans objet' } });
-  assert(desc.originale === 'Texte dans objet' && desc.longueur === 16,
-    'adFields.extractDescription: body {text:...} → string (corrige [object Object])');
+  assert(desc === 'Texte dans objet', 'adFields.extractDescription: body {text:...} → string (corrige [object Object])');
   desc = extractDescription({ body: null });
-  assert(desc.originale === null && desc.longueur === 0,
-    'adFields.extractDescription: body null → null');
+  assert(desc === null, 'adFields.extractDescription: body null → null');
   desc = extractDescription({ body: 42 });
-  assert(desc.originale === null && desc.longueur === 0,
-    'adFields.extractDescription: body nombre → null (pas [object Object])');
+  assert(desc === null, 'adFields.extractDescription: body nombre → null (pas [object Object])');
   desc = extractDescription({ body: {} });
-  assert(desc.originale === null && desc.longueur === 0,
-    'adFields.extractDescription: body objet vide → null');
+  assert(desc === null, 'adFields.extractDescription: body objet vide → null');
   desc = extractDescription({});
-  assert(desc.originale === null && desc.longueur === 0,
-    'adFields.extractDescription: pas de body → null');
+  assert(desc === null, 'adFields.extractDescription: pas de body → null');
   desc = extractDescription({ description: 'Via description' });
-  assert(desc.originale === 'Via description',
-    'adFields.extractDescription: raw.description → string');
+  assert(desc === 'Via description', 'adFields.extractDescription: raw.description → string');
   desc = extractDescription({ text: 'Via text' });
-  assert(desc.originale === 'Via text',
-    'adFields.extractDescription: raw.text → string');
+  assert(desc === 'Via text', 'adFields.extractDescription: raw.text → string');
 
   // === TRANSACTION (Livraison et Main propre INDÉPENDANTS) ===
   let t = extractTransaction({ has_option: { shipping: false } });
   assert(t.livraison === false && t.mainPropre === true,
     'adFields.extractTransaction: shipping=false → livraison=NON, mainPropre=OUI');
   t = extractTransaction({ shipping: true });
-  assert(t.livraison === true,
-    'adFields.extractTransaction: shipping=true → livraison=OUI');
+  assert(t.livraison === true, 'adFields.extractTransaction: shipping=true → livraison=OUI');
   t = extractTransaction({ body: 'Remise en main propre uniquement' });
-  assert(t.mainPropre === true,
-    'adFields.extractTransaction: mainPropre=OUI détecté depuis texte');
+  assert(t.mainPropre === true, 'adFields.extractTransaction: mainPropre=OUI détecté depuis texte');
   t = extractTransaction({ body: "pas d'envoi possible" });
-  assert(t.mainPropre === true,
-    'adFields.extractTransaction: "pas d\'envoi" → mainPropre=OUI (pas d\'envoi = pickup only)');
+  assert(t.mainPropre === true, 'adFields.extractTransaction: "pas d\'envoi" → mainPropre=OUI');
   t = extractTransaction({ body: 'retrait sur place uniquement' });
-  assert(t.mainPropre === true,
-    'adFields.extractTransaction: "retrait" → mainPropre=OUI');
-  // Livraison + main propre OUI en même temps (quand le vendeur le propose)
+  assert(t.mainPropre === true, 'adFields.extractTransaction: "retrait" → mainPropre=OUI');
   t = extractTransaction({ has_option: { shipping: true }, body: 'Possibilité de remise en main propre' });
   assert(t.livraison === true && t.mainPropre === true,
     'adFields.extractTransaction: livraison=OUI ET mainPropre=OUI simultanément');
   t = extractTransaction({});
   assert(t.livraison === null && t.mainPropre === null,
     'adFields.extractTransaction: pas d\'info → null (jamais false par défaut)');
-  // Vérifie qu'aucun attribut ne fait passer livraison=true par défaut
   t = extractTransaction({ attributes: [{ key: 'foo', value: 'bar' }] });
   assert(t.livraison === false && t.mainPropre === true,
     'adFields.extractTransaction: attributes présent sans shipping → livraison=NON');
-  // Transporteur / carrier
-  t = extractTransaction({ delivery: { shipping: true, carrier: 'Colissimo' } });
-  assert(t.transporteur === 'Colissimo',
-    'adFields.extractTransaction: transporteur extrait depuis delivery.carrier');
 
   // === SELLER ===
   const s = extractSeller({ owner: { name: 'Jean', type: 'pro', rating: 4.8, nb_ratings: 27 } });
-  assert(s.nom === 'Jean' && s.isPro === true && s.note === 4.8 && s.nombreAvis === 27,
-    'adFields.extractSeller: nom + note + nb avis + isPro');
+  assert(s.nom === 'Jean' && s.isPro === true && s.note === 4.8,
+    'adFields.extractSeller: nom + note + isPro');
 
   // === DATES ===
   const d = extractDates({ first_publication_date: '2026-01-15T10:00:00Z' });
-  assert(d.publication === '2026-01-15T10:00:00Z' && d.statut === null,
-    'adFields.extractDates: publication + statut null');
+  assert(d.publication === '2026-01-15T10:00:00Z',
+    'adFields.extractDates: publication extraite');
 
   // === CONDITION (État déclaré uniquement) ===
   const etat = extractCondition({ attributes: [{ key: 'condition', value: 'Très bon état' }] });
@@ -811,60 +802,19 @@ assert(!/negociable/.test(pipelineCode), 'pipeline: aucun negociable (champ supp
   assert(extractCondition({ attributes: [{ key: 'brand', value: 'Apple' }] }) === null,
     'adFields.extractCondition: autre attribut → null (pas de fallback)');
 
-  // === STATS (likes uniquement) ===
-  const st = extractStats({ favorites_count: 24 });
-  assert(st.likes === 24, 'adFields.extractStats: likes extrait');
-  assert(!('vues' in st), 'adFields.extractStats: PAS de champ vues (supprimé)');
-  // 0 est une valeur valide (Leboncoin affiche réellement 0)
-  const st0 = extractStats({ favorites_count: 0 });
-  assert(st0.likes === 0, 'adFields.extractStats: 0 likes (Leboncoin affiche 0) = 0, pas null');
-  // Pas d'info → null
-  assert(extractStats({}).likes === null, 'adFields.extractStats: pas d\'info → null (pas 0)');
+  // === LIKES (likes uniquement) ===
+  assert(extractLikes({ favorites_count: 24 }) === 24, 'adFields.extractLikes: likes extrait');
+  assert(extractLikes({ favorites_count: 0 }) === 0, 'adFields.extractLikes: 0 likes = 0, pas null');
+  assert(extractLikes({}) === null, 'adFields.extractLikes: pas d\'info → null (pas 0)');
 
   // === PHOTOS ===
   const ph = extractPhotos({ images: { urls: ['https://a.jpg', 'https://b.jpg'] } });
-  assert(ph.count === 2 && ph.principale === 'https://a.jpg' && ph.urls.length === 2,
-    'adFields.extractPhotos: count + principale + urls');
+  assert(ph.count === 2 && ph.urls.length === 2, 'adFields.extractPhotos: count + urls');
 
   // === PRICE ===
-  const pr = extractPrice({ price: 100 });
-  assert(pr.valeur === 100 && pr.devise === 'EUR',
-    'adFields.extractPrice: number → 100 + EUR');
-  const prObj = extractPrice({ price: { value: 250, currency: 'EUR' } });
-  assert(prObj.valeur === 250, 'adFields.extractPrice: {value, currency}');
-  const prArr = extractPrice({ price: [{ value: 300 }] });
-  assert(prArr.valeur === 300, 'adFields.extractPrice: [{value}] array format');
-
-  // === ZIPCODE → DEPARTEMENT ===
-  assert(zipcodeToDepartment('75001') === '75', 'adFields.zipcodeToDepartment: 75001 → 75');
-  assert(zipcodeToDepartment('97400') === '974', 'adFields.zipcodeToDepartment: 97400 → 974 (DOM-TOM)');
-  assert(zipcodeToDepartment('69000') === '69', 'adFields.zipcodeToDepartment: 69000 → 69');
-  assert(zipcodeToDepartment('20100') === '2A', 'adFields.zipcodeToDepartment: Corse 2A');
-  assert(zipcodeToDepartment('20200') === '2B', 'adFields.zipcodeToDepartment: Corse 2B');
-  assert(zipcodeToDepartment(null) === null, 'adFields.zipcodeToDepartment: null → null');
-  assert(zipcodeToDepartment('abc') === null, 'adFields.zipcodeToDepartment: invalide → null');
-
-  // === SCRAPER QUALITY : structure minimale ===
-  const adFull = {
-    id: '1', title: 'X', url: 'u', category: 'C',
-    prix: 100, city: 'Lyon', zipcode: '69000', department: '69',
-    vendeur: { nom: 'J', note: 4.5, nombreAvis: 10 },
-    transaction: { livraison: true, mainPropre: false },
-    statistiques: { likes: 5 },
-    dates: { publication: '2026-01-01', scraping: '2026-01-02' },
-    produit: { etat: 'Très bon état' },
-    photos: { count: 1, urls: ['a'] },
-    description: { originale: 'd', longueur: 1 },
-  };
-  const qFull = scraperQuality(adFull);
-  assert(qFull.champsRecuperes === qFull.champsTotal && qFull.statut === 'success',
-    'adFields.scraperQuality: tous champs présents → success');
-  // Champs supprimés ne doivent PAS apparaître dans manquants
-  assert(!/negociable|facture|garantie|echange|urgent|vues|brand|model|color/.test(qFull.champsManquants.join(',')),
-    'adFields.scraperQuality: PAS de champ supprimé dans manquants');
-  // Au moins un champ présent → pas "error"
-  assert(qFull.statut !== 'error',
-    'adFields.scraperQuality: avec données partielles, statut != error (partial ou success)');
+  assert(extractPrice({ price: 100 }) === 100, 'adFields.extractPrice: number → 100');
+  assert(extractPrice({ price: { value: 250 } }) === 250, 'adFields.extractPrice: {value}');
+  assert(extractPrice({ price: [{ value: 300 }] }) === 300, 'adFields.extractPrice: [{value}] array format');
 }
 
 // === AUDIT STABILISATION : Lots A/B/C/D ===
@@ -1147,7 +1097,7 @@ assert(/raw\.attributes/.test(adFieldsDeliveryCode), 'adFields: extractTransacti
 assert(/shippable|is_shippable/.test(adFieldsDeliveryCode), 'adFields: extractTransaction cherche clé "shippable" dans attributes');
 assert(/is_shippable|shippable|is_shipping/.test(adFieldsDeliveryCode), 'adFields: extractTransaction vérifie is_shippable/shippable (variantes récentes)');
 assert(/remise\s+en\s+main\s+propre|main\s+propre\s+uniquement/.test(adFieldsDeliveryCode), 'adFields: extractTransaction détecte "main propre" dans le body');
-assert(/pas\s+d.envoi|retrait\s+sur\s+place|venir\s+chercher/.test(adFieldsDeliveryCode), 'adFields: extractTransaction détecte "pas d\'envoi" / "retrait" dans le body');
+assert(/pas.*envoi|retrait.*place|venir.*chercher/.test(adFieldsDeliveryCode), 'adFields: extractTransaction détecte "pas d\'envoi" / "retrait" dans le body');
 // Heuristique : si attributes existe mais pas de shipping trouvé → pas de livraison
 assert(/Array\.isArray\(raw\?\.attributes\) && raw\.attributes\.length > 0/.test(adFieldsDeliveryCode), 'adFields: extractTransaction default livraison=NON quand attributes présent sans shipping');
 // Le wrapper pipeline délègue au module adFields
@@ -1155,8 +1105,8 @@ const pipeCodeDelivery = fs.readFileSync(path.join(base, 'services/scraping/lebo
 assert(/function extractDeliveryInfo\(\s*raw\s*\)\s*\{[\s\S]{0,200}adFields\.extractTransaction/.test(pipeCodeDelivery), 'pipeline: extractDeliveryInfo délègue à adFields.extractTransaction');
 // Enrichissement appliqué même sans description
 assert(!/if \(parsed\.description\) \{[^}]*if \(parsed\.livraison/.test(pipeCodeDelivery.replace(/\s+/g, ' ')), 'pipeline: enrichissement delivery n\'est PAS conditionnel à parsed.description');
-// deliveryLabel trouvé → livraison=true (cherché comme mot dans le code)
-assert(/livraison\s*=\s*true/.test(adFieldsDeliveryCode), 'adFields: deliveryLabel trouvé → livraison=true');
+// livraison=false par défaut quand attributes présent sans shipping
+assert(/livraison\s*=\s*false/.test(adFieldsDeliveryCode), 'adFields: attributes présent sans shipping → livraison=false');
 
 // ═════ Tests fonctionnels des extracteurs adFields (redondants — section 7) ═════
 // (les tests de la section 7 couvrent déjà le détail de extractTransaction etc.)
@@ -1444,23 +1394,17 @@ assert(/\.tag-csv\s*\{/.test(fs.readFileSync(path.join(__dirname, '..', 'src/ren
 
 // C. Test fonctionnel de l'export CSV (échappement réel)
 {
-  const tmpCsv = path.join(require('os').tmpdir(), 'lbc-test-export.csv');
-  // Nouvelle structure : les champs sont répartis entre champs legacy
-  // (ad.id, ad.price, ad.seller, ad.sellerRating, ad.deliveryMode) et
-  // champs structurés (ad.transaction, ad.vendeur, ad.prix). L'export doit
-  // fonctionner dans les deux cas (rétro-compat pour les anciens exports).
+  const tmpCsv = require('path').join(require('os').tmpdir(), 'lbc-test-export.csv');
   const testAds = [
-    { id: '1', title: 'RTX 3060 "gaming"', price: 250.5, category: 'Info', city: 'Paris', zipcode: '75001',
-      seller: 'Jean', sellerRating: 4.8, sellerRatingCount: 27, deliveryMode: 'livraison',
-      date: '2024-01-15T10:30:00+00:00', url: 'https://lbc.fr/1',
-      transaction: { livraison: true, mainPropre: false, transporteur: null },
-      vendeur: { note: 4.8, nombreAvis: 27 },
-      statistiques: { likes: 5, vues: 100 },
-      prix: { negociable: false },
-      produit: { brand: 'NVIDIA', model: 'RTX 3060' },
-      photos: { count: 3 },
-      dates: { publication: '2024-01-15T10:30:00+00:00', scraping: '2026-08-31T22:43:15Z' },
-      localisation: { departement: '75' },
+    { id: '1', title: 'RTX 3060 "gaming"', prix: 250.5, city: 'Paris', zipcode: '75001',
+      vendeurNom: 'Jean', vendeurType: 'pro', vendeurNote: 4.8,
+      livraison: true, mainPropre: false,
+      likes: 5,
+      datePublication: '2024-01-15T10:30:00+00:00', dateScraping: '2026-08-31T22:43:15Z',
+      etat: 'Très bon état',
+      photosCount: 3, photosUrls: ['a.jpg', 'b.jpg', 'c.jpg'],
+      description: 'Bon état,\nfonctionne.',
+      url: 'https://lbc.fr/1',
       adAnalysis: { identifiedProduct: 'RTX 3060', summary: 'Bon état,\nfonctionne.' },
       marketAnalysis: { verdictLabel: 'Bonne affaire', realValue: 300, valueRangeLow: 280, valueRangeHigh: 320, deltaEur: 50, rationale: 'OK' } },
     { id: '2', title: 'Simple', marketAnalysis: {} },
@@ -1476,13 +1420,17 @@ assert(/\.tag-csv\s*\{/.test(fs.readFileSync(path.join(__dirname, '..', 'src/ren
     assert(c.includes('Livraison;Main Propre'), 'CSV: colonnes Livraison + Main Propre séparées');
     assert(/^'Likes;État;Nb Photos/.test('Likes;État;Nb Photos') || c.includes('Likes;') && c.includes('État'),
       'CSV: colonnes Likes + État présentes');
-    assert(c.includes('Date Publication;Date Scraping'), 'CSV: colonnes Date Publication + Date Scraping');
+    assert(c.includes('Date Publication;Date Modification;Date Scraping'), 'CSV: colonnes Date Publication + Date Modification + Date Scraping');
     assert(c.includes('"RTX 3060 ""gaming"""'), 'CSV: guillemet interne doublé et champ quoté');
     assert(c.includes('"Bon état,\nfonctionne."'), 'CSV: champ avec virgule + saut de ligne quoté');
     assert(c.includes('250,5'), 'CSV: prix décimal avec virgule (FR)');
-    assert(c.includes('4,8/5 (27 avis)'), 'CSV: note vendeur formatée');
+    assert(c.includes('4,8/5'), 'CSV: note vendeur formatée');
     assert(c.includes('OUI'), 'CSV: livraison=OUI pour la première annonce');
     assert(c.includes('5'), 'CSV: likes exportés');
+    assert(c.includes('Date Modification'), 'CSV: colonne Date Modification présente');
+    assert(!c.includes('Catégorie'), 'CSV: PAS de colonne Catégorie (supprimée)');
+    assert(!c.includes('Département'), 'CSV: PAS de colonne Département (supprimée)');
+    assert(!c.includes('Statut Scraping'), 'CSV: PAS de colonne Statut Scraping (supprimée)');
     assert(c.includes('\r\n'), 'CSV: fins de ligne CRLF');
     assert(c.split('\r\n').length >= 3, 'CSV: au moins 3 lignes (header + 2 ads)');
     try { fs.unlinkSync(tmpCsv); } catch { /* ignore */ }

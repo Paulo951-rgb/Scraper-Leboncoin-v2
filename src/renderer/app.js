@@ -1095,34 +1095,34 @@ function renderExplorerAds() {
   }
 
   // Helpers lecture champs structurés / legacy
-  const livraisonOf = (a) => (a.transaction && a.transaction.livraison !== undefined) ? a.transaction.livraison : a.shipping;
-  const mainPropreOf = (a) => (a.transaction && a.transaction.mainPropre !== undefined) ? a.transaction.mainPropre : a.handDelivery;
-  const typeVendeurOf = (a) => (a.vendeur && a.vendeur.type) ? a.vendeur.type : (a.isPro ? 'pro' : 'particulier');
-  const noteOf = (a) => (a.vendeur && a.vendeur.note != null) ? a.vendeur.note : a.sellerRating;
-  const likesOf = (a) => (a.statistiques && a.statistiques.likes != null) ? a.statistiques.likes : (a.favorites_count != null ? a.favorites_count : null);
-  const datePubOf = (a) => a.dates?.publication || a.date;
-  const dateScrapeOf = (a) => a.dates?.scraping;
-  const etatOf = (a) => a.produit?.etat;
+  const livraisonOf = (a) => a.livraison ?? a.shipping;
+  const mainPropreOf = (a) => a.mainPropre ?? a.handDelivery;
+  const typeVendeurOf = (a) => a.vendeurType || (a.isPro ? 'pro' : 'particulier');
+  const noteOf = (a) => a.vendeurNote != null ? a.vendeurNote : a.sellerRating;
+  const likesOf = (a) => a.likes != null ? a.likes : (a.favorites_count != null ? a.favorites_count : null);
+  const datePubOf = (a) => a.datePublication || a.date;
+  const dateScrapeOf = (a) => a.dateScraping;
+  const etatOf = (a) => a.etat;
 
-  // Helper description (lit description.originale si l'objet structuré est présent)
-  const descText = (a) => {
-    if (a && typeof a.description === 'object' && typeof a.description.originale === 'string') {
-      return a.description.originale;
-    }
-    return typeof a.description === 'string' ? a.description : '';
+  // Helper description (lit description si string, ou description.originale si objet legacy)
+  const descTextOf = (a) => {
+    if (!a) return '';
+    if (typeof a.description === 'string') return a.description;
+    if (typeof a.description === 'object' && typeof a.description.originale === 'string') return a.description.originale;
+    return '';
   };
 
   let filtered = sourceAds.filter((a) => {
-    const desc = descText(a);
-    const fullText = `${a.title || ''} ${desc} ${a.city || ''} ${a.seller || ''}`.toLowerCase();
+    const desc = descTextOf(a);
+    const fullText = `${a.title || ''} ${desc} ${a.city || ''} ${a.vendeurNom || a.seller || ''}`.toLowerCase();
     const matchesQuery = !query || fullText.includes(query);
 
-    const price = typeof a.price === 'number' ? a.price : parseFloat(a.price) || 0;
+    const price = typeof a.prix === 'number' ? a.prix : (typeof a.price === 'number' ? a.price : parseFloat(a.price) || 0);
     const matchesPrice = price >= minP && price <= maxP;
 
     const matchesTag = matchesVerdictFilter(a, tagFilter);
 
-    // Livraison : OUI / NON (3 états, jamais de null car l'utilisateur filtre explicitement)
+    // Livraison : OUI / NON
     let matchesLivraison = true;
     if (livraisonFilter === 'OUI') matchesLivraison = livraisonOf(a) === true;
     else if (livraisonFilter === 'NON') matchesLivraison = livraisonOf(a) === false;
@@ -1211,7 +1211,7 @@ function renderExplorerAds() {
         const valueHtml = marketValueText(ma);
         const deltaHtml = marketDeltaText(ma);
         const summaryHtml = `<div class="desc-tooltip" title="${escapeHtml(analysisSummary(a))}">${escapeHtml(analysisSummary(a))}</div>`;
-        const sellerChip = `<small style="color:var(--text-muted);">${escapeHtml(a.seller || 'Particulier')}${a.isPro ? ' (Pro)' : ''}</small>`;
+        const sellerChip = `<small style="color:var(--text-muted);">${escapeHtml(a.vendeurNom || a.seller || 'Particulier')}${a.isPro ? ' (Pro)' : ''}</small>`;
         const typeVendeurBadge = a.isPro ? '<span style="background:var(--accent); color:white; padding:1px 5px; border-radius:3px; font-size:0.7rem;">PRO</span>' : '<span style="background:var(--bg-secondary); padding:1px 5px; border-radius:3px; font-size:0.7rem;">PART</span>';
 
         return `
@@ -1219,7 +1219,7 @@ function renderExplorerAds() {
           <td class="text-center"><input type="checkbox" ${isChecked ? 'checked' : ''} onchange="toggleCompare('${escapePath(a.id)}')"></td>
           <td class="text-center">${starIcon}</td>
           <td>${nameHtml}</td>
-          <td><strong>${a.price != null ? a.price + ' €' : '-'}</strong></td>
+          <td><strong>${a.prix != null ? a.prix + ' €' : (a.price != null ? a.price + ' €' : '-')}</strong></td>
           <td>${valueHtml}</td>
           <td>${deltaHtml}</td>
           <td>${badgeHtml}</td>
@@ -1307,7 +1307,7 @@ window.openAdDetail = (adId) => {
   const ma = targetAd.marketAnalysis || {};
   const aa = targetAd.adAnalysis || {};
   modalAdTitle.textContent = identifiedName(targetAd);
-  modalPrice.textContent = targetAd.price != null ? targetAd.price : '-';
+  modalPrice.textContent = targetAd.prix != null ? targetAd.prix : (targetAd.price != null ? targetAd.price : '-');
   modalMarketAvg.textContent = ma.realValue != null ? `${ma.realValue} €` : '-';
   modalMarketRange.textContent = (ma.valueRangeLow != null && ma.valueRangeHigh != null)
     ? `${ma.valueRangeLow} € - ${ma.valueRangeHigh} €`
@@ -1316,8 +1316,8 @@ window.openAdDetail = (adId) => {
     ? `${ma.deltaEur > 0 ? '+' : ''}${ma.deltaEur} € (${ma.verdictLabel || '—'})`
     : '-';
   modalCity.textContent = targetAd.city || 'Inconnue';
-  modalSeller.textContent = `${targetAd.seller || 'Particulier'}${targetAd.isPro ? ' (Pro)' : ''}`;
-  modalDate.textContent = targetAd.date || '-';
+  modalSeller.textContent = `${targetAd.vendeurNom || targetAd.seller || 'Particulier'}${targetAd.isPro ? ' (Pro)' : ''}`;
+  modalDate.textContent = targetAd.datePublication || targetAd.date || '-';
 
   // Nouveaux champs : catégorie, note vendeur, mode de remise
   const setExtraVal = (spanId, text) => {
@@ -1328,7 +1328,6 @@ window.openAdDetail = (adId) => {
     }
   };
 
-  setExtraVal('modalCategory', targetAd.category || 'Non précisée');
 
   let ratingText = '-';
   const note = (targetAd.vendeur && targetAd.vendeur.note != null) ? targetAd.vendeur.note : targetAd.sellerRating;
@@ -1339,37 +1338,30 @@ window.openAdDetail = (adId) => {
   }
   setExtraVal('modalSellerRating', note != null ? ratingText : '❓ Aucune note');
 
-  // Livraison et Main propre INDÉPENDANTS (les deux peuvent être OUI).
-  const livraison = (targetAd.transaction && targetAd.transaction.livraison !== undefined)
-    ? targetAd.transaction.livraison
-    : (targetAd.shipping === true ? true : targetAd.shipping === false ? false : null);
-  const mainPropre = (targetAd.transaction && targetAd.transaction.mainPropre !== undefined)
-    ? targetAd.transaction.mainPropre
-    : (targetAd.handDelivery === true ? true : targetAd.handDelivery === false ? false : null);
-  const transporteur = (targetAd.transaction && targetAd.transaction.transporteur) || targetAd.deliveryLabel;
+  // Livraison et Main propre INDÉPENDANTS
+  const livraison = targetAd.livraison != null ? targetAd.livraison : targetAd.shipping;
+  const mainPropre = targetAd.mainPropre != null ? targetAd.mainPropre : targetAd.handDelivery;
 
   const livraisonLabels = { true: '📦 OUI', false: 'NON', null: '❓ Indéterminé' };
   const mainPropreLabels = { true: '🤝 OUI', false: 'NON', null: '❓ Indéterminé' };
-  let livraisonText = livraisonLabels[livraison];
-  if (transporteur && livraison === true) livraisonText += ` (${transporteur})`;
-  setExtraVal('modalLivraison', livraisonText);
+  setExtraVal('modalLivraison', livraisonLabels[livraison]);
   setExtraVal('modalMainPropre', mainPropreLabels[mainPropre]);
 
-  // Likes (0 si affiché réellement, null si info absente)
-  const likes = (targetAd.statistiques && targetAd.statistiques.likes != null) ? targetAd.statistiques.likes : null;
+  // Likes
+  const likes = targetAd.likes != null ? targetAd.likes : null;
   setExtraVal('modalLikes', likes != null ? `❤️ ${likes}` : '❓ Indisponible');
 
   // Date scraping
-  const dateScrape = targetAd.dates?.scraping;
+  const dateScrape = targetAd.dateScraping;
   setExtraVal('modalDateScraping', dateScrape ? `🕒 ${formatDateTime(dateScrape)}` : '❓ Indisponible');
 
   // Type vendeur
-  const typeVendeur = (targetAd.vendeur && targetAd.vendeur.type) ? targetAd.vendeur.type : (targetAd.isPro ? 'pro' : 'particulier');
+  const typeVendeur = targetAd.vendeurType || (targetAd.isPro ? 'pro' : 'particulier');
   const typeVendeurLabel = typeVendeur === 'pro' ? '🏪 Professionnel' : '👤 Particulier';
   setExtraVal('modalTypeVendeur', typeVendeurLabel);
 
   // État déclaré uniquement
-  const etat = targetAd.produit?.etat;
+  const etat = targetAd.etat;
   setExtraVal('modalEtat', etat || '❓ Non précisé');
   // Résumé IA : combine le résumé de l'IA Analyse (ce qu'est l'objet) et la
   // rationale de l'IA Marché (pourquoi cette estimation en €).
@@ -1382,13 +1374,9 @@ window.openAdDetail = (adId) => {
     summaryText = summaryText ? `${summaryText}\n\nSources marché : ${srcTxt}` : `Sources marché : ${srcTxt}`;
   }
   modalSummary.textContent = summaryText || 'Aucune analyse IA disponible. Lancez « Analyse IA » puis « IA Marché ».';
-  // Description : lire description.originale si objet structuré, sinon string legacy
-  let modalDescText = '';
-  if (targetAd.description && typeof targetAd.description === 'object' && typeof targetAd.description.originale === 'string') {
-    modalDescText = targetAd.description.originale;
-  } else if (typeof targetAd.description === 'string') {
-    modalDescText = targetAd.description;
-  }
+  // Description : lire description string directement (structure plate v3)
+  const modalDescText = typeof targetAd.description === 'string' ? targetAd.description
+    : (typeof targetAd.description === 'object' && typeof targetAd.description.originale === 'string' ? targetAd.description.originale : '');
   modalDescription.textContent = modalDescText || 'Aucune description disponible.';
 
   // Analyse visuelle IA : désormais intégrée dans adAnalysis.vision (produite
@@ -1522,7 +1510,7 @@ function renderStatsView() {
   // (shipping === false). On n'utilise PAS !a.shipping car shipping=null
   // (info non extraite, p. ex. en mode ultra-rapide) serait compté à tort
   // comme une remise en main propre.
-  const handCount = sourceAds.filter((a) => a.shipping === false).length;
+  const handCount = sourceAds.filter((a) => (a.livraison === false || a.shipping === false)).length;
   const proCount = sourceAds.filter((a) => a.isPro).length;
   const partCount = sourceAds.length - proCount;
 
@@ -1640,17 +1628,17 @@ async function renderMap(ads) {
         coords[1] + (Math.random() - 0.5) * 0.012
       ];
       const marker = L.marker(jitterCoords).addTo(mapInstance);
-      const deliveryTxt = a.deliveryMode === 'livraison'
+      const deliveryTxt = (a.livraison === true || a.shipping === true)
         ? '📦 Livraison possible'
-        : a.deliveryMode === 'main_propre'
+        : (a.livraison === false || a.shipping === false)
           ? '🤝 Remise en main propre'
           : 'ℹ️ Remise non précisée';
       marker.bindPopup(`
         <div style="font-family:sans-serif; font-size:0.8rem; line-height:1.3;">
           <strong>${escapeHtml(a.title)}</strong><br>
-          <span style="color:var(--primary-color); font-weight:bold;">${a.price} €</span><br>
+          <span style="color:var(--primary-color); font-weight:bold;">${a.prix != null ? a.prix + ' €' : (a.price != null ? a.price + ' €' : '-')}</span><br>
           📍 ${escapeHtml(a.city || 'Ville')}<br>
-          ${deliveryTxt}${a.category ? '<br>🏷️ ' + escapeHtml(a.category) : ''}<br>
+          ${deliveryTxt}<br>
           <a href="#" onclick="openUrl('${escapePath(a.url)}'); return false;" style="color:#38bdf8; text-decoration:underline;">Ouvrir l'annonce</a>
         </div>
       `);
