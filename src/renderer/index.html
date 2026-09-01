@@ -458,10 +458,10 @@
               <span id="statAvgPriceSub" class="stat-sub">toutes annonces</span>
             </div>
             <div class="stat-card stat-card-accent stat-card-violet">
-              <span class="stat-icon">📊</span>
-              <span class="stat-title">Prix Médian</span>
-              <span id="statMedPrice" class="stat-value">-</span>
-              <span id="statMedPriceSub" class="stat-sub">valeur centrale</span>
+              <span class="stat-icon">📦</span>
+              <span class="stat-title">Livraison</span>
+              <span id="statLivraison" class="stat-value">-</span>
+              <span id="statLivraisonSub" class="stat-sub">livraison disponible</span>
             </div>
             <div class="stat-card stat-card-accent stat-card-amber">
               <span class="stat-icon">⬇️</span>
@@ -517,6 +517,9 @@
             <div class="chart-box">
               <canvas id="topCitiesChart"></canvas>
             </div>
+            <div class="chart-box">
+              <canvas id="transactionChart"></canvas>
+            </div>
           </div>
         </div>
       </section>
@@ -556,12 +559,12 @@
       <div class="form-group text-left">
         <label for="cfgScrapeSpeed" style="font-size:0.8rem; color:var(--text-muted); display:block; margin-bottom:5px;">Vitesse de scraping (enrichissement des descriptions) :</label>
         <select id="cfgScrapeSpeed" style="width:100%;">
-          <option value="fast">⚡ Rapide — 10 parallèle, délais courts (risque 403 + élevé)</option>
-          <option value="balanced">⚖️ Équilibré — 5 parallèle, délais modérés</option>
-          <option value="safe">🛡️ Prudent — séquentiel, délais humains (anti-blocage max)</option>
+          <option value="moyen">🟢 Moyen — 10 parallèles, délais courts</option>
+          <option value="rapide">🟠 Rapide — 15 parallèles, délais très courts</option>
+          <option value="ultra-rapide">🔴 Ultra-rapide — 25 parallèles, délais minimaux (risque 403 + élevé)</option>
         </select>
         <small class="form-hint" id="speedHint" style="display:block; margin-top:4px; color:var(--text-muted); font-size:0.72rem;">
-          ⚠️ « Rapide » n'extrait pas les descriptions détaillées (le titre + prix suffisent). Pour l'analyse de marché IA, préférez « Équilibré » ou « Prudent ».
+          ⚠️ Plus la vitesse est élevée, plus le risque de blocage par Leboncoin (403) augmente.
         </small>
       </div>
 

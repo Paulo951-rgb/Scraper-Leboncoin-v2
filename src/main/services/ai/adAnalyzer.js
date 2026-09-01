@@ -334,6 +334,17 @@ class AdAnalyzer {
         const ad = queue.shift();
         if (!ad) break;
         try {
+          // Vérifier le cache AVANT de compter comme "en cours" pour éviter
+          // l'effet "rafale puis lenteur" : les cache-hit sont instantanés
+          // mais ne doivent pas masquer le vrai travail en cours.
+          const cached = aiCache.get(ad.id, CACHE_PREFIX);
+          if (cached && !cached._fallback) {
+            ad.adAnalysis = cached;
+            cacheHits++;
+            done++;
+            onProgress({ done, total, percent: Math.round((done / total) * 100), status: `Analyse annonce ${done}/${total} (cache)` });
+            continue;
+          }
           ad.adAnalysis = await AdAnalyzer.analyzeAd(ad, configWithLog);
           if (ad.adAnalysis?._fallback) fallbacks++;
           else cacheHits++;

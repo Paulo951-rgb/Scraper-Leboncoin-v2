@@ -293,6 +293,7 @@ const statMedPrice = document.getElementById('statMedPrice');
 const statMinPrice = document.getElementById('statMinPrice');
 const statMaxPrice = document.getElementById('statMaxPrice');
 const statHandDelivery = document.getElementById('statHandDelivery');
+const statLivraison = document.getElementById('statLivraison');
 const statPro = document.getElementById('statPro');
 const statPart = document.getElementById('statPart');
 
@@ -1489,7 +1490,22 @@ function renderStatsView() {
     if (found && Array.isArray(found.ads)) sourceAds = found.ads;
   }
 
-  const prices = sourceAds.map((a) => Number(a.price)).filter((p) => Number.isFinite(p) && p > 0).sort((a, b) => a - b);
+  // Extraction robuste des prix : gère number, string avec format FR/EN
+  const prices = [];
+  for (const a of sourceAds) {
+    const raw = a.prix ?? a.price;
+    if (raw == null || raw === '') continue;
+    let n;
+    if (typeof raw === 'number') {
+      n = Number.isFinite(raw) ? raw : NaN;
+    } else if (typeof raw === 'string') {
+      n = parseFloat(raw.replace(/\s/g, '').replace(/\./g, '').replace(',', '.').replace(/[^\d.-]/g, ''));
+    } else {
+      n = NaN;
+    }
+    if (Number.isFinite(n) && n > 0) prices.push(n);
+  }
+  prices.sort((a, b) => a - b);
   const fmt = (n) => (Number.isFinite(n) ? n.toLocaleString('fr-FR') : '-');
 
   statTotalAds.textContent = sourceAds.length;
@@ -1497,28 +1513,42 @@ function renderStatsView() {
   if (prices.length > 0) {
     const sum = prices.reduce((s, p) => s + p, 0);
     const avg = Math.round(sum / prices.length);
-    const median = prices.length % 2 ? prices[(prices.length - 1) / 2] : Math.round((prices[prices.length / 2 - 1] + prices[prices.length / 2]) / 2);
     statAvgPrice.textContent = fmt(avg) + ' €';
-    statMedPrice.textContent = fmt(median) + ' €';
     statMinPrice.textContent = fmt(prices[0]) + ' €';
     statMaxPrice.textContent = fmt(prices[prices.length - 1]) + ' €';
   } else {
-    statAvgPrice.textContent = '-'; statMedPrice.textContent = '-'; statMinPrice.textContent = '-'; statMaxPrice.textContent = '-';
+    statAvgPrice.textContent = '-';
+    statMinPrice.textContent = '-';
+    statMaxPrice.textContent = '-';
   }
 
-  // « Remise en main propre » = livraison explicitement indisponible
-  // (shipping === false). On n'utilise PAS !a.shipping car shipping=null
-  // (info non extraite, p. ex. en mode ultra-rapide) serait compté à tort
-  // comme une remise en main propre.
-  const handCount = sourceAds.filter((a) => (a.livraison === false || a.shipping === false)).length;
+  // Statistiques livraison / main propre
+  let livraisonCount = 0;
+  let mainPropreCount = 0;
+  let lesDeuxCount = 0;
+  let nonRenseigneCount = 0;
+
+  for (const a of sourceAds) {
+    const livraison = a.livraison ?? a.shipping;
+    const mainPropre = a.mainPropre ?? a.handDelivery;
+    if (livraison === true && mainPropre === true) lesDeuxCount++;
+    else if (livraison === true) livraisonCount++;
+    else if (mainPropre === true) mainPropreCount++;
+    else if (livraison === null && mainPropre === null) nonRenseigneCount++;
+    else if (livraison === false && mainPropre === true) mainPropreCount++;
+    else if (livraison === true && mainPropre === false) livraisonCount++;
+    else nonRenseigneCount++;
+  }
+
   const proCount = sourceAds.filter((a) => a.isPro).length;
   const partCount = sourceAds.length - proCount;
 
-  statHandDelivery.textContent = fmt(handCount);
+  statHandDelivery.textContent = fmt(mainPropreCount);
+  statLivraison.textContent = fmt(livraisonCount);
   statPro.textContent = fmt(proCount);
   statPart.textContent = fmt(partCount);
 
-  renderCharts(sourceAds);
+  renderCharts(sourceAds, { livraisonCount, mainPropreCount, lesDeuxCount, nonRenseigneCount });
   renderMap(sourceAds);
 }
 
@@ -1665,19 +1695,32 @@ async function renderMap(ads) {
 }
 
 
-function renderCharts(ads) {
+function renderCharts(ads, transactionStats) {
   if (typeof Chart === 'undefined' || ads.length === 0) return;
 
-  // Garde contre les canvas absents du DOM (ex: onglet Stats jamais ouvert
-  // mais renderStatsView appelé indirectement) : sans cela, getContext('2d')
-  // sur null faisait crasher renderStatsView ET renderMap (appelée après).
+  // Garde contre les canvas absents du DOM
   const priceDistCanvas = document.getElementById('priceDistChart');
   const sellerCanvas = document.getElementById('sellerChart');
   const citiesCanvas = document.getElementById('topCitiesChart');
-  if (!priceDistCanvas || !sellerCanvas || !citiesCanvas) return;
+  const transactionCanvas = document.getElementById('transactionChart');
+  if (!priceDistCanvas || !sellerCanvas || !citiesCanvas || !transactionCanvas) return;
 
   // 1) Distribution des prix (histogramme)
-  const prices = ads.map((a) => Number(a.price)).filter((p) => Number.isFinite(p) && p > 0).sort((a, b) => a - b);
+  const prices = [];
+  for (const a of ads) {
+    const raw = a.prix ?? a.price;
+    if (raw == null || raw === '') continue;
+    let n;
+    if (typeof raw === 'number') {
+      n = Number.isFinite(raw) ? raw : NaN;
+    } else if (typeof raw === 'string') {
+      n = parseFloat(raw.replace(/\s/g, '').replace(/\./g, '').replace(',', '.').replace(/[^\d.-]/g, ''));
+    } else {
+      n = NaN;
+    }
+    if (Number.isFinite(n) && n > 0) prices.push(n);
+  }
+  prices.sort((a, b) => a - b);
   const priceDistCtx = priceDistCanvas.getContext('2d');
   if (priceDistChartInstance) priceDistChartInstance.destroy();
 
@@ -1794,6 +1837,48 @@ function renderCharts(ads) {
       },
     },
   });
+
+  // 4) Modes de transaction (livraison / main propre / les deux / non renseigné)
+  const tStats = transactionStats || { livraisonCount: 0, mainPropreCount: 0, lesDeuxCount: 0, nonRenseigneCount: 0 };
+  const transactionCtx = transactionCanvas.getContext('2d');
+  if (transactionChartInstance) transactionChartInstance.destroy();
+
+  transactionChartInstance = new Chart(transactionCtx, {
+    type: 'bar',
+    data: {
+      labels: ['📦 Livraison', '🤝 Main propre', '📦+🤝 Les deux', '❓ Non renseigné'],
+      datasets: [{
+        label: 'Nombre d\'annonces',
+        data: [tStats.livraisonCount, tStats.mainPropreCount, tStats.lesDeuxCount, tStats.nonRenseigneCount],
+        backgroundColor: ['#38bdf8', '#22c55e', '#a855f7', '#64748b'],
+        borderRadius: 8,
+        borderSkipped: false,
+        barPercentage: 0.65,
+        categoryPercentage: 0.7,
+      }],
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        title: { display: true, text: 'Modes de Transaction', padding: { bottom: 10 } },
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: 'rgba(15,23,42,0.95)',
+          padding: 12,
+          cornerRadius: 8,
+          callbacks: {
+            label: (ctx) => `${ctx.label}: ${ctx.parsed.x.toLocaleString('fr-FR')}`,
+          },
+        },
+      },
+      scales: {
+        x: { beginAtZero: true, ticks: { precision: 0 } },
+        y: { ticks: { color: getComputedStyle(document.body).getPropertyValue('--text-muted').trim() || '#94a3b8' }, grid: { display: false } },
+      },
+    },
+  });
 }
 
 function escapeHtml(str) {
@@ -1905,12 +1990,13 @@ modalConfirmBtn.addEventListener('click', async () => {
 
 document.getElementById('openMainFolderBtn').addEventListener('click', async () => {
   try {
-    const res = await window.api.openFolder('');
+    // Ouvrir le dossier results/ (JOBS_DIR) qui contient les résultats du scraping
+    const res = await window.api.openJobsFolder();
     if (res && res.success === false) {
-      alert('Impossible d\'ouvrir le dossier principal : ' + (res.error || 'erreur inconnue'));
+      alert('Impossible d\'ouvrir le dossier results : ' + (res.error || 'erreur inconnue'));
     }
   } catch (err) {
-    alert('Impossible d\'ouvrir le dossier principal : ' + (err.message || err));
+    alert('Impossible d\'ouvrir le dossier results : ' + (err.message || err));
   }
 });
 
