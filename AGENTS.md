@@ -6,38 +6,64 @@ Repository knowledge for AI agents working on this codebase.
 - Electron app (main + renderer, contextIsolation + sandbox)
 - Node.js main process, Playwright (Chromium) pour le scraping
 - ExcelJS pour l'export .xlsx
-- IA 100% locale via Ollama (texte : llama3/mistral, vision : llava/moondream)
+- IA 100% locale via Ollama (texte : llama3/mistral, vision : llava/moondream) — **OPTIONNELLE**
 - IA Marché : recherche Web sans-clé (DuckDuckGo Lite) + estimation IA
 
-## Architecture IA (3 systèmes, nouvelle archi v2)
+## Architecture SCRAPING → EXPORTS (+ IA optionnelle)
+```
+SCRAPER (harCapturer + pipeline) → DONNÉES SCRAPÉES → EXPORTS (TXT/JSON/CSV/XLSX)
+                                                          ↘
+                                                            IA (OPTIONNELLE — adAnalyzer, marketValueAnalyzer)
+```
+**Règle absolue** : le scraping doit fonctionner 100% sans IA. L'IA est un bonus d'analyse.
+Si Ollama est désactivé, en erreur, ou que `adAnalyzer` plante, le scraping doit quand même :
+- récupérer les annonces, les sauvegarder, générer TXT/JSON/CSV/XLSX, afficher dans l'UI.
+
+`adFields.js` est un module de **scraping pur** : aucun appel IA, aucun prompt, aucun LLM, aucun fetch externe.
+
+## Architecture IA (3 systèmes)
 ```
 services/ai/
-  adAnalyzer.js          IA 1 — Analyse pendant le scraping (texte + vision)
-                         → adAnalysis { identifiedName, summary, vision{...}, _fallback }
-                         → onLog callback (opts.onLog) pour logs détaillés [IA1] dans l'onglet Logs
+  adAnalyzer.js          IA 1 — Analyse APRÈS scraping (texte + vision)
+                         → adAnalysis { identifiedProduct, summary, vision{...}, _fallback }
+                         → onLog callback (opts.onLog) pour logs détaillés [IA1]
   marketValueAnalyzer.js IA 2 — Marché : recherche Internet + verdict en €
                          → marketAnalysis { verdict, verdictLabel, deltaEur, realValue,
-                           marketMin/Max, sources[], rationale, _fallback }
-                         → onLog callback (opts.onLog) pour logs détaillés [IA2] dans l'onglet Logs
-  promptGenerator.js     IA 3 — Prompt (~50 lignes, tout produit) via getAIProvider
-                         (LEGACY — conservé pour compat, plus utilisé par l'UI IA Studio)
-  promptTemplates.js    Bibliothèque de prompts préfaits (V2, remplace promptGenerator
-                         dans l'UI IA Studio). 7 templates génériques à trous
-                         ([TYPE_DE_PRODUIT], [BUDGET_MIN], etc.). Aucune IA, assemblage
-                         instantané. API : listTemplates() / getTemplate() / buildPrompt().
+                           valueRangeLow/High, sources[], rationale, _fallback }
+  promptGenerator.js     IA 3 — Prompt (~50 lignes) via getAIProvider (LEGACY)
+  promptTemplates.js    Bibliothèque de prompts préfaits (V2). Aucune IA.
   providers/             interface AIProvider + OllamaProvider + aiProviderRegistry
   search/                interface SearchProvider + DuckDuckGoSearchProvider (keyless) + registry
   aiCache.js             cache préfixé (analyse: / market:) — MAX 5000 entrées
   ollamaHealth.js        santé + modèles Ollama
 services/analysis/
-  adStats.js             statistiques de prix brutes (remplace dealFinder — PLUS de scoring)
+  adStats.js             statistiques de prix brutes (PLUS de scoring)
 ```
 
-### Champs d'annonce (nouveau schéma)
-- `adAnalysis` : identifié par l'IA 1 (identifiedName, summary, vision, _fallback)
-- `marketAnalysis` : produit par l'IA 2 (verdict, deltaEur, realValue, sources, rationale)
-- ANCIENS champs SUPPRIMÉS : classification, diffPct, netMarginEur, scamScore,
-  dealTag, dealDiscountPct, hasRisk, detectedRisks, points, multipliers, roiPct
+### Champs d'annonce (schéma scraping pur v3 — 2026-08)
+Structure produite par `normalizeAd()` (sans aucune dépendance IA) :
+
+| Section | Champs | Notes |
+|---------|--------|-------|
+| GÉNÉRAL | id, title, url, category, subCategory | |
+| PRIX | prix (nombre), devise ('EUR') | `prix` est un nombre, PAS un objet |
+| LOCALISATION | city, zipcode, department | department dérivé du CP |
+| VENDEUR | vendeur{nom, type, id, note, nombreAvis, urlProfil, ancienneteJours} | note=null si pas dispo |
+| TRANSACTION | transaction{livraison, mainPropre, transporteur} | **livraison et mainPropres INDÉPENDANTS** (les deux peuvent être OUI) |
+| STATISTIQUES | statistiques{likes} | 0 ≠ null |
+| DATES | dates{publication, modification, scraping, statut} | scraping=ISO au moment de l'extraction |
+| PRODUIT | produit{etat} | **État déclaré UNIQUEMENT** (pas de détection, pas d'inférence) |
+| PHOTOS | photos{count, urls, principale} | |
+| DESCRIPTION | description{originale, longueur} | originale=string (jamais un objet) |
+| SCRAPING | scraping{statut, champsRecuperes, champsTotal, champsManquants[]} | qualité par annonce |
+
+**Champs SUPPRIMÉS (ne doivent plus apparaître nulle part)** : negociable, facture, garantie,
+echangeAccepte, urgent, vues, marque, modele, couleur, taille, capacite, annee, matiere,
+reference, etatDetecte, etatInferre, detection{}, prix.valeur (remplacé par prix simple),
+prix.devise séparé, prix.original, prix.negociable.
+
+- `adAnalysis` : identifié par l'IA 1 (identifiedProduct, summary, vision, _fallback) — OPTIONNEL
+- `marketAnalysis` : produit par l'IA 2 (verdict, deltaEur, realValue, sources, rationale) — OPTIONNEL
 
 ## Architecture (src/main/)
 ```
@@ -45,15 +71,15 @@ main.js                      cycle de vie Electron, fenêtres, single-instance l
 core/ipcHandlers.js          TOUS les handlers IPC (job, IA, fichiers, secrets, search)
 core/settings.js             persistance user-settings.json
 config/constants.js          BASE_OUT_DIR, JOBS_DIR, GLOBAL_SESSION_PATH (require electron/app)
-config/risk-keywords.js      mots-clés de risque (legacy, plus utilisé par scoring)
 services/scraping/           harCapturer (Playwright) + pipelineRunner (fork) + leboncoin-pipeline
+                             + adFields.js (extracteurs centralisés — SCRAPING PUR)
 services/ai/                 adAnalyzer, marketValueAnalyzer, promptGenerator, aiCache, ollamaHealth, providers/, search/
-services/jobs/               jobHistory (listing/lecture/suppression jobs, stats via AdStats)
-services/analysis/adStats.js statistiques de prix (sans scoring — remplace dealFinder)
+services/jobs/               jobHistory (listing/lecture/suppression jobs, stats via AdStats, buildAdHistory)
+services/analysis/adStats.js statistiques de prix (sans scoring)
 services/maintenance/storageCleaner
-infrastructure/              excelExporter, fileManager, notifications
+infrastructure/              excelExporter (XLSX + CSV), fileManager, notifications
 utils/                      helpers, diagnostics, integrity, rateLimiter, logger, secretStore
-renderer/                    app.js, index.html, styles.css, widget.html, aiStudioModule.js (V2: prompts préfaits à trous, plus de génération IA), helpModule.js (FAQ/Help/Feedback)
+renderer/                    app.js, index.html, styles.css, widget.html, aiStudioModule.js, helpModule.js
 ```
 
 ## Conventions clés
@@ -84,7 +110,7 @@ renderer/                    app.js, index.html, styles.css, widget.html, aiStud
   toujours passer par `getSearchProvider()` (abstraction DuckDuckGo/etc.).
 
 ## Tests
-- `node test/regression.test.js` → 709 assertions (syntaxe + stubs Electron).
+- `node test/regression.test.js` → 718 assertions (syntaxe + stubs Electron).
 - Le test stub `electron` : BrowserWindow a `webContents.send` mais PAS `isDestroyed`.
 - Avant tout commit : `node --check` sur les fichiers modifiés + lancer la suite.
 - aiCache est testé en isolation (variable `_aiCacheUnderTest` pour éviter la
@@ -250,8 +276,51 @@ renderer/                    app.js, index.html, styles.css, widget.html, aiStud
 
 ## Commandes
 - Lancer l'app : `npm start` (electron --max-old-space-size=8192 .)
-- Tests : `npm test` (ou `node test/regression.test.js`) — 709 assertions
+- Tests : `npm test` (ou `node test/regression.test.js`) — 718 assertions
 - Branche stable : `refactor/professional-architecture`
+
+## Améliorations globales (session 2026-08, 7e passe — scraping pur + correction description)
+- **Correction du bug `[object Object]` dans la description** : la fonction
+  `extractDescription()` d'`adFields.js` acceptait n'importe quelle valeur non-null
+  (y compris les objets `{text: "..."}` que Leboncoin utilise parfois pour `body`).
+  Résultat : `description.nettoyee` était un objet → `[object Object]` dans le TXT.
+  Corrigé : `extractDescription()` ne renvoie que des `string` (ou `null`). Si
+  `body` est un objet, elle extrait `body.text` si c'est une string. Testé avec
+  `body` = string, objet `{text}`, objet vide, nombre, null — tous les cas
+  renvoient une string valide ou `null`.
+- **Scraping 100% indépendant de l'IA** : toutes les fonctions `detectInDescription`,
+  `extractAttributes`, `inferCondition` (analyse textuelle de la description pour
+  deviner négociable/facture/garantie/état/etc.) ont été **supprimées** d'`adFields.js`.
+  Ces analyses n'étaient pas fiables (regex sur description = invention) et
+  créaient une dépendance implicite. Seul `extractCondition()` reste : il extrait
+  l'**État déclaré** par le vendeur dans les attributs structurés Leboncoin
+  (champ `condition`/`etat`/`état` du tableau `attributes[]`).
+- **Champs supprimés définitivement** : `negociable`, `facture`, `garantie`,
+  `echangeAccepte`, `urgent`, `vues`, `marque`, `modele`, `couleur`, `taille`,
+  `capacite`, `annee`, `matiere`, `reference`, `etatDetecte`, `etatInferre`,
+  `detection{}`, `prix.valeur/devise/original/negociable`. Ces champs
+  n'apparaissent plus dans : adFields.js, normalizeAd(), toReadableBlock (TXT),
+  excelExporter (XLSX/CSV), renderer (filtres, tris, modal), scraperQuality
+  (champs manquants).
+- **Livraison / Main propre totalement indépendants** : les deux booléens sont
+  extraits séparément. `livraison` vient de `has_option.shipping` / `delivery.shipping`
+  / attributs `shippable`. `mainPropre` vient du texte de la description
+  ("remise en main propre", "retrait sur place", "pas d'envoi", etc.). Les deux
+  peuvent être OUI simultanément (le vendeur propose les deux). Le transporteur
+  (Colissimo, Mondial Relay...) est extrait séparément.
+- **Description toujours string** : `toReadableBlock` (TXT), `excelExporter`
+  (XLSX/CSV), et le modal renderer utilisent un helper `_descString()` /
+  `descText()` qui garantit que la description affichée est TOUJOURS une string
+  (lit `description.originale` si objet structuré, sinon `description` si string,
+  sinon `''`). Plus jamais de `[object Object]`.
+- **adFields.js est un module de SCRAPING PUR** : aucun appel IA, aucun prompt,
+  aucun LLM, aucun fetch externe. Vérifié par les tests.
+- **adAnalyzer.prompt mis à jour** : lit `description.originale` (nouveau format
+  objet) au lieu de `description.nettoyee` (supprimé). N'injecte plus les champs
+  supprimés (negociable, facture, garantie, vues, detection, etc.).
+- **Tests** : 718 assertions (était 709). Ajout de tests fonctionnels pour la
+  correction de la description (body string/objet vide/nombre/null), la
+  suppression des champs, l'indépendance livraison/main propre.
 
 ## Améliorations globales (session 2026-08, 6e passe — enrichissement données)
 - **Module `services/scraping/adFields.js`** : centralise tous les extracteurs
