@@ -657,3 +657,30 @@ input:focus, select:focus { border-color: var(--primary-color); }
   .help-btn, .btn, .btn-close, .stat-card, .faq-question, .faq-chevron, .modal-overlay, .faq-answer { transition: none !important; }
   .btn:active, .help-btn:hover, .stat-card:hover { transform: none !important; }
 }
+
+/* ─── AI Studio — Nouvelle interface à onglets ───────────────────────── */
+.ai-studio-tabs { display: flex; gap: 4px; margin: 12px 0; border-bottom: 2px solid var(--border-color, #333); }
+.ai-tab { padding: 8px 16px; background: transparent; border: none; border-bottom: 2px solid transparent; color: var(--text-muted, #94a3b8); cursor: pointer; font-size: 0.85rem; font-weight: 500; transition: all .15s ease; }
+.ai-tab:hover { color: var(--text-color, #e2e8f0); }
+.ai-tab.active { color: var(--primary-color, #4a90d9); border-bottom-color: var(--primary-color, #4a90d9); }
+.ai-panel { animation: fadeIn .2s ease; }
+.ai-panel.hidden { display: none; }
+
+.ai-gen-form { display: flex; flex-direction: column; gap: 10px; }
+.ai-gen-form .form-row { display: flex; flex-direction: column; gap: 4px; }
+.ai-gen-form label { font-size: 0.8rem; color: var(--text-muted, #94a3b8); }
+.ai-gen-form input, .ai-gen-form textarea { padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border-color, #444); background: var(--bg-secondary, #1e293b); color: var(--text-color, #e2e8f0); font-size: 0.85rem; }
+.ai-gen-form input:focus, .ai-gen-form textarea:focus { outline: none; border-color: var(--primary-color, #4a90d9); }
+.ai-gen-output { background: var(--bg-secondary, #1e293b); border: 1px solid var(--border-color, #444); border-radius: 8px; padding: 12px; font-size: 0.8rem; white-space: pre-wrap; word-break: break-word; max-height: 400px; overflow-y: auto; margin-top: 12px; }
+.ai-gen-output.hidden { display: none; }
+
+.ai-session-status { display: flex; align-items: center; gap: 8px; padding: 12px; background: var(--bg-secondary, #1e293b); border-radius: 8px; margin-bottom: 12px; font-size: 0.9rem; }
+.ai-session-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.status-online { background: #22c55e; box-shadow: 0 0 6px #22c55e; }
+.status-offline { background: #64748b; }
+
+.prompt-section-sep { margin: 16px 0 8px; padding-top: 12px; border-top: 1px solid var(--border-color, #333); }
+.prompt-section-sep h4 { font-size: 0.85rem; color: var(--text-muted, #94a3b8); margin: 0; }
+
+@keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
