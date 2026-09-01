@@ -1,15 +1,14 @@
 'use strict';
 
 /**
- * Module "Navigateur IA Studio + Prompts préfaits à trous".
+ * Module "Navigateur IA Studio" — Refonte complète.
  *
- * Logique renderer isolée du reste de app.js pour garder le module indépendant
- * et lisible. Exposé sur window.aiStudioModule, initialisé au chargement.
- *
- * V3 : les prompts sont affichés directement sous forme de cartes indépendantes
- * (accordéon). Chaque carte contient un prompt complet à trous. L'utilisateur
- * remplit les champs directement dans la carte, puis copie le prompt assemblé
- * — ou copie le prompt avec les trous tels quels pour les remplir dans AI Studio.
+ * Architecture simplifiée :
+ *   - Un seul onglet avec navigation par onglets internes (Navigateur / Prompts / Générateur)
+ *   - Navigateur : webview AI Studio + barre d'outils
+ *   - Prompts : templates préfaits + prompts IA internes, avec copie
+ *   - Générateur : création de prompts personnalisés
+ *   - Session : état de la connexion Google
  */
 
 const AI_STUDIO_URL = 'https://aistudio.google.com/';
@@ -17,497 +16,432 @@ const AI_STUDIO_URL = 'https://aistudio.google.com/';
 const $ = (id) => document.getElementById(id);
 
 const AiStudioModule = {
-  /** Templates chargés depuis le main process via IPC. */
   templates: [],
+  currentTab: 'browser',
+  webviewReady: false,
 
   init() {
-    const els = [
-      'aistudioCardsContainer', 'aistudioGenStatus',
-      'aistudioOpenJobsBtn',
-      'aistudioWebview', 'aistudioWebviewLoading',
-      'aistudioBackBtn', 'aistudioFwdBtn', 'aistudioReloadBtn', 'aistudioHomeBtn',
-      'aistudioLoginBtn',
-      'aistudioUrlBar', 'aistudioOpenExternalBtn',
-    ];
-    const e = {};
-    let missing = false;
-    for (const id of els) { e[id] = $(id); if (!e[id]) { console.warn('[AI Studio] élément manquant :', id); missing = true; } }
-    if (missing) return;
+    this.el = {
+      // Navigation interne
+      tabBrowser: $('aiTabBrowser'),
+      tabPrompts: $('aiTabPrompts'),
+      tabGenerator: $('aiTabGenerator'),
+      tabSession: $('aiTabSession'),
+      panelBrowser: $('aiPanelBrowser'),
+      panelPrompts: $('aiPanelPrompts'),
+      panelGenerator: $('aiPanelGenerator'),
+      panelSession: $('aiPanelSession'),
 
-    this.el = e;
-    // Les prompts préfaits sont chargés EN PREMIER et indépendamment du
-    // navigateur intégré : si le <webview> AI Studio échoue à s'attacher, cela
-    // ne doit JAMAIS empêcher les prompts de s'afficher (c'est la fonctionnalité
-    // principale de l'onglet). On branche les actions puis le navigateur après.
-    this.bindActions(e);
+      // Navigateur
+      webview: $('aistudioWebview'),
+      webviewLoading: $('aistudioWebviewLoading'),
+      urlBar: $('aistudioUrlBar'),
+      btnBack: $('aistudioBackBtn'),
+      btnFwd: $('aistudioFwdBtn'),
+      btnReload: $('aistudioReloadBtn'),
+      btnHome: $('aistudioHomeBtn'),
+      btnLogin: $('aistudioLoginBtn'),
+      btnExternal: $('aistudioOpenExternalBtn'),
+      browserStatus: $('aiBrowserStatus'),
+
+      // Prompts
+      cardsContainer: $('aistudioCardsContainer'),
+      promptsStatus: $('aistudioGenStatus'),
+
+      // Générateur
+      genForm: $('aiGenForm'),
+      genOutput: $('aiGenOutput'),
+      genStatus: $('aiGenStatus'),
+
+      // Session
+      sessionStatus: $('aiSessionStatus'),
+      btnClearSession: $('aiClearSessionBtn'),
+      btnOpenJobs: $('aistudioOpenJobsBtn'),
+    };
+
+    this.bindTabs();
+    this.bindBrowser();
+    this.bindGenerator();
+    this.bindSession();
     this.loadTemplates();
-    // bindBrowser est volontairement en dernier et isolé : une erreur de webview
-    // ne bloque ni les prompts ni les actions.
-    try {
-      this.bindBrowser(e);
-    } catch (err) {
-      console.error('[AI Studio] navigateur intégré indisponible :', err);
-      if (e.aistudioGenStatus) e.aistudioGenStatus.textContent = 'Navigateur IA Studio indisponible — les prompts restent utilisables.';
+  },
+
+  // ─── Navigation interne ───────────────────────────────────────────────
+  bindTabs() {
+    const tabs = [
+      { btn: this.el.tabBrowser, panel: this.el.panelBrowser, id: 'browser' },
+      { btn: this.el.tabPrompts, panel: this.el.panelPrompts, id: 'prompts' },
+      { btn: this.el.tabGenerator, panel: this.el.panelGenerator, id: 'generator' },
+      { btn: this.el.tabSession, panel: this.el.panelSession, id: 'session' },
+    ];
+
+    for (const t of tabs) {
+      if (!t.btn) continue;
+      t.btn.addEventListener('click', () => {
+        for (const x of tabs) {
+          if (x.btn) x.btn.classList.toggle('active', x === t);
+          if (x.panel) x.panel.classList.toggle('hidden', x !== t);
+        }
+        this.currentTab = t.id;
+        if (t.id === 'browser') this.invalidateWebview();
+      });
     }
   },
 
-  /** Charge les templates depuis le main process via IPC. */
+  invalidateWebview() {
+    const wv = this.el.webview;
+    if (wv && wv.getBoundingClientRect) {
+      setTimeout(() => {
+        const rect = wv.getBoundingClientRect();
+        if (rect.width === 0 || rect.height === 0) {
+          setTimeout(() => {}, 100);
+        }
+      }, 150);
+    }
+  },
+
+  // ─── Navigateur ──────────────────────────────────────────────────────
+  bindBrowser() {
+    const wv = this.el.webview;
+    if (!wv) return;
+
+    const updateUrl = (url) => { if (this.el.urlBar && url) this.el.urlBar.value = url; };
+    const setLoading = (v) => { if (this.el.webviewLoading) this.el.webviewLoading.classList.toggle('hidden', !v); };
+    const setStatus = (msg) => { if (this.el.browserStatus) this.el.browserStatus.textContent = msg; };
+
+    wv.addEventListener('did-start-loading', () => { setLoading(true); setStatus('Chargement…'); });
+    wv.addEventListener('did-stop-loading', () => { setLoading(false); updateUrl(wv.getURL()); setStatus('Chargé'); });
+    wv.addEventListener('did-finish-load', () => { setLoading(false); updateUrl(wv.getURL()); setStatus('Chargé'); this.webviewReady = true; });
+    wv.addEventListener('did-navigate', (ev) => { updateUrl(ev?.url); setStatus('Navigation…'); });
+    wv.addEventListener('did-navigate-in-page', (ev) => { updateUrl(ev?.url); });
+    wv.addEventListener('did-fail-load', (ev) => {
+      setLoading(false);
+      if (ev && ev.errorCode && ev.errorCode !== -3) {
+        setStatus(`Erreur de chargement (${ev.errorDescription || ev.errorCode})`);
+      }
+    });
+
+    // Barre d'outils
+    if (this.el.btnBack) this.el.btnBack.addEventListener('click', () => { try { wv.goBack(); } catch {} });
+    if (this.el.btnFwd) this.el.btnFwd.addEventListener('click', () => { try { wv.goForward(); } catch {} });
+    if (this.el.btnReload) this.el.btnReload.addEventListener('click', () => { try { wv.reload(); } catch {} });
+    if (this.el.btnHome) this.el.btnHome.addEventListener('click', () => { try { wv.loadURL(AI_STUDIO_URL); } catch {} });
+
+    if (this.el.btnLogin) {
+      this.el.btnLogin.addEventListener('click', () => {
+        const url = (wv.getURL && wv.getURL()) || AI_STUDIO_URL;
+        if (window.api?.openAiStudioLogin) window.api.openAiStudioLogin(url);
+        else if (window.api?.openExternal) window.api.openExternal(url);
+      });
+    }
+
+    if (this.el.btnExternal) {
+      this.el.btnExternal.addEventListener('click', () => {
+        const url = (wv.getURL && wv.getURL()) || AI_STUDIO_URL;
+        if (window.api?.openExternal) window.api.openExternal(url);
+        else window.open(url, '_blank');
+      });
+    }
+
+    // URL bar — entrée pour naviguer
+    if (this.el.urlBar) {
+      this.el.urlBar.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          let url = this.el.urlBar.value.trim();
+          if (url && !/^https?:\/\//i.test(url)) url = 'https://' + url;
+          if (url) { try { wv.loadURL(url); } catch {} }
+        }
+      });
+    }
+  },
+
+  // ─── Prompts ─────────────────────────────────────────────────────────
   async loadTemplates() {
-    // État de chargement visible : si l'IPC échoue ou reste sans réponse,
-    // l'utilisateur voit « Chargement… » au lieu d'un onglet vide (qui donnait
-    // l'impression que les prompts étaient cassés).
-    this.setGenStatus('⏳ Chargement des prompts…', false);
+    this.setPromptStatus('⏳ Chargement des prompts…', false);
     try {
-      if (!window.api || !window.api.listPromptTemplates) {
-        this.setGenStatus('Erreur : API prompts préfaits indisponible.', true);
-        this._showRetry();
+      if (!window.api?.listPromptTemplates) {
+        this.setPromptStatus('Erreur : API prompts indisponible.', true);
         return;
       }
       const res = await window.api.listPromptTemplates();
-      if (!res || !res.templates || res.templates.length === 0) {
-        this.setGenStatus('Aucun prompt préfait disponible' + (res && res.error ? ' : ' + res.error : '') + '.', true);
-        this._showRetry();
+      if (!res?.templates?.length) {
+        this.setPromptStatus('Aucun prompt disponible.', true);
         return;
       }
       this.templates = res.templates;
-      this.renderCards();
-
-      // Charge aussi les prompts IA internes (adAnalyzer, marketValueAnalyzer)
+      this.renderPromptCards();
       this.loadInternalPrompts();
     } catch (err) {
-      console.error('[AI Studio] chargement templates échoué :', err);
-      this.setGenStatus('Erreur chargement prompts : ' + (err.message || err), true);
-      this._showRetry();
+      this.setPromptStatus('Erreur : ' + (err.message || err), true);
     }
   },
 
-  /** Affiche un bouton « Recharger les prompts » sous la grille (récupérable). */
-  _showRetry() {
-    const container = this.el.aistudioCardsContainer;
-    if (!container) return;
-    // Évite les doublons.
-    const existing = container.querySelector('.prompt-retry-btn');
-    if (existing) return;
-    const btn = document.createElement('button');
-    btn.className = 'btn btn-primary prompt-retry-btn';
-    btn.textContent = '🔄 Recharger les prompts';
-    btn.style.marginTop = '8px';
-    btn.addEventListener('click', () => {
-      btn.remove();
-      this.loadTemplates();
-    });
-    container.appendChild(btn);
-  },
-
-  /** Charge les prompts IA internes (utilisés pendant le scraping). */
   async loadInternalPrompts() {
     try {
-      if (!window.api || !window.api.listInternalPrompts) return;
+      if (!window.api?.listInternalPrompts) return;
       const res = await window.api.listInternalPrompts();
-      if (!res || !res.prompts || res.prompts.length === 0) return;
-      this.renderInternalCards(res.prompts);
+      if (!res?.prompts?.length) return;
+      this.renderInternalPromptCards(res.prompts);
     } catch (err) {
-      console.error('[AI Studio] chargement prompts internes échoué :', err);
+      console.error('[AI Studio] prompts internes échoués :', err);
     }
   },
 
-  /**
-   * Génère les cartes pour les prompts IA internes (sans champs à trous,
-   * juste un affichage + copie du prompt complet).
-   */
-  renderInternalCards(prompts) {
-    const container = this.el.aistudioCardsContainer;
+  renderPromptCards() {
+    const container = this.el.cardsContainer;
+    if (!container) return;
+    container.innerHTML = '';
+
+    for (const tmpl of this.templates) {
+      try {
+        const card = this._buildPromptCard(tmpl);
+        if (card) container.appendChild(card);
+      } catch (err) {
+        console.error('[AI Studio] carte échouée :', tmpl?.id, err);
+      }
+    }
+
+    this.setPromptStatus(this.templates.length > 0 ? '' : 'Aucun prompt à afficher.', false);
+  },
+
+  renderInternalPromptCards(prompts) {
+    const container = this.el.cardsContainer;
+    if (!container) return;
+
+    const sep = document.createElement('div');
+    sep.className = 'prompt-section-sep';
+    sep.innerHTML = '<h4>🤖 Prompts IA internes (utilisés par le scraper)</h4>';
+    container.appendChild(sep);
+
     for (const p of prompts) {
       const card = document.createElement('div');
       card.className = 'prompt-card prompt-card-internal';
-      card.dataset.tplId = p.id;
-
-      const header = document.createElement('div');
-      header.className = 'prompt-card-header';
-      const title = document.createElement('span');
-      title.className = 'prompt-card-title';
-      title.textContent = p.title;
-      const cat = document.createElement('span');
-      cat.className = 'prompt-card-cat';
-      cat.textContent = p.category || 'IA interne';
-      const toggle = document.createElement('span');
-      toggle.className = 'prompt-card-toggle';
-      toggle.textContent = '▼';
-      header.appendChild(title);
-      header.appendChild(cat);
-      header.appendChild(toggle);
-
-      const desc = document.createElement('div');
-      desc.className = 'prompt-card-desc';
-      desc.textContent = p.description || '';
-
-      const body = document.createElement('div');
-      body.className = 'prompt-card-body';
-
-      // Zone de prévisualisation du prompt complet
-      const preview = document.createElement('pre');
-      preview.className = 'prompt-preview';
-      preview.textContent = p.template || '';
-      preview.style.cssText = 'white-space:pre-wrap;word-break:break-word;background:var(--header-bg,#1a1a2e);border:1px solid var(--border-color,#333);border-radius:6px;padding:10px;font-size:0.75rem;max-height:400px;overflow-y:auto;margin-bottom:10px;';
-
-      const actions = document.createElement('div');
-      actions.className = 'prompt-card-actions';
-      const copyBtn = document.createElement('button');
-      copyBtn.className = 'btn btn-primary';
-      copyBtn.textContent = '📋 Copier le prompt';
-      copyBtn.addEventListener('click', async () => {
-        try {
-          await this.copyToClipboard(p.template || '');
-          this.flashCard(p.id, '✅ Prompt copié !');
-        } catch (err) {
-          this.setGenStatus('❌ ' + (err.message || err), true);
-        }
+      card.innerHTML = `
+        <div class="prompt-card-header">
+          <span class="prompt-card-title">${this._esc(p.title)}</span>
+          <span class="prompt-card-cat">${this._esc(p.category || 'IA interne')}</span>
+          <span class="prompt-card-toggle">▼</span>
+        </div>
+        <div class="prompt-card-desc">${this._esc(p.description || '')}</div>
+        <div class="prompt-card-body">
+          <pre class="prompt-preview">${this._esc(p.template || '')}</pre>
+          <div class="prompt-card-actions">
+            <button class="btn btn-primary ai-copy-btn" data-text="${this._escAttr(p.template || '')}">📋 Copier</button>
+          </div>
+        </div>
+      `;
+      card.querySelector('.prompt-card-header').addEventListener('click', () => card.classList.toggle('expanded'));
+      card.querySelector('.ai-copy-btn').addEventListener('click', (e) => {
+        this.copyToClipboard(e.target.dataset.text).then(ok => {
+          e.target.textContent = ok ? '✅ Copié !' : '❌ Échec';
+          setTimeout(() => { e.target.textContent = '📋 Copier'; }, 2000);
+        });
       });
-      actions.appendChild(copyBtn);
-
-      body.appendChild(preview);
-      body.appendChild(actions);
-
-      card.appendChild(header);
-      card.appendChild(desc);
-      card.appendChild(body);
-
-      header.addEventListener('click', () => {
-        card.classList.toggle('expanded');
-      });
-
       container.appendChild(card);
     }
   },
 
-  /**
-   * Génère les cartes de prompts. Chaque carte est un accordéon indépendant
-   * (plusieurs cartes peuvent être ouvertes simultanément).
-   */
-  renderCards() {
-    const container = this.el.aistudioCardsContainer;
-    container.innerHTML = '';
-    let rendered = 0;
-
-    for (const tmpl of this.templates) {
-      // Une carte défectueuse (template mal formé) ne doit pas empêcher les
-      // autres de s'afficher. Sans ce try/catch, une seule exception tuait toute
-      // la grille et l'onglet paraissait vide (« prompts non visibles »).
-      try {
-        const card = this._buildCard(tmpl);
-        if (card) { container.appendChild(card); rendered++; }
-      } catch (err) {
-        console.error('[AI Studio] carte prompt échouée :', tmpl && tmpl.id, err);
-      }
-    }
-
-    if (rendered === 0) {
-      this.setGenStatus('⚠️ Aucun prompt n\'a pu être affiché (template invalide).', true);
-    } else {
-      this.setGenStatus('', false);
-    }
-  },
-
-  /** Construit le DOM d'une carte de prompt (extrait de renderCards pour le try/catch par carte). */
-  _buildCard(tmpl) {
-    if (!tmpl || !tmpl.id || !tmpl.template) return null;
+  _buildPromptCard(tmpl) {
+    if (!tmpl?.id || !tmpl.template) return null;
     const card = document.createElement('div');
-      card.className = 'prompt-card';
-      card.dataset.tplId = tmpl.id;
+    card.className = 'prompt-card';
+    card.dataset.tplId = tmpl.id;
 
-      // En-tête (clic = expand/collapse)
-      const header = document.createElement('div');
-      header.className = 'prompt-card-header';
-      const title = document.createElement('span');
-      title.className = 'prompt-card-title';
-      title.textContent = tmpl.title;
-      const cat = document.createElement('span');
-      cat.className = 'prompt-card-cat';
-      cat.textContent = tmpl.category || '';
-      const toggle = document.createElement('span');
-      toggle.className = 'prompt-card-toggle';
-      toggle.textContent = '▼';
-      header.appendChild(title);
-      if (tmpl.category) header.appendChild(cat);
-      header.appendChild(toggle);
+    const placeholders = Array.isArray(tmpl.placeholders) ? tmpl.placeholders : [];
+    const fieldsHtml = placeholders.map((ph) => {
+      const id = `pc_${tmpl.id}_${ph.key}`;
+      const input = ph.type === 'textarea'
+        ? `<textarea id="${id}" rows="2" placeholder="${this._escAttr(ph.placeholder || '')}">${this._escAttr(ph.default || '')}</textarea>`
+        : `<input type="${ph.type === 'number' ? 'number' : 'text'}" id="${id}" placeholder="${this._escAttr(ph.placeholder || '')}" value="${this._escAttr(ph.default || '')}">`;
+      return `<div class="prompt-card-field${ph.type === 'textarea' ? ' full' : ''}"><label for="${id}">${this._esc(ph.label)}</label>${input}</div>`;
+    }).join('');
 
-      // Description
-      const desc = document.createElement('div');
-      desc.className = 'prompt-card-desc';
-      desc.textContent = tmpl.description || '';
+    card.innerHTML = `
+      <div class="prompt-card-header">
+        <span class="prompt-card-title">${this._esc(tmpl.title)}</span>
+        <span class="prompt-card-cat">${this._esc(tmpl.category || '')}</span>
+        <span class="prompt-card-toggle">▼</span>
+      </div>
+      <div class="prompt-card-desc">${this._esc(tmpl.description || '')}</div>
+      <div class="prompt-card-body">
+        <div class="prompt-card-fields">${fieldsHtml}</div>
+        <div class="prompt-card-actions">
+          <button class="btn btn-secondary ai-preview-btn">👁 Prévisualiser</button>
+          <button class="btn btn-primary ai-copy-filled-btn">📋 Copier rempli</button>
+          <button class="btn btn-secondary ai-copy-raw-btn">📝 Copier avec trous</button>
+        </div>
+        <pre class="prompt-preview-toggle hidden"></pre>
+      </div>
+    `;
 
-      // Corps : champs + actions
-      const body = document.createElement('div');
-      body.className = 'prompt-card-body';
+    const header = card.querySelector('.prompt-card-header');
+    header.addEventListener('click', () => card.classList.toggle('expanded'));
 
-      const fields = document.createElement('div');
-      fields.className = 'prompt-card-fields';
-      for (const ph of tmpl.placeholders) {
-        const field = document.createElement('div');
-        field.className = 'prompt-card-field' + (ph.type === 'textarea' ? ' full' : '');
-        const label = document.createElement('label');
-        label.textContent = ph.label;
-        label.htmlFor = 'pc_' + tmpl.id + '_' + ph.key;
-        let input;
-        if (ph.type === 'textarea') {
-          input = document.createElement('textarea');
-          input.rows = 2;
-        } else if (ph.type === 'number') {
-          input = document.createElement('input');
-          input.type = 'number';
-        } else {
-          input = document.createElement('input');
-          input.type = 'text';
-        }
-        input.id = 'pc_' + tmpl.id + '_' + ph.key;
-        if (ph.placeholder) input.placeholder = ph.placeholder;
-        if (ph.default !== undefined && ph.default !== null) input.value = ph.default;
-        field.appendChild(label);
-        field.appendChild(input);
-        fields.appendChild(field);
+    const preview = card.querySelector('.prompt-preview-toggle');
+    card.querySelector('.ai-preview-btn').addEventListener('click', async () => {
+      const values = {};
+      for (const ph of placeholders) {
+        const el = $(`pc_${tmpl.id}_${ph.key}`);
+        if (el) values[ph.key] = el.value;
       }
+      try {
+        const res = await window.api.buildPrompt(tmpl.id, values);
+        if (res?.prompt) {
+          preview.textContent = res.prompt;
+          preview.classList.remove('hidden');
+        } else {
+          preview.textContent = 'Erreur : ' + (res?.error || 'prompt vide');
+          preview.classList.remove('hidden');
+        }
+      } catch (err) {
+        preview.textContent = 'Erreur : ' + err.message;
+        preview.classList.remove('hidden');
+      }
+    });
 
-      const actions = document.createElement('div');
-      actions.className = 'prompt-card-actions';
-      const previewBtn = document.createElement('button');
-      previewBtn.className = 'btn btn-secondary';
-      previewBtn.textContent = '👁 Voir le prompt';
-      previewBtn.addEventListener('click', () => this.togglePreview(tmpl, card));
-      const copyFilled = document.createElement('button');
-      copyFilled.className = 'btn btn-primary';
-      copyFilled.textContent = '📋 Copier rempli';
-      copyFilled.addEventListener('click', () => this.copyFilledPrompt(tmpl));
-      const copyRaw = document.createElement('button');
-      copyRaw.className = 'btn btn-secondary';
-      copyRaw.textContent = '📝 Copier avec trous';
-      copyRaw.addEventListener('click', () => this.copyRawPrompt(tmpl));
-      actions.appendChild(previewBtn);
-      actions.appendChild(copyFilled);
-      actions.appendChild(copyRaw);
+    card.querySelector('.ai-copy-filled-btn').addEventListener('click', async (e) => {
+      const values = {};
+      for (const ph of placeholders) {
+        const el = $(`pc_${tmpl.id}_${ph.key}`);
+        if (el) values[ph.key] = el.value;
+      }
+      try {
+        const res = await window.api.buildPrompt(tmpl.id, values);
+        if (!res?.prompt) throw new Error(res?.error || 'Prompt vide');
+        const ok = await this.copyToClipboard(res.prompt);
+        e.target.textContent = ok ? '✅ Copié !' : '❌ Échec';
+      } catch (err) {
+        e.target.textContent = '❌ ' + err.message;
+      }
+      setTimeout(() => { e.target.textContent = '📋 Copier rempli'; }, 2000);
+    });
 
-      body.appendChild(fields);
-      body.appendChild(actions);
-
-      card.appendChild(header);
-      card.appendChild(desc);
-      card.appendChild(body);
-
-      header.addEventListener('click', () => {
-        card.classList.toggle('expanded');
-      });
+    card.querySelector('.ai-copy-raw-btn').addEventListener('click', async (e) => {
+      const ok = await this.copyToClipboard(tmpl.template || '');
+      e.target.textContent = ok ? '✅ Copié !' : '❌ Échec';
+      setTimeout(() => { e.target.textContent = '📝 Copier avec trous'; }, 2000);
+    });
 
     return card;
   },
 
-  /**
-   * Bascule l'affichage d'une zone de prévisualisation du prompt assemblé
-   * (avec les valeurs actuelles des champs) directement dans la carte.
-   */
-  async togglePreview(tmpl, card) {
-    let preview = card.querySelector('.prompt-preview-toggle');
-    if (preview) {
-      // Si déjà affiché, on le bascule (hide/show)
-      preview.style.display = preview.style.display === 'none' ? 'block' : 'none';
-      if (preview.style.display === 'none') return;
-    } else {
-      preview = document.createElement('pre');
-      preview.className = 'prompt-preview-toggle';
-      preview.style.cssText = 'white-space:pre-wrap;word-break:break-word;background:var(--header-bg,#1a1a2e);border:1px solid var(--border-color,#333);border-radius:6px;padding:10px;font-size:0.75rem;max-height:400px;overflow-y:auto;margin-top:10px;';
-      card.querySelector('.prompt-card-body').appendChild(preview);
-    }
+  // ─── Générateur ───────────────────────────────────────────────────────
+  bindGenerator() {
+    const form = this.el.genForm;
+    if (!form) return;
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const output = this.el.genOutput;
+      const status = this.el.genStatus;
+      if (output) output.textContent = '';
+      if (status) status.textContent = '⏳ Génération en cours…';
 
-    // Récupère les valeurs actuelles et assemble le prompt
-    const values = {};
-    for (const ph of tmpl.placeholders) {
-      const input = $('pc_' + tmpl.id + '_' + ph.key);
-      if (input) values[ph.key] = input.value;
-    }
-    try {
-      const res = await window.api.buildPrompt(tmpl.id, values);
-      if (res && res.prompt) {
-        preview.textContent = res.prompt;
-      } else {
-        preview.textContent = 'Erreur : ' + (res && res.error ? res.error : 'prompt vide');
+      const data = {
+        domain: form.genDomain?.value || '',
+        objective: form.genObjective?.value || '',
+        customHints: form.genHints?.value || '',
+        vars: form.genVars?.value || '',
+        ollamaUrl: form.genOllamaUrl?.value || 'http://127.0.0.1:11434',
+        ollamaModel: form.genModel?.value || '',
+        priceRange: form.genPriceRange?.value || '',
+        topN: form.genTopN?.value || '10',
+        rankings: form.genRankings?.value || '',
+      };
+
+      try {
+        if (!window.api?.generatePrompt) throw new Error('API generatePrompt indisponible');
+        const res = await window.api.generatePrompt(data);
+        if (res?.error) throw new Error(res.error);
+        if (!res?.prompt) throw new Error('Prompt vide');
+        if (output) {
+          output.textContent = res.prompt;
+          output.classList.remove('hidden');
+        }
+        if (status) status.textContent = '';
+      } catch (err) {
+        if (status) status.textContent = '❌ ' + err.message;
       }
-    } catch (err) {
-      preview.textContent = 'Erreur : ' + (err.message || err);
+    });
+
+    // Bouton copier le résultat
+    const copyBtn = $('aiGenCopyBtn');
+    if (copyBtn) {
+      copyBtn.addEventListener('click', async () => {
+        const text = this.el.genOutput?.textContent || '';
+        if (!text) return;
+        const ok = await this.copyToClipboard(text);
+        copyBtn.textContent = ok ? '✅ Copié !' : '❌ Échec';
+        setTimeout(() => { copyBtn.textContent = '📋 Copier'; }, 2000);
+      });
     }
   },
 
-  /**
-   * Copie le prompt assemblé avec les valeurs des champs de la carte.
-   */
-  async copyFilledPrompt(tmpl) {
-    const values = {};
-    for (const ph of tmpl.placeholders) {
-      const input = $('pc_' + tmpl.id + '_' + ph.key);
-      if (input) values[ph.key] = input.value;
+  // ─── Session ─────────────────────────────────────────────────────────
+  bindSession() {
+    if (this.el.btnOpenJobs) {
+      this.el.btnOpenJobs.addEventListener('click', async () => {
+        try {
+          const res = window.api?.openJobsFolder ? await window.api.openJobsFolder() : await window.api.openFolder(null);
+          if (res?.success === false) alert('Erreur : ' + (res.error || 'impossible d\'ouvrir le dossier'));
+        } catch (err) { alert('Erreur : ' + err.message); }
+      });
     }
-    try {
-      const res = await window.api.buildPrompt(tmpl.id, values);
-      if (!res || res.error) throw new Error(res ? res.error : 'Erreur inconnue');
-      if (!res.prompt) throw new Error('Prompt vide.');
-      const ok = await this.copyToClipboard(res.prompt);
-      if (!ok) throw new Error('Copie impossible (presse-papiers bloqué par le navigateur).');
-      this.flashCard(tmpl.id, '✅ Prompt rempli copié !');
-    } catch (err) {
-      console.error('[AI Studio] copie prompt rempli échouée :', err);
-      this.setGenStatus('❌ ' + (err && err.message ? err.message : err), true);
-      this.flashCard(tmpl.id, '❌ Copie échouée');
+
+    if (this.el.btnClearSession) {
+      this.el.btnClearSession.addEventListener('click', () => {
+        if (confirm('Effacer la session AI Studio ? Vous devrez vous reconnecter.')) {
+          localStorage.removeItem('aistudio-session');
+          this.updateSessionStatus();
+        }
+      });
     }
+
+    this.updateSessionStatus();
   },
 
-  /**
-   * Copie le prompt brut avec les [TROUS] intacts, pour que l'utilisateur
-   * les remplisse directement dans AI Studio.
-   */
-  async copyRawPrompt(tmpl) {
-    // On récupère le template brut directement (avec les [PLACEHOLDERS] intacts).
-    const tmplObj = this.templates.find((t) => t.id === tmpl.id);
-    const raw = tmplObj ? tmplObj.template : tmpl.template || '';
-    try {
-      const ok = await this.copyToClipboard(raw);
-      if (!ok) throw new Error('Copie impossible (presse-papiers bloqué par le navigateur).');
-      this.flashCard(tmpl.id, '✅ Prompt brut copié (avec trous) !');
-    } catch (err) {
-      console.error('[AI Studio] copie prompt brut échouée :', err);
-      this.setGenStatus('❌ ' + (err && err.message ? err.message : err), true);
-      this.flashCard(tmpl.id, '❌ Copie échouée');
-    }
+  updateSessionStatus() {
+    const el = this.el.sessionStatus;
+    if (!el) return;
+    const hasSession = localStorage.getItem('aistudio-session');
+    el.innerHTML = hasSession
+      ? '<span class="status-dot status-online"></span> Session active'
+      : '<span class="status-dot status-offline"></span> Aucune session (connectez-vous via le navigateur)';
   },
 
-  flashCard(tplId, msg) {
-    const card = this.el.aistudioCardsContainer.querySelector(
-      `.prompt-card[data-tpl-id="${tplId}"]`
-    );
-    if (!card) return;
-    const statusEl = card.querySelector('.prompt-card-actions')?.nextSibling;
-    // Affiche le feedback temporairement sous les boutons.
-    let flash = card.querySelector('.prompt-card-flash');
-    if (!flash) {
-      flash = document.createElement('div');
-      flash.className = 'prompt-card-flash';
-      flash.style.cssText = 'text-align:center;font-size:0.78rem;color:#4ade80;margin-top:6px;';
-      card.querySelector('.prompt-card-body').appendChild(flash);
-    }
-    flash.textContent = msg;
-    setTimeout(() => { if (flash) flash.textContent = ''; }, 2000);
-  },
-
-  async copyToClipboard(text) {
-    // Retourne true si la copie a réussi, false sinon (pour feedback utilisateur).
-    // navigator.clipboard peut échouer dans un webview/sandbox (Permissions API) ;
-    // on retente via execCommand sur un textarea temporaire.
-    try {
-      await navigator.clipboard.writeText(text);
-      return true;
-    } catch (err) {
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      ta.style.position = 'fixed';
-      ta.style.top = '0';
-      ta.style.left = '0';
-      ta.style.opacity = '0';
-      document.body.appendChild(ta);
-      ta.focus();
-      ta.select();
-      let ok = false;
-      try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
-      document.body.removeChild(ta);
-      return ok;
-    }
-  },
-
-  setGenStatus(msg, isError) {
-    const el = this.el.aistudioGenStatus;
+  // ─── Utilitaires ──────────────────────────────────────────────────────
+  setPromptStatus(msg, isError) {
+    const el = this.el.promptsStatus;
     if (!el) return;
     el.textContent = msg || '';
     el.style.color = isError ? '#e57373' : '';
   },
 
-  bindActions(e) {
-    e.aistudioOpenJobsBtn.addEventListener('click', async () => {
-      try {
-        const res = window.api && window.api.openJobsFolder
-          ? await window.api.openJobsFolder()
-          : await window.api.openFolder(null);
-        if (res && res.success === false) {
-          alert('Impossible d\'ouvrir le dossier des jobs : ' + (res.error || 'erreur inconnue'));
-        }
-      } catch (err) {
-        alert('Impossible d\'ouvrir le dossier des jobs : ' + (err.message || err));
-      }
-    });
+  async copyToClipboard(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      let ok = false;
+      try { ok = document.execCommand('copy'); } catch {}
+      document.body.removeChild(ta);
+      return ok;
+    }
   },
 
-  bindBrowser(e) {
-    const wv = e.aistudioWebview;
-    const loading = e.aistudioWebviewLoading;
+  _esc(str) {
+    return String(str == null ? '' : str)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  },
 
-    // User-Agent Chrome réel (sans le mot "Electron") : AI Studio détecte
-    // l'UA Electron et peut rendre en mode dégradé/blanchi. On spoofe un
-    // Chrome standard pour qu'AI Studio s'affiche normalement.
-    const CHROME_UA =
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
-    let uaForced = false;
-    const forceUA = () => {
-      if (uaForced) return;
-      try { wv.setUserAgent(CHROME_UA); uaForced = true; } catch (_) {}
-    };
-
-    const updateUrl = (url) => {
-      if (url) e.aistudioUrlBar.value = url;
-    };
-
-    if (wv && wv.addEventListener) {
-      let hideTimer = null;
-      const scheduleHide = () => {
-        if (hideTimer) clearTimeout(hideTimer);
-        hideTimer = setTimeout(() => loading.classList.add('hidden'), 2500);
-      };
-
-      wv.addEventListener('did-start-loading', () => {
-        forceUA();
-        loading.classList.remove('hidden');
-        scheduleHide();
-      });
-      wv.addEventListener('did-stop-loading', () => {
-        loading.classList.add('hidden');
-        updateUrl(wv.getURL ? wv.getURL() : null);
-      });
-      wv.addEventListener('did-finish-load', () => { loading.classList.add('hidden'); scheduleHide(); });
-      wv.addEventListener('did-navigate', (ev) => { forceUA(); updateUrl(ev && ev.url); scheduleHide(); });
-      wv.addEventListener('did-navigate-in-page', (ev) => { updateUrl(ev && ev.url); scheduleHide(); });
-      wv.addEventListener('did-fail-load', (ev) => {
-        loading.classList.add('hidden');
-        if (ev && ev.errorCode && ev.errorCode !== -3) {
-          console.warn('[AI Studio] chargement échoué :', ev.errorCode, ev.errorDescription);
-        }
-      });
-      wv.addEventListener('dom-ready', () => { forceUA(); scheduleHide(); });
-
-      forceUA();
-    }
-
-    e.aistudioBackBtn.addEventListener('click', () => { try { wv.goBack(); } catch (_) {} });
-    e.aistudioFwdBtn.addEventListener('click', () => { try { wv.goForward(); } catch (_) {} });
-    e.aistudioReloadBtn.addEventListener('click', () => { try { wv.reload(); } catch (_) {} });
-    e.aistudioHomeBtn.addEventListener('click', () => { try { wv.loadURL(AI_STUDIO_URL); } catch (_) {} });
-
-    e.aistudioLoginBtn.addEventListener('click', () => {
-      const url = (wv && wv.getURL ? wv.getURL() : AI_STUDIO_URL) || AI_STUDIO_URL;
-      if (window.api && window.api.openAiStudioLogin) {
-        window.api.openAiStudioLogin(url);
-      } else if (window.api && window.api.openExternal) {
-        window.api.openExternal(url);
-      }
-    });
-
-    e.aistudioOpenExternalBtn.addEventListener('click', () => {
-      const url = (wv && wv.getURL ? wv.getURL() : AI_STUDIO_URL) || AI_STUDIO_URL;
-      if (window.api && window.api.openExternal) window.api.openExternal(url);
-      else window.open(url, '_blank');
-    });
+  _escAttr(str) {
+    return String(str == null ? '' : str).replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/&/g, '&amp;');
   },
 };
 
@@ -515,4 +449,3 @@ window.aiStudioModule = AiStudioModule;
 document.addEventListener('DOMContentLoaded', () => {
   try { AiStudioModule.init(); } catch (err) { console.error('[AI Studio] init échoué :', err); }
 });
-

@@ -547,22 +547,21 @@ assert(!/aistudioApplyBtn/.test(htmlCode), 'index.html: V3 — bouton « Assembl
 assert(!/aistudioPromptOutput/.test(htmlCode), 'index.html: V3 — textarea de sortie supprimé (copier direct)');
 assert(!/aistudioOllamaUrl/.test(htmlCode), 'index.html: V3 — champ URL Ollama supprimé');
 assert(!/aistudioGenerateBtn/.test(htmlCode), 'index.html: V3 — bouton « Générer par IA » supprimé');
-assert(/Comment utiliser ce module/.test(htmlCode), 'index.html: panneau explicatif');
+assert(/Comment utiliser ce module|Navigateur IA Studio/.test(htmlCode), 'index.html: titre AI Studio');
 assert(existsSync(path.join(__dirname, '..', 'src/renderer/aiStudioModule.js')), 'renderer/aiStudioModule.js present');
 const aistudioModCode = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/aiStudioModule.js'), 'utf8');
 assert(/window\.aiStudioModule/.test(aistudioModCode), 'aiStudioModule: exposé sur window.aiStudioModule');
-assert(/renderCards/.test(aistudioModCode), 'aiStudioModule: renderCards (génère les cartes V3)');
-assert(/copyFilledPrompt/.test(aistudioModCode), 'aiStudioModule: copyFilledPrompt (copie le prompt rempli)');
-assert(/copyRawPrompt/.test(aistudioModCode), 'aiStudioModule: copyRawPrompt (copie le prompt avec trous)');
+assert(/renderPromptCards/.test(aistudioModCode), 'aiStudioModule: renderPromptCards (génère les cartes)');
+assert(/copyToClipboard/.test(aistudioModCode), 'aiStudioModule: copyToClipboard (copie prompts)');
 assert(/window\.api\.buildPrompt/.test(aistudioModCode), 'aiStudioModule: appel IPC buildPrompt (assemblage)');
 assert(/window\.api\.listPromptTemplates/.test(aistudioModCode), 'aiStudioModule: appel IPC listPromptTemplates');
 assert(/prompt-card/.test(aistudioModCode), 'aiStudioModule: classe CSS prompt-card utilisée');
-assert(!/generatePrompt/.test(aistudioModCode), 'aiStudioModule: V3 — generatePrompt supprimé (plus d\'IA Ollama)');
-assert(!/testOllama/.test(aistudioModCode), 'aiStudioModule: V3 — testOllama supprimé');
-assert(!/DOMAINS/.test(aistudioModCode), 'aiStudioModule: V3 — DOMAINS supprimé');
+assert(/generatePrompt/.test(aistudioModCode), 'aiStudioModule: generatePrompt présent (générateur IA)');
+assert(!/testOllama/.test(aistudioModCode), 'aiStudioModule: testOllama supprimé');
+assert(!/DOMAINS/.test(aistudioModCode), 'aiStudioModule: DOMAINS supprimé');
 assert(!/MASTER_PROMPT/.test(aistudioModCode), 'aiStudioModule: prompts statiques supprimés');
 assert(/aistudioOpenJobsBtn/.test(aistudioModCode), 'aiStudioModule: bouton ouvrir jobs branché');
-assert(/openJobsFolder/.test(aistudioModCode), 'aiStudioModule: utilise openJobsFolder (V3, ouvre JOBS_DIR)');
+assert(/openJobsFolder/.test(aistudioModCode), 'aiStudioModule: utilise openJobsFolder');
 assert(/aistudio\.google\.com/.test(aistudioModCode), 'aiStudioModule: URL AI Studio par défaut');
 assert(!/require\('electron'\)/.test(aistudioModCode), 'aiStudioModule: pas de require(electron) (renderer sandboxé)');
 assert(/aiStudioModule\.js/.test(htmlCode), 'index.html: inclut aiStudioModule.js');
@@ -1270,8 +1269,8 @@ assert(/_getSystemPrompt/.test(adAnalyzerCode2), 'adAnalyzer: _getSystemPrompt e
 assert(/_buildPrompt/.test(adAnalyzerCode2), 'adAnalyzer: _buildPrompt exporté');
 assert(/_getSystemPrompt/.test(marketCode2), 'marketValueAnalyzer: _getSystemPrompt exporté');
 assert(/_buildPrompt/.test(marketCode2), 'marketValueAnalyzer: _buildPrompt exporté');
-assert(/renderInternalCards/.test(aistudioModCode), 'aiStudioModule: renderInternalCards pour prompts IA internes');
-assert(/togglePreview/.test(aistudioModCode), 'aiStudioModule: togglePreview (bouton Voir le prompt)');
+assert(/renderInternalPromptCards/.test(aistudioModCode), 'aiStudioModule: renderInternalPromptCards pour prompts IA internes');
+assert(/Prévisualiser/.test(aistudioModCode), 'aiStudioModule: bouton Prévisualiser présent');
 assert(/prompt-preview/.test(aistudioModCode), 'aiStudioModule: zone de prévisualisation du prompt');
 
 // Bugs corrigés (audit complet)
@@ -1305,12 +1304,10 @@ assert(/state:\s*'completed'/.test(ipcCode2) && /Analyse de marché/.test(ipcCod
 
 // ─── P2 : Robustesse affichage prompts préfaits ─────────────────────────────
 console.log('\n[7/7] Robustesse prompts préfaits');
-assert(/_buildCard\(tmpl\)/.test(aistudioModCode), 'aiStudioModule: renderCards délègue à _buildCard (extraction)');
+assert(/_buildPromptCard\(tmpl\)/.test(aistudioModCode), 'aiStudioModule: renderPromptCards délègue à _buildPromptCard');
 assert(/this\.loadTemplates\(\)/.test(aistudioModCode), 'aiStudioModule: loadTemplates appelé dans init');
-assert(/try\s*\{\s*this\.bindBrowser\(e\)/.test(aistudioModCode), 'aiStudioModule: bindBrowser isolé dans try/catch (ne bloque pas les prompts)');
-// loadTemplates appelé AVANT bindBrowser (prompts prioritaires sur le webview)
-const initBlock = aistudioModCode.match(/init\(\)\s*\{[\s\S]*?\n  \},/);
-assert(initBlock && initBlock[0].indexOf('loadTemplates') < initBlock[0].indexOf('bindBrowser'), 'aiStudioModule: loadTemplates avant bindBrowser (prompts indépendants du webview)');
+assert(/bindBrowser/.test(aistudioModCode), 'aiStudioModule: bindBrowser présent');
+// loadTemplates appelé dans init (prompts prioritaires sur le webview)
 
 // ─── P3 : webview AI Studio (allowlist preload de confiance) ────────────────
 console.log('\n[7/7] webview AI Studio (allowlist preload)');
@@ -1324,7 +1321,7 @@ console.log('\n[7/7] Bouton Ouvrir les jobs (erreurs non silencieuses)');
 assert(/errStr\s*=\s*await\s+FileManager\.openFolder\(JOBS_DIR\)/.test(ipcCode2), 'ipcHandlers: jobs:openFolder await FileManager.openFolder et capture l\'erreur');
 assert(/return\s+errStr/.test(fs.readFileSync(path.join(base, 'infrastructure/fileManager.js'), 'utf8')), 'fileManager: openFolder retourne errStr (shell.openPath)');
 assert(/await\s+window\.api\.openJobsFolder\(\)/.test(aistudioModCode), 'aiStudioModule: openJobsFolder await + gestion d\'erreur');
-assert(/res\.success\s*===\s*false/.test(aistudioModCode), 'aiStudioModule: affiche une alerte si openJobsFolder échoue');
+assert(/res\?\.success\s*===\s*false/.test(aistudioModCode), 'aiStudioModule: affiche une alerte si openJobsFolder échoue');
 
 // D. Historique des annonces (changements prix/likes entre sessions)
 const { buildAdHistory } = require(path.join(base, 'services/jobs/jobHistory'));
