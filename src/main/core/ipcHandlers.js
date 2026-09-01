@@ -38,7 +38,7 @@ function writeSummaryFile(ads, summaryPath) {
       numero: i + 1,
       titre: a.title || null,
       url: a.url || null,
-      prix: a.price != null ? a.price : null,
+      prix: a.prix != null ? a.prix : (a.price != null ? a.price : null),
       resume_ia: (a.adAnalysis && a.adAnalysis.summary) || null,
     }));
     atomicWriteFileSync(summaryPath, JSON.stringify(summary, null, 2));

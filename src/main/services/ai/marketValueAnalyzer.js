@@ -112,7 +112,7 @@ Marque: ${attr.brand || 'non précisé'}
 Défauts: ${defects}
 Fonctionnement: ${working}
 
-Prix de l'annonce Leboncoin: ${ad.price != null ? ad.price + ' €' : 'non précisé'}
+Prix de l'annonce Leboncoin: ${ad.prix != null ? ad.prix + ' €' : (ad.price != null ? ad.price + ' €' : 'non précisé')}
 
 === SOURCES TROUVÉES SUR INTERNET ===
 ${searchResults.length > 0 ? srcLines : '(AUCUNE SOURCE TROUVÉE — moteur de recherche sans résultat ou en échec. Ne pas inventer de valeur.)'}
@@ -259,7 +259,7 @@ class MarketValueAnalyzer {
     const t0 = Date.now();
     const log = aiConfig._onLog || (() => {});
 
-    log({ level: 'debug', message: `[IA2] ${ad.id} — début analyse marché | prix=${ad.price}€ | produit="${truncate(ad.adAnalysis?.identifiedProduct || ad.title, 40)}"` });
+    log({ level: 'debug', message: `[IA2] ${ad.id} — début analyse marché | prix=${ad.prix ?? ad.price}€ | produit="${truncate(ad.adAnalysis?.identifiedProduct || ad.title, 40)}"` });
 
     // 1. Recherche Internet
     const query = buildSearchQuery(ad);
@@ -341,7 +341,7 @@ class MarketValueAnalyzer {
     parsed.query = query;
 
     // 4. Verdict (bénéfice/perte)
-    const v = computeVerdict(ad.price, parsed.realValue);
+    const v = computeVerdict(ad.prix ?? ad.price, parsed.realValue);
     parsed.verdict = v.verdict;
     parsed.verdictLabel = v.verdictLabel;
     parsed.deltaEur = v.deltaEur;

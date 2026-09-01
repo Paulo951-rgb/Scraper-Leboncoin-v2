@@ -21,7 +21,8 @@ class Notifier {
     const deltaText = delta != null ? `${delta > 0 ? '+' : ''}${delta} € vs marché` : '';
     const verdict = ma.verdictLabel || 'Bonne affaire';
 
-    const body = `${ad.title || 'Annonce'} - ${ad.price ? ad.price + ' €' : ''} (${ad.city || 'Inconnue'})${deltaText ? '\n' + deltaText : ''}`;
+    const prix = ad.prix ?? ad.price;
+    const body = `${ad.title || 'Annonce'} - ${prix != null ? prix + ' €' : ''} (${ad.city || 'Inconnue'})${deltaText ? '\n' + deltaText : ''}`;
 
     new Notification({
       title: `🟢 ${verdict.toUpperCase()} LEBONCOIN !`,
