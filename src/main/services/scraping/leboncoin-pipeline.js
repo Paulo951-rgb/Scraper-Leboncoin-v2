@@ -281,6 +281,7 @@ function normalizeAd(raw) {
     vendeurType: seller.type,
     vendeurId: seller.id,
     vendeurNote: seller.note,
+    nombreAvis: seller.nombreAvis,
     vendeurUrlProfil: seller.urlProfil,
     vendeurAncienneteJours: seller.ancienneteJours,
 
@@ -684,7 +685,8 @@ function toReadableBlock(ad, index) {
     : '  - Aucune photo';
 
   const note = ad.vendeurNote;
-  const noteLine = note != null ? `${note}/5` : 'null';
+  const nbAvis = ad.nombreAvis;
+  const noteLine = note != null ? `${note}/5${nbAvis != null ? ` (${nbAvis} avis)` : ''}` : 'null';
 
   const datePub = _fmtDate(ad.datePublication);
   const dateMod = _fmtDate(ad.dateModification);

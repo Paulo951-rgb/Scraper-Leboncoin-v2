@@ -21,8 +21,8 @@ const FAQ_DATA = [
         <ul>
           <li>récupérer des dizaines, voire des centaines d'annonces en quelques minutes ;</li>
           <li>estimer si chaque annonce est une <strong>bonne affaire</strong>, un prix correct ou <strong>trop cher</strong> grâce à une IA locale ;</li>
-          <li>visualiser le marché (prix moyen, médian, distribution, carte géographique) ;</li>
-          <li>comparer les annonces et exporter les résultats (Excel, JSON, TXT).</li>
+          <li>visualiser le marché (prix moyen, distribution, carte géographique, modes de transaction) ;</li>
+          <li>comparer les annonces et exporter les résultats (Excel, JSON, TXT, CSV).</li>
         </ul>`
   },
   {
@@ -42,26 +42,20 @@ const FAQ_DATA = [
         <p>Si Leboncoin détecte une activité robotique, un <strong>CAPTCHA peut apparaître</strong> : le navigateur devient alors visible pour que vous le résolviez manuellement, après quoi le scraping reprend tout seul.</p>`
   },
   {
-    q: 'À quoi servent les vitesses de scraping (Rapide / Équilibré / Prudent) ?',
+    q: 'À quoi servent les vitesses de scraping (Moyen / Rapide / Ultra-rapide) ?',
     a: `<p>Elles contrôlent le compromis <strong>vitesse ↔ discrétion</strong> lors de l'enrichissement des descriptions (Paramètres ⚙️ → Vitesse de scraping) :</p>
         <ul>
-          <li><strong>Rapide</strong> — 10 annonces en parallèle, délais courts. <strong>N'extrait pas les descriptions détaillées</strong> (titre + prix suffisent) si la case « Ignorer les descriptions » est cochée.</li>
-          <li><strong>Équilibré</strong> — 5 parallèle, délais modérés. Bon compromis pour l'analyse IA.</li>
-          <li><strong>Prudent</strong> — séquentiel, délais humains. Anti-blocage maximal, le plus discret.</li>
+          <li><strong>🟢 Moyen</strong> — 10 annonces en parallèle, délais courts. Bon compromis vitesse/stabilité.</li>
+          <li><strong>🟠 Rapide</strong> — 15 annonces en parallèle, délais très courts. Pour les utilisateurs expérimentés.</li>
+          <li><strong>🔴 Ultra-rapide</strong> — 25 annonces en parallèle, délais maximaux. Risque de blocage (403) plus élevé.</li>
         </ul>
-        <p>Une case <strong>« Ignorer les descriptions (Mode Ultra-Rapide) »</strong> dans le formulaire de recherche permet de sauter l'enrichissement des descriptions pour aller encore plus vite (titre + prix seulement).</p>
-        <p>Si vous voulez l'analyse de marché IA, préférez <strong>Équilibré</strong> ou <strong>Prudent</strong> (les descriptions aident l'IA à mieux évaluer).</p>`
-  },
-  {
-    q: 'Quelle est la différence entre "Prix Moyen" et "Prix Médian" ?',
-    a: `<p>Le <strong>prix moyen</strong> est la somme des prix divisée par le nombre d'annonces. Il est sensible aux valeurs extrêmes : une seule annonce très chère peut le faire grimper.</p>
-        <p>Le <strong>prix médian</strong> est le prix « du milieu » : autant d'annonces sont moins chères que lui que plus chères. Il est <strong>plus représentatif du marché réel</strong> car il ignore les extrêmes.</p>
-        <p>Exemple : 5 annonces à 100, 110, 120, 130 et 900 € → moyenne 272 €, médiane 120 €. La médiane reflète mieux le marché « normal ».</p>`
+        <p>Les trois modes utilisent une <strong>queue dynamique avec workers persistants</strong> : dès qu'un worker termine une annonce, il prend immédiatement la suivante. Pas de temps mort entre les batchs.</p>
+        <p>Une case <strong>« Ignorer les descriptions (Mode Ultra-Rapide) »</strong> dans le formulaire de recherche permet de sauter l'enrichissement des descriptions pour aller encore plus vite (titre + prix seulement).</p>`
   },
   {
     q: 'Que signifie "Remise en main propre" ?',
     a: `<p>Une annonce « main propre » signifie que le vendeur <strong>n'accepte pas la livraison</strong> (pas d'envoi postal) : l'acheteur doit aller chercher l'objet en personne.</p>
-        <p>Dans les statistiques et sur la carte, seules les annonces explicitement <strong>sans livraison</strong> sont comptées. Si l'information n'a pas pu être extraite (cas du mode Rapide), l'annonce <strong>n'est pas comptée</strong> comme main propre — on ne devine pas.</p>
+        <p>Dans les statistiques et sur la carte, seules les annonces explicitement <strong>avec main propre</strong> sont comptées. Si l'information n'a pas pu être extraite, l'annonce est comptée comme <strong>non renseignée</strong> — on ne devine pas.</p>
         <p>La carte propose un filtre « Remise en main propre uniquement » pour visualiser les annonces récupérables près de chez vous.</p>`
   },
   {

@@ -536,9 +536,9 @@ openCompareModalBtn.addEventListener('click', () => {
       const sign = ma.deltaEur > 0 ? '+' : '';
       return `
       <div class="compare-col">
-        <img src="${escapeHtml(a.images?.[0] || noPhotoUrl())}" style="width:100%; height:140px; object-fit:cover; border-radius:6px;">
+        <img src="${escapeHtml((a.photosUrls && a.photosUrls[0]) || (a.images && a.images[0]) || noPhotoUrl())}" style="width:100%; height:140px; object-fit:cover; border-radius:6px;">
         <strong>${escapeHtml(identifiedName(a))}</strong>
-        <div style="font-size:1.2rem; font-weight:bold; color:var(--primary-color);">${a.price} €</div>
+        <div style="font-size:1.2rem; font-weight:bold; color:var(--primary-color);">${a.prix != null ? a.prix + ' €' : (a.price != null ? a.price + ' €' : '-')}</div>
         <div style="font-size:0.8rem; color:var(--text-muted);">Valeur marché : ${ma.realValue != null ? ma.realValue + ' €' : '-'}</div>
         <div style="font-size:0.85rem; font-weight:bold; color:var(--green-deal);">Diff. : ${ma.deltaEur != null ? sign + ma.deltaEur + ' €' : '-'}</div>
         <div style="font-size:0.8rem;">Vendeur : ${escapeHtml(a.seller || 'Particulier')}</div>
@@ -1246,7 +1246,8 @@ function renderExplorerAds() {
         const badgeHtml = renderMarketBadge(ma);
 
         const isStarred = starredAds.has(String(a.id));
-        const thumbUrl = Array.isArray(a.images) && a.images.length > 0 ? a.images[0] : noPhotoUrl();
+        const thumbUrl = (Array.isArray(a.photosUrls) && a.photosUrls.length > 0) ? a.photosUrls[0]
+          : (Array.isArray(a.images) && a.images.length > 0 ? a.images[0] : noPhotoUrl());
 
         return `
         <div class="ad-card">
@@ -1257,7 +1258,7 @@ function renderExplorerAds() {
           </div>
           <div class="ad-card-body">
             <div class="ad-card-title">${escapeHtml(identifiedName(a))}</div>
-            <div class="ad-card-price">${a.price != null ? a.price + ' €' : '-'}</div>
+            <div class="ad-card-price">${a.prix != null ? a.prix + ' €' : (a.price != null ? a.price + ' €' : '-')}</div>
             <div class="ad-card-city">📍 ${escapeHtml(a.city || 'Inconnue')}</div>
             <div class="ad-card-footer">
               <button class="btn btn-secondary btn-small" style="flex:1;" onclick="openAdDetail('${escapePath(a.id)}')">👁️ Fiche Détaillée</button>
@@ -1331,8 +1332,8 @@ window.openAdDetail = (adId) => {
 
 
   let ratingText = '-';
-  const note = (targetAd.vendeur && targetAd.vendeur.note != null) ? targetAd.vendeur.note : targetAd.sellerRating;
-  const nbAvis = (targetAd.vendeur && targetAd.vendeur.nombreAvis != null) ? targetAd.vendeur.nombreAvis : targetAd.sellerRatingCount;
+  const note = targetAd.vendeurNote != null ? targetAd.vendeurNote : targetAd.sellerRating;
+  const nbAvis = targetAd.nombreAvis != null ? targetAd.nombreAvis : null;
   if (note != null) {
     ratingText = `${note}/5`;
     if (nbAvis != null) ratingText += ` (${nbAvis} avis)`;
@@ -1437,7 +1438,8 @@ window.openAdDetail = (adId) => {
   }
 
   // Photos & Carrousel
-  const images = Array.isArray(targetAd.images) && targetAd.images.length > 0 ? targetAd.images : [noPhotoUrl()];
+  const images = (Array.isArray(targetAd.photosUrls) && targetAd.photosUrls.length > 0) ? targetAd.photosUrls
+    : (Array.isArray(targetAd.images) && targetAd.images.length > 0 ? targetAd.images : [noPhotoUrl()]);
   mainGalleryImg.src = images[0];
 
   galleryThumbnails.innerHTML = images

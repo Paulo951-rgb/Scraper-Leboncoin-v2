@@ -59,7 +59,7 @@ L'application est pensée pour un usage **semi-automatisé** : l'utilisateur peu
 - 🏷️ **Catégorie exacte** de l'annonce (ex: Ordinateurs, Téléphones) extraite à la fois sur la liste et la page de détail.
 - ⭐ **Note vendeur + nombre d'avis** (ex: 4,8/5 (27 avis)) extraits défensivement de l'objet `owner`.
 - 🔄 **Rotation de User-Agent** (10 UA réalistes en rotation aléatoire, fixé pour toute la durée d'une capture).
-- 🚀 **3 presets de vitesse** (Rapide / Équilibré / Prudent) pour l'enrichissement des descriptions.
+- 🚀 **3 presets de vitesse** (Moyen / Rapide / Ultra-rapide) pour l'enrichissement des descriptions.
 - ⏳ **Rate limiting adaptatif** — backoff exponentiel si Leboncoin répond lentement ou bloque (403/429).
 - ⏹️ **Arrêt préventif** après 3 blocages 403/429 consécutifs pendant l'enrichissement (sauvegarde des données collectées).
 
@@ -88,7 +88,7 @@ L'application est pensée pour un usage **semi-automatisé** : l'utilisateur peu
 - 📄 Export **JSON** (avec checksum SHA-256) et **TXT** lisible.
 - 📄 Export **résumés IA compacts** (`resumes-ia.json` : numéro, titre, URL, prix, résumé — pour transmission à une IA externe).
 - 🔍 **Explorateur d'annonces** — filtres (mot-clé, prix, verdict), tri, vue tableau/grille, fiche détaillée (photos, analyse IA, vision, verdict marché, sources), comparateur côte à côte.
-- 📊 **Statistiques** — 8 cartes colorées (Total, Prix Moyen/Médian/Min/Max, Main Propre, Pro/Particulier) + 3 graphiques (Distribution des prix, Vendeurs, Top 10 Villes).
+- 📊 **Statistiques** — cartes colorées (Total, Prix Moyen/Min/Max, Livraison, Main Propre, Pro/Particulier) + 4 graphiques (Distribution des prix, Vendeurs, Top 10 Villes, Modes de Transaction) + carte Leaflet.
 - 🗺️ **Carte interactive** (Leaflet) — répartition géographique avec filtre « remise main propre », géocodage via API Gouv France (cache + timeout 10s). Déduplication des annonces par id.
 - 🆚 **Comparateur** d'annonces côte à côte.
 - 📁 **Historique** complet des jobs avec suppression.
@@ -402,12 +402,12 @@ L'architecture v2 sépare clairement 3 systèmes IA indépendants, chacun avec u
 | 📜 **Logs** | Console de logs en direct (info/warn/error/debug) avec mode normal/debug, auto-scroll, copie, vidage, compteur. |
 | 📁 **Historique Jobs** | Liste des scrapings passés + accès fichiers (XLSX/JSON/TXT/Résumés IA) + suppression. |
 | 🔍 **Explorateur Annonces** | Filtres (mot-clé, prix, verdict), tri, vue tableau/grille, fiche détaillée (photos, analyse IA, vision, verdict marché, sources), comparateur, analyse marché manuelle (bouton « 🌐 IA Marché »). |
-| 📊 **Statistiques & Carte** | 8 cartes colorées (Total, Prix Moyen/Médian/Min/Max, Main Propre, Pro/Particulier) + 3 graphiques (Distribution prix, Vendeurs, Top 10 Villes) + carte Leaflet (filtre main propre, déduplication par id). |
+| 📊 **Statistiques & Carte** | cartes colorées (Total, Prix Moyen/Min/Max, Livraison, Main Propre, Pro/Particulier) + 4 graphiques (Distribution prix, Vendeurs, Top 10 Villes, Modes de Transaction) + carte Leaflet (filtre main propre, déduplication par id). |
 
 ### ⚙️ Modale Paramètres
 
 - **Thème** : 13 thèmes (aperçu temps réel).
-- **Vitesse de scraping** : Rapide (10 parallèle, 0,5-1s) / Équilibré (5 parallèle, 1-2s) / Prudent (5 séquentiel, 1,5-3s).
+- **Vitesse de scraping** : Moyen (10 parallèles, 0,5-1s) / Rapide (15 parallèles, 0,2-0,6s) / Ultra-rapide (25 parallèles, 0,05-0,3s). Queue dynamique avec workers persistants.
 - **Délai entre les pages** (ms, défaut 1000).
 - **Mode de capture** : invisible (headless) ou visible (sauf CAPTCHA qui bascule toujours en visible).
 - **Analyses IA simultanées** (parallélisme Ollama, défaut 5).

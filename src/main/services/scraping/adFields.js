@@ -207,6 +207,13 @@ function extractSeller(raw) {
     if (!Number.isNaN(n) && n >= 0 && n <= 5) note = Math.round(n * 10) / 10;
   }
 
+  let nombreAvis = null;
+  const countVal = firstNonNull(owner.nb_ratings, owner.ratings_count, owner.rating_count, owner.nbReviews, owner.review_count, seller.nb_ratings, raw?.seller_rating_count, raw?.nb_ratings, null);
+  if (countVal !== null) {
+    const c = parseInt(countVal, 10);
+    if (!Number.isNaN(c) && c >= 0) nombreAvis = c;
+  }
+
   const urlProfil = firstNonNull(owner.profile_url, owner.url, seller.url, store.url, null);
 
   let ancienneteJours = null;
@@ -224,6 +231,7 @@ function extractSeller(raw) {
     isPro,
     id: id != null ? String(id) : null,
     note,
+    nombreAvis,
     urlProfil,
     ancienneteJours,
   };

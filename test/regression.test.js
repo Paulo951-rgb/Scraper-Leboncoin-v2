@@ -1151,7 +1151,7 @@ assert(!/Cochez.*Analyser les images par IA Vision/.test(helpModCode), 'helpModu
 assert(!/Décochée par défaut/.test(helpModCode), 'helpModule: FAQ ne dit plus « Décochée par défaut » (autoAiMarket est coché)');
 // helpModule : FAQ ne mentionne plus la vitesse « Ultra » (non exposée dans l'UI)
 assert(!/Ultra.*20 annonces en parallèle/.test(helpModCode), 'helpModule: FAQ ne mentionne plus vitesse Ultra (non exposée dans l\'UI select)');
-assert(/Rapide \/ Équilibré \/ Prudent/.test(helpModCode), 'helpModule: FAQ liste les 3 vitesses réellement exposées');
+assert(/Moyen \/ Rapide \/ Ultra-rapide/.test(helpModCode), 'helpModule: FAQ liste les 3 vitesses réellement exposées');
 
 // [7/7] suite — code mort & persistance
 // risk-keywords.js supprimé (code mort : jamais importé dans l'app, l'IA remplace)
