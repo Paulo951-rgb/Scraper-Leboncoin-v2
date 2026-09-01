@@ -459,7 +459,7 @@ class DescriptionEnricher {
     }
 
     this.logger.info(`\nExtraction des descriptions pour ${targets.length} annonce(s) (mode rapide parallèle)...`);
-    this.logger.debug(`[DescriptionEnricher] Cibles : ${targets.length} | déjà avec description : ${alreadyHasDesc} | sans URL : ${noUrlCount} | batchSize : ${this.opts.batchSize || 5} | headless : ${this.opts.headless}`);
+    this.logger.debug(`[DescriptionEnricher] Cibles : ${targets.length} | déjà avec description : ${alreadyHasDesc} | sans URL : ${noUrlCount} | concurrency : ${this.opts.concurrency || 10} | headless : ${this.opts.headless}`);
 
     const { chromium } = require('playwright');
     this.logger.debug(`[DescriptionEnricher] Lancement Chromium (headless=${this.opts.headless})...`);
@@ -522,16 +522,16 @@ class DescriptionEnricher {
     let notFoundCount = 0;
     let httpErrorCount = 0;
     let blockedCount = 0;
-    const batchSize = this.opts.batchSize || 5;
+    const concurrency = this.opts.concurrency || 10;
     let batchIndex = 0;
 
-    for (let i = 0; i < targets.length; i += batchSize) {
+    for (let i = 0; i < targets.length; i += concurrency) {
       if (this.shouldStopAll) {
         this.logger.debug(`[DescriptionEnricher] Arrêt demandé (shouldStopAll=true) — sortie de la boucle à ${done}/${targets.length}.`);
         break;
       }
 
-      const batch = targets.slice(i, i + batchSize);
+      const batch = targets.slice(i, i + concurrency);
       const batchItems = batch.map((a) => ({ id: a.id, url: a.url }));
       batchIndex++;
       this.logger.debug(`[DescriptionEnricher] Batch ${batchIndex} : ${batch.length} annonce(s) — IDs [${batchItems.map((b) => b.id).join(', ')}]`);
@@ -608,7 +608,7 @@ class DescriptionEnricher {
         await this.rateLimiter.waitAfter({ durationMs: batchDuration });
       }
 
-      if (done > 0 && done % this.opts.recycleContextEvery === 0 && i + batchSize < targets.length) {
+      if (done > 0 && done % this.opts.recycleContextEvery === 0 && i + concurrency < targets.length) {
         this.logger.info(`🔄 Purge mémoire RAM (${done} items)...`);
         // Sauvegarde préventive AVANT le recyclage : si createStealthContext()
         // échoue pendant le recyclage (contexte Playwright instable après un
@@ -756,18 +756,19 @@ async function main() {
     process.exit(1);
   }
 
-  // Preset de vitesse : ajuste batchSize et délais selon le choix utilisateur
+  // Preset de vitesse : ajuste concurrence et délais selon le choix utilisateur.
+  // La concurrence est le nombre de workers persistants qui traitent les annonces
+  // en parallèle (queue dynamique : dès qu'un worker termine, il prend la suivante).
   const SPEED_PRESETS = {
-    ultra:    { batchSize: 20, minDelayMs: 0,    maxDelayMs: 300,  mode: 'parallèle' },
-    fast:     { batchSize: 10, minDelayMs: 500,  maxDelayMs: 1000, mode: 'parallèle' },
-    balanced: { batchSize: 5,  minDelayMs: 1000, maxDelayMs: 2000, mode: 'parallèle' },
-    safe:     { batchSize: 5,  minDelayMs: 1500, maxDelayMs: 3000, mode: 'séquentiel' },
+    moyen:          { concurrency: 10, minDelayMs: 500,  maxDelayMs: 1000, mode: 'parallèle' },
+    rapide:         { concurrency: 15, minDelayMs: 200,  maxDelayMs: 600,  mode: 'parallèle' },
+    'ultra-rapide': { concurrency: 25, minDelayMs: 50,   maxDelayMs: 300,  mode: 'parallèle' },
   };
-  const preset = SPEED_PRESETS[opts.speed] || SPEED_PRESETS.fast;
-  opts.batchSize = preset.batchSize;
+  const preset = SPEED_PRESETS[opts.speed] || SPEED_PRESETS.moyen;
+  opts.concurrency = preset.concurrency;
   opts.minDelayMs = preset.minDelayMs;
   opts.maxDelayMs = preset.maxDelayMs;
-  opts.sequential = (opts.speed === 'safe');
+  opts.sequential = false;
 
   const ts = () => new Date().toLocaleTimeString();
   const logger = {
@@ -777,8 +778,8 @@ async function main() {
     error: (msg) => console.log(`\x1b[31m[${ts()}] [ERROR] ${msg}\x1b[0m`),
   };
 
-  logger.info(`=== Pipeline Leboncoin (Vitesse: ${opts.speed || 'fast'} — ${preset.mode}, batchSize=${preset.batchSize}) ===`);
-  logger.debug(`[main] Options : harPath=${opts.harPath} | outDir=${opts.outDir} | headless=${opts.headless}  noDesc=${opts.noDesc} | limit=${opts.limit ?? '(aucun)'} | fresh=${opts.fresh} | speed=${opts.speed || 'fast'} | batchSize=${opts.batchSize} | minDelay=${opts.minDelayMs} | maxDelay=${opts.maxDelayMs}`);
+  logger.info(`=== Pipeline Leboncoin (Vitesse: ${opts.speed || 'moyen'} — ${preset.mode}, concurrency=${preset.concurrency}) ===`);
+  logger.debug(`[main] Options : harPath=${opts.harPath} | outDir=${opts.outDir} | headless=${opts.headless}  noDesc=${opts.noDesc} | limit=${opts.limit ?? '(aucun)'} | fresh=${opts.fresh} | speed=${opts.speed || 'moyen'} | concurrency=${opts.concurrency} | minDelay=${opts.minDelayMs} | maxDelay=${opts.maxDelayMs}`);
 
   const writeOutputs = writeOutputsFactory(opts.outDir, opts);
   const jsonPath = path.join(opts.outDir, 'annonces.json');

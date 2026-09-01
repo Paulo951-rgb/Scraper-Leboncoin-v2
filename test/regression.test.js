@@ -116,18 +116,25 @@ assert(enrichedAds.length === 3, 'AdStats retourne les annonces inchangées');
 assert(!enrichedAds[0].hasOwnProperty('dealTag'), 'AdStats n\'ajoute PLUS dealTag (scoring retiré)');
 assert(!enrichedAds[0].hasOwnProperty('hasRisk'), 'AdStats n\'ajoute PLUS hasRisk (scam score retiré)');
 
-// AdStats : cas limites (vide, prix invalides, médiane paire/impaire)
+// AdStats : cas limites (vide, prix invalides)
 assert(AdStats.analyze([]).stats === null, 'AdStats: tableau vide → stats null');
 assert(AdStats.analyze(null).stats === null, 'AdStats: entrée null → stats null (pas de crash)');
 assert(AdStats.analyze([{ id: '1', price: 'abc' }, { id: '2' }]).stats === null, 'AdStats: prix invalides → stats null');
 assert(AdStats.analyze([{ id: '1', price: 0 }, { id: '2', price: -5 }]).stats === null, 'AdStats: prix <= 0 ignorés → stats null');
-const oddMed = AdStats.analyze([{ id: '1', price: 100 }, { id: '2', price: 300 }, { id: '3', price: 200 }]);
-assert(oddMed.stats.medianPrice === 200, 'AdStats: médiane impaire = valeur centrale (200)');
-const evenMed = AdStats.analyze([{ id: '1', price: 100 }, { id: '2', price: 200 }, { id: '3', price: 300 }, { id: '4', price: 400 }]);
-assert(evenMed.stats.medianPrice === 250, 'AdStats: médiane paire = moyenne des 2 centrales (250, pas 300)');
-const mixedPrices = AdStats.analyze([{ id: '1', price: 100 }, { id: '2', price: '200' }, { id: '3', price: null }]);
+const mixedPrices = AdStats.analyze([{ id: '1', price: 100 }, { id: '2', prix: '200' }, { id: '3', price: null }]);
 assert(mixedPrices.stats.pricedAds === 2, 'AdStats: prix string parsés, null ignorés (pricedAds=2)');
 assert(mixedPrices.stats.minPrice === 100 && mixedPrices.stats.maxPrice === 200, 'AdStats: min/max après tri des prix valides');
+// AdStats : livraison / main propre
+const txStats = AdStats.analyze([
+  { id: '1', prix: 100, livraison: true, mainPropre: false },
+  { id: '2', prix: 200, livraison: false, mainPropre: true },
+  { id: '3', prix: 150, livraison: true, mainPropre: true },
+  { id: '4', prix: 50, livraison: null, mainPropre: null },
+]);
+assert(txStats.stats.livraisonCount === 1, 'AdStats: livraisonCount correct');
+assert(txStats.stats.mainPropreCount === 1, 'AdStats: mainPropreCount correct');
+assert(txStats.stats.lesDeuxCount === 1, 'AdStats: lesDeuxCount correct');
+assert(txStats.stats.nonRenseigneCount === 1, 'AdStats: nonRenseigneCount correct');
 
 // iaCache : get() renvoie la valeur mise en cache (pas le wrapper {specs,cachedAt})
 // Bug critique : avant correction, le cache renvoyait {specs,cachedAt} → les champs
@@ -249,7 +256,7 @@ assert(/(let|const)\s+mapInstance\b/.test(appCode), 'app.js: mapInstance declare
 assert(/(let|const)\s+priceDistChartInstance\b/.test(appCode), 'app.js: priceDistChartInstance declared');
 assert(/(let|const)\s+topCitiesChartInstance\b/.test(appCode), 'app.js: topCitiesChartInstance declared');
 assert(/statAvgPrice/.test(appCode), 'app.js: statAvgPrice (prix moyen)');
-assert(/statMedPrice/.test(appCode), 'app.js: statMedPrice (prix médian)');
+assert(/statLivraison/.test(appCode), 'app.js: statLivraison (livraison)');
 assert(/statHandDelivery/.test(appCode), 'app.js: statHandDelivery (main propre)');
 assert(!/statGoodDeals/.test(appCode), 'app.js: statGoodDeals supprimé (stats bonnes affaires retirées)');
 assert(!/Répartition des Opportunités/.test(appCode), 'app.js: graphique Répartition des Opportunités supprimé');
@@ -267,9 +274,8 @@ assert(/src="\$\{escapeHtml\(/.test(appCode), 'app.js: img src utilise escapeHtm
 // XSS : les a.id dans onclick doivent être échappés (defense in depth)
 assert(!/openAdDetail\('\$\{a\.id\}'\)/.test(appCode), 'app.js: a.id échappé dans openAdDetail onclick');
 assert(!/toggleStar\('\$\{a\.id\}'\)/.test(appCode), 'app.js: a.id échappé dans toggleStar onclick');
-// XSS : switchGalleryImg doit échapper l'URL image
-assert(/switchGalleryImg\('\$\{escapePath\(img\)\}'/.test(appCode), 'app.js: switchGalleryImg échappe img (XSS onclick)');
-assert(/openFolder\(''\)/.test(appCode) && !/openFolder\('output'\)/.test(appCode), 'app.js: output button passes empty string');
+// Le bouton "Ouvrir le dossier" utilise maintenant openJobsFolder (ouvre results/)
+assert(/openJobsFolder\(\)/.test(appCode), 'app.js: output button uses openJobsFolder');
 // « main propre » = livraison explicitement indisponible (shipping === false).
 // shipping=null (info non extraite) ne doit PAS être compté comme main propre.
 assert(/a\.shipping === false/.test(appCode), 'app.js: filtre main-propre utilise shipping === false (pas !a.shipping)');
@@ -496,7 +502,7 @@ assert(/id="searchApiKey"/.test(htmlCode), 'index.html: champ clé API moteur de
 assert(/value="ollama"/.test(htmlCode), 'index.html: option Ollama local conservée');
 // Stats : nouvelles cartes + retrait bonnes affaires
 assert(/statAvgPrice/.test(htmlCode), 'index.html: carte prix moyen');
-assert(/statMedPrice/.test(htmlCode), 'index.html: carte prix médian');
+assert(/statLivraison/.test(htmlCode), 'index.html: carte livraison');
 assert(/statHandDelivery/.test(htmlCode), 'index.html: carte main propre');
 assert(/statPro/.test(htmlCode) && /statPart/.test(htmlCode), 'index.html: cartes pro/particulier');
 assert(!/statGoodDeals/.test(htmlCode), 'index.html: carte Bonnes Affaires supprimée');

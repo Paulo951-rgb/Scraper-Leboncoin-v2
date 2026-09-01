@@ -2,20 +2,11 @@
 
 /**
  * AdStats — statistiques agrégées sur un ensemble d'annonces (sans scoring).
- *
- * Remplace l'ancien DealFinder (qui ajoutait dealTag/dealDiscountPct/hasRisk/
- * detectedRisks à chaque annonce). La nouvelle architecture IA retire tout
- * scoring heuristique : seules les statistiques de prix brutes sont conservées
- * pour l'affichage agrégé (cartes de stats, graphiques).
- *
- * N'ajoute AUCUN champ aux annonces — l'enrichissement (résumé produit,
- * verdict marché) est désormais produit par les IA 1 et 2.
  */
-
 class AdStats {
   /**
-   * Calcule les statistiques de prix d'un lot d'annonces.
-   * @param {Array} ads annonces brutes (champ `price` number ou string)
+   * Calcule les statistiques d'un lot d'annonces.
+   * @param {Array} ads annonces (champ `prix` number ou string)
    * @returns {{stats: Object|null, ads: Array}} stats + annonces inchangées
    */
   static analyze(ads) {
@@ -23,10 +14,24 @@ class AdStats {
       return { stats: null, ads: [] };
     }
 
-    const validPrices = ads
-      .map((a) => (typeof a.price === 'number' ? a.price : parseFloat(a.price)))
-      .filter((p) => !isNaN(p) && p > 0)
-      .sort((a, b) => a - b);
+    // Extraction robuste des prix : gère number, string avec format FR/EN,
+    // null, undefined, valeurs invalides.
+    const validPrices = [];
+    for (const a of ads) {
+      const raw = a.prix ?? a.price;
+      if (raw == null || raw === '') continue;
+      let n;
+      if (typeof raw === 'number') {
+        n = Number.isFinite(raw) ? raw : NaN;
+      } else if (typeof raw === 'string') {
+        // Gère "1 250 €", "1.299,99", "12,50", "1250", etc.
+        n = parseFloat(raw.replace(/\s/g, '').replace(/\./g, '').replace(',', '.').replace(/[^\d.-]/g, ''));
+      } else {
+        n = NaN;
+      }
+      if (Number.isFinite(n) && n > 0) validPrices.push(n);
+    }
+    validPrices.sort((a, b) => a - b);
 
     if (validPrices.length === 0) {
       return { stats: null, ads };
@@ -36,21 +41,37 @@ class AdStats {
     const avg = Math.round(sum / validPrices.length);
     const minPrice = validPrices[0];
     const maxPrice = validPrices[validPrices.length - 1];
-    // Médiane : moyenne des deux valeurs centrales si le nombre d'éléments est
-    // pair, sinon la valeur centrale. (Le rendu Stats du renderer fait de même.)
-    const mid = Math.floor(validPrices.length / 2);
-    const median = validPrices.length % 2 !== 0
-      ? validPrices[mid]
-      : Math.round((validPrices[mid - 1] + validPrices[mid]) / 2);
+
+    // Statistiques livraison / main propre
+    let livraisonCount = 0;
+    let mainPropreCount = 0;
+    let lesDeuxCount = 0;
+    let nonRenseigneCount = 0;
+
+    for (const a of ads) {
+      const livraison = a.livraison ?? a.shipping;
+      const mainPropre = a.mainPropre ?? a.handDelivery;
+      if (livraison === true && mainPropre === true) lesDeuxCount++;
+      else if (livraison === true) livraisonCount++;
+      else if (mainPropre === true) mainPropreCount++;
+      else if (livraison === null && mainPropre === null) nonRenseigneCount++;
+      else if (livraison === false && mainPropre === true) mainPropreCount++;
+      else if (livraison === true && mainPropre === false) livraisonCount++;
+      else if (livraison === false && mainPropre === false) nonRenseigneCount++;
+      else nonRenseigneCount++;
+    }
 
     return {
       stats: {
         minPrice,
         maxPrice,
-        medianPrice: median,
         avgPrice: avg,
         totalAds: ads.length,
         pricedAds: validPrices.length,
+        livraisonCount,
+        mainPropreCount,
+        lesDeuxCount,
+        nonRenseigneCount,
       },
       ads,
     };
