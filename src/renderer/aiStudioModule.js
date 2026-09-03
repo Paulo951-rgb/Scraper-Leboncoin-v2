@@ -103,11 +103,20 @@ const AiStudioModule = {
   // ─── Navigateur ──────────────────────────────────────────────────────
   bindBrowser() {
     const wv = this.el.webview;
-    if (!wv) return;
+    if (!wv) {
+      this.showBrowserError('Navigateur non disponible. Utilisez le bouton "↗" pour ouvrir dans votre navigateur externe.');
+      return;
+    }
 
     const updateUrl = (url) => { if (this.el.urlBar && url) this.el.urlBar.value = url; };
     const setLoading = (v) => { if (this.el.webviewLoading) this.el.webviewLoading.classList.toggle('hidden', !v); };
     const setStatus = (msg) => { if (this.el.browserStatus) this.el.browserStatus.textContent = msg; };
+
+    // Vérifier que le webview est fonctionnel
+    if (!wv.addEventListener || !wv.loadURL) {
+      this.showBrowserError('Webview non supporté. Utilisez "↗" pour ouvrir dans Chrome.');
+      return;
+    }
 
     wv.addEventListener('did-start-loading', () => { setLoading(true); setStatus('Chargement…'); });
     wv.addEventListener('did-stop-loading', () => { setLoading(false); updateUrl(wv.getURL()); setStatus('Chargé'); });
@@ -117,9 +126,19 @@ const AiStudioModule = {
     wv.addEventListener('did-fail-load', (ev) => {
       setLoading(false);
       if (ev && ev.errorCode && ev.errorCode !== -3) {
-        setStatus(`Erreur de chargement (${ev.errorDescription || ev.errorCode})`);
+        const msg = ev.errorDescription || `code ${ev.errorCode}`;
+        setStatus(`Erreur : ${msg}`);
+        if (ev.errorCode === -106 || ev.errorCode === -105) {
+          this.showBrowserError('Connexion impossible. Vérifiez Internet ou utilisez "↗".');
+        }
       }
     });
+    wv.addEventListener('crashed', () => {
+      setLoading(false);
+      this.showBrowserError('Le navigateur a planté. Rechargez ou utilisez "↗".');
+    });
+    wv.addEventListener('unresponsive', () => { setStatus('Ne répond plus…'); });
+    wv.addEventListener('responsive', () => { setStatus('Chargé'); });
 
     // Barre d'outils
     if (this.el.btnBack) this.el.btnBack.addEventListener('click', () => { try { wv.goBack(); } catch {} });
@@ -153,6 +172,21 @@ const AiStudioModule = {
         }
       });
     }
+  },
+
+  showBrowserError(msg) {
+    const container = document.querySelector('.browser-container');
+    if (container) {
+      let errEl = container.querySelector('.browser-error');
+      if (!errEl) {
+        errEl = document.createElement('div');
+        errEl.className = 'browser-error';
+        errEl.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;padding:20px;background:rgba(0,0,0,0.8);border-radius:8px;max-width:80%;';
+        container.appendChild(errEl);
+      }
+      errEl.innerHTML = `<p style="color:#e57373;margin-bottom:10px;">${msg}</p><button class="btn btn-secondary" onclick="location.reload()">🔄 Recharger</button>`;
+    }
+    if (this.el.browserStatus) { this.el.browserStatus.textContent = msg; this.el.browserStatus.style.color = '#e57373'; }
   },
 
   // ─── Prompts ─────────────────────────────────────────────────────────
