@@ -14,6 +14,7 @@ const { getRandomUserAgent } = require('./userAgents');
 const { writeWithChecksum } = require('../../utils/integrity');
 const { AdaptiveRateLimiter } = require('../../utils/rateLimiter');
 const adFields = require('./adFields');
+const { filterAdByFields, toReadableBlock, toShortText, ALL_FIELD_KEYS } = require('../exporting/exportFields');
 
 const DEFAULTS = Object.freeze({
   // Valeurs par défaut pour les options du pipeline.
@@ -57,6 +58,15 @@ function parseArgs(argv) {
         break;
       case '--user-agent':
         opts.userAgent = argv[++i];
+        break;
+      case '--export-mode':
+        // 'default' (tous les champs) ou 'custom' (Personnalisé)
+        opts.exportMode = argv[++i];
+        break;
+      case '--export-fields':
+        // Liste de clés séparées par des virgules. Utilisée uniquement si
+        // exportMode === 'custom'. Si vide, retombe sur le mode Défaut.
+        opts.exportFields = argv[++i] ? argv[++i].split(',').map((s) => s.trim()).filter(Boolean) : null;
         break;
       default:
         if (a.startsWith('--')) throw new CliError(`Option inconnue : ${a}`);
@@ -723,6 +733,23 @@ function toReadableBlock(ad, index) {
 function writeOutputsFactory(outDir, opts) {
   const jsonPath = path.join(outDir, 'annonces.json');
   const txtPath = path.join(outDir, 'annonces.txt');
+  const shortPath = path.join(outDir, 'annonces.short.txt');
+
+  // Détermine la liste effective de champs à exporter selon le mode.
+  // - exportMode='default' (ou vide) → toutes les clés (DEFAULT_FIELDS).
+  // - exportMode='custom'            → uniquement opts.exportFields.
+  // - opts.exportFields=null/[]      → retombe sur le mode Défaut (sécurité).
+  function _resolveFields() {
+    if (opts.exportMode === 'custom') {
+      if (Array.isArray(opts.exportFields) && opts.exportFields.length > 0) {
+        return opts.exportFields;
+      }
+      // Mode custom mais aucun champ fourni → on garde au moins les essentiels
+      // (id + title + prix + url + description) plutôt qu'un fichier vide.
+      return ['id', 'title', 'url', 'prix', 'description'];
+    }
+    return null; // null = toutes les clés (mode Défaut)
+  }
 
   return function writeOutputs(ads) {
     for (const ad of ads) {
@@ -730,8 +757,13 @@ function writeOutputsFactory(outDir, opts) {
         if (!ad.dateScraping) ad.dateScraping = new Date().toISOString();
       }
     }
-    writeWithChecksum(jsonPath, ads, null, 2);
-    atomicWriteFileSync(txtPath, ads.map(toReadableBlock).join('\n'));
+    const fields = _resolveFields();
+    // JSON : on filtre chaque annonce pour respecter strictement le mode
+    // Personnalisé (seuls les champs sélectionnés sont conservés en clair).
+    const jsonAds = fields ? ads.map((a) => filterAdByFields(a, fields)) : ads;
+    writeWithChecksum(jsonPath, jsonAds, null, 2);
+    atomicWriteFileSync(txtPath, ads.map((a, i) => toReadableBlock(a, i, fields)).join('\n'));
+    atomicWriteFileSync(shortPath, toShortText(ads, fields));
   };
 }
 
