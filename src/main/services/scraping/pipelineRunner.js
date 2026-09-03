@@ -18,7 +18,7 @@ class PipelineRunner extends EventEmitter {
 
   run(options) {
     return new Promise((resolve, reject) => {
-const { harPath, outDir, noDesc = false, limit, fresh = false, speed, headless = true, userAgent } = options;
+const { harPath, outDir, noDesc = false, limit, fresh = false, speed, headless = true, userAgent, exportMode, exportFields } = options;
 
     if (!harPath) return reject(new Error('harPath est requis pour exécuter le pipeline.'));
     if (!outDir) return reject(new Error('outDir est requis pour exécuter le pipeline.'));
@@ -35,6 +35,13 @@ const { harPath, outDir, noDesc = false, limit, fresh = false, speed, headless =
       if (noDesc) remainingArgs.push('--no-desc');
       if (fresh) remainingArgs.push('--fresh');
       if (limit) remainingArgs.push('--limit', String(limit));
+      // Mode d'export (Défaut / Personnalisé). Le mode Défaut est implicite
+      // (le pipeline retombe dessus) : on n'envoie l'argument que si différent
+      // ou si des champs personnalisés sont fournis.
+      if (exportMode) remainingArgs.push('--export-mode', String(exportMode));
+      if (Array.isArray(exportFields) && exportFields.length > 0) {
+        remainingArgs.push('--export-fields', exportFields.join(','));
+      }
 
       this.emit('log', {
         level: 'info',
@@ -42,7 +49,7 @@ const { harPath, outDir, noDesc = false, limit, fresh = false, speed, headless =
       });
       this.emit('log', { level: 'debug', message: `[pipelineRunner] Script : ${scriptPath}` });
       this.emit('log', { level: 'debug', message: `[pipelineRunner] Args : ${remainingArgs.join(' ')}` });
-      this.emit('log', { level: 'debug', message: `[pipelineRunner] Options : noDesc=${noDesc}  limit=${limit ?? '(aucun)'} | fresh=${fresh} | userAgent=${userAgent ? '(transmis)' : '(aléatoire)'} | cwd=${process.cwd()}` });
+      this.emit('log', { level: 'debug', message: `[pipelineRunner] Options : noDesc=${noDesc}  limit=${limit ?? '(aucun)'} | fresh=${fresh} | userAgent=${userAgent ? '(transmis)' : '(aléatoire)'} | cwd=${process.cwd()} | exportMode=${exportMode || 'default'} | exportFields=${Array.isArray(exportFields) ? `[${exportFields.length} champ(s)]` : '(toutes)'}` });
 
       this.isCancelled = false;
       const t0Fork = Date.now();

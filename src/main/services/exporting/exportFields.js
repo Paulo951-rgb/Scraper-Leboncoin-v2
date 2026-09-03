@@ -218,44 +218,43 @@ function filterAdByFields(ad, fields) {
   if (fields.length >= ALL_FIELD_KEYS.length && ALL_FIELD_KEYS.every((k) => fields.includes(k))) {
     return ad;
   }
+  // Clés d'analyse IA : mappées vers les blocs adAnalysis / marketAnalysis
+  // (elles ne sont pas présentes directement à la racine de l'ad).
+  const IA_TO_AD_ANALYSIS = { produitIdentifie: 'identifiedProduct', resumeIA: 'summary' };
+  const IA_TO_MARKET = {
+    verdict: 'verdictLabel', valeurMarche: 'realValue', fourchette: null, benefice: 'deltaEur', justification: 'rationale',
+  };
+
   const out = {};
+  // Copie les clés racines existantes dans la sélection
   for (const key of fields) {
+    if (IA_TO_AD_ANALYSIS[key] || IA_TO_MARKET[key]) continue; // traitées séparément
     if (Object.prototype.hasOwnProperty.call(ad, key)) out[key] = ad[key];
   }
-  // Pour rester cohérent avec l'UI (les analyses IA sont des champs à part) :
-  // en mode Personnalisé on retire les blocs IA si les clés granulaires
-  // correspondantes n'ont pas toutes été sélectionnées.
-  const iaKeys = ['produitIdentifie', 'resumeIA', 'verdict', 'valeurMarche', 'fourchette', 'benefice', 'justification'];
-  if (!fields.includes('produitIdentifie') && !fields.includes('resumeIA')) {
-    delete out.adAnalysis;
-  } else {
-    // ne garder dans adAnalysis que ce qui est sélectionné
-    if (out.adAnalysis && typeof out.adAnalysis === 'object') {
-      const a = out.adAnalysis;
-      const slim = {};
-      if (fields.includes('produitIdentifie')) slim.identifiedProduct = a.identifiedProduct;
-      if (fields.includes('resumeIA')) slim.summary = a.summary;
-      out.adAnalysis = Object.keys(slim).length > 0 ? slim : undefined;
-      if (out.adAnalysis === undefined) delete out.adAnalysis;
-    }
-  }
-  if (!iaKeys.some((k) => fields.includes(k))) {
-    delete out.marketAnalysis;
-  } else if (out.marketAnalysis && typeof out.marketAnalysis === 'object') {
-    const m = out.marketAnalysis;
+  // adAnalysis slim
+  const hasAdAnalysis = fields.some((k) => k in IA_TO_AD_ANALYSIS);
+  if (hasAdAnalysis && ad.adAnalysis && typeof ad.adAnalysis === 'object') {
     const slim = {};
-    if (fields.includes('verdict')) slim.verdictLabel = m.verdictLabel;
-    if (fields.includes('valeurMarche')) slim.realValue = m.realValue;
-    if (fields.includes('fourchette')) {
-      if (m.valueRangeLow != null && m.valueRangeHigh != null) {
-        slim.valueRangeLow = m.valueRangeLow;
-        slim.valueRangeHigh = m.valueRangeHigh;
+    for (const k of fields) {
+      const m = IA_TO_AD_ANALYSIS[k];
+      if (m && ad.adAnalysis[m] != null) slim[m] = ad.adAnalysis[m];
+    }
+    if (Object.keys(slim).length > 0) out.adAnalysis = slim;
+  }
+  // marketAnalysis slim
+  const hasMarket = fields.some((k) => k in IA_TO_MARKET);
+  if (hasMarket && ad.marketAnalysis && typeof ad.marketAnalysis === 'object') {
+    const slim = {};
+    for (const k of fields) {
+      if (k === 'fourchette' && ad.marketAnalysis.valueRangeLow != null && ad.marketAnalysis.valueRangeHigh != null) {
+        slim.valueRangeLow = ad.marketAnalysis.valueRangeLow;
+        slim.valueRangeHigh = ad.marketAnalysis.valueRangeHigh;
+      } else {
+        const m = IA_TO_MARKET[k];
+        if (m && ad.marketAnalysis[m] != null) slim[m] = ad.marketAnalysis[m];
       }
     }
-    if (fields.includes('benefice')) slim.deltaEur = m.deltaEur;
-    if (fields.includes('justification')) slim.rationale = m.rationale;
-    out.marketAnalysis = Object.keys(slim).length > 0 ? slim : undefined;
-    if (out.marketAnalysis === undefined) delete out.marketAnalysis;
+    if (Object.keys(slim).length > 0) out.marketAnalysis = slim;
   }
   return out;
 }
@@ -322,6 +321,7 @@ function toReadableBlock(ad, index, fields) {
 
 const SHORT_SEP_FIELD = '\x1F';   // File Separator (0x1F) entre champs
 const SHORT_ESC = '\x1E';          // Record Separator (0x1E) début valeur échappée
+const SHORT_SEP_LINE = '\x1D';     // Group Separator (0x1D) entre annonces (rare dans les données)
 const SHORT_HEADER = '##SC##';     // marqueur d'en-tête
 const SHORT_VERSION = '1';
 
@@ -371,7 +371,7 @@ function toShortText(ads, fields) {
     }
     lines.push(parts.join(SHORT_SEP_FIELD));
   }
-  return lines.join('\n');
+  return lines.join(SHORT_SEP_LINE);
 }
 
 /**
@@ -385,23 +385,33 @@ function fromShortText(text) {
   if (typeof text !== 'string' || !text.startsWith(SHORT_HEADER + ' ')) {
     throw new Error('Texte raccourci invalide (en-tête manquant).');
   }
-  const lines = text.split('\n');
+  const lines = text.split(SHORT_SEP_LINE);
   const headerLine = lines.shift();
   // headerLine : "##SC## 1 \x1Fcode1\x1Fcode2..."
+  // split('\x1F') de "##SC## 1 \x1FI\x1FT..." donne :
+  //   [0] = "##SC## 1 "  (la version est dans cette chaîne après le préfixe)
+  //   [1] = "I" (1er code)
+  //   [2] = "T" (2e code)
+  //   ...
+  // On extrait la version depuis [0] puis les codes depuis [1:].
   const headerParts = headerLine.split(SHORT_SEP_FIELD);
   if (headerParts.length < 2) throw new Error('En-tête Texte raccourci invalide.');
-  const versionAndCodes = headerParts.slice(1);
-  const version = versionAndCodes[0];
-  const codes = versionAndCodes.slice(1);
+  const version = headerParts[0].slice(SHORT_HEADER.length + 1).trim();
+  const codes = headerParts.slice(1);
   const items = [];
   for (const line of lines) {
     if (!line) continue;
     const parts = line.split(SHORT_SEP_FIELD);
     const obj = {};
+    // parts[0] = 1er code, parts[1] = 1ère valeur, parts[2] = 2e code, parts[3] = 2e valeur, …
     for (let i = 0; i < codes.length && i * 2 + 1 < parts.length; i++) {
       const code = codes[i];
       const encoded = parts[i * 2 + 1];
-      if (!encoded || !encoded.startsWith(SHORT_ESC)) {
+      if (encoded == null) {
+        obj[code] = null;
+        continue;
+      }
+      if (!encoded.startsWith(SHORT_ESC)) {
         obj[code] = null;
         continue;
       }
@@ -414,7 +424,14 @@ function fromShortText(text) {
       const lenStr = rest.slice(0, colonIdx);
       const len = parseInt(lenStr, 10);
       const value = rest.slice(colonIdx + 1);
-      obj[code] = Number.isFinite(len) && value.length >= len ? value.slice(0, len) : null;
+      if (len === 0) {
+        // Valeur nulle (champ présent mais vide) → null au décodage.
+        obj[code] = null;
+      } else if (Number.isFinite(len) && Buffer.byteLength(value, 'utf8') >= len) {
+        obj[code] = value.slice(0, len);
+      } else {
+        obj[code] = null;
+      }
     }
     items.push(obj);
   }

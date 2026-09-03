@@ -433,11 +433,16 @@ input:focus, select:focus { border-color: var(--primary-color); }
 .charts-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 15px; }
 .chart-box { background-color: var(--bg-color); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px; height: 240px; }
 
-.file-tags { display: flex; gap: 4px; }
+.file-tags { display: flex; gap: 4px; flex-wrap: wrap; }
 .file-tag { background-color: var(--border-color); color: var(--text-color); padding: 2px 5px; border-radius: 3px; font-size: 0.7rem; cursor: pointer; }
 .file-tag.tag-xlsx { background-color: #15803d; color: white; }
 .file-tag.tag-csv { background-color: #1d4ed8; color: white; }
+.file-tag.tag-txt { background-color: #475569; color: white; }
+.file-tag.tag-short { background-color: #0d9488; color: white; }
 .file-tag:hover { background-color: var(--primary-color); color: #0f172a; }
+
+/* Badge mode d'export (Défaut / Personnalisé) dans la table d'historique */
+.tag-export-custom { display: inline-block; background: rgba(168,85,247,0.18); color: #c084fc; border: 1px solid #a855f7; padding: 1px 6px; border-radius: 4px; font-size: 0.65rem; font-weight: 600; margin-top: 3px; }
 
 .history-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 .history-table-container { overflow-x: auto; }

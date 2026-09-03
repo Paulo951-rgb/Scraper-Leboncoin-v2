@@ -305,6 +305,123 @@ const proxyUrl = document.getElementById('proxyUrl');
 proxyUrl.value = localStorage.getItem('proxy-url') || '';
 proxyUrl.addEventListener('change', (e) => localStorage.setItem('proxy-url', e.target.value));
 
+// ─── Mode d'export (Défaut / Personnalisé) + sélection des champs ──────
+// Le mode Défaut conserve l'export exhaustif (compatibilité ascendante).
+// Le mode Personnalisé permet de ne sélectionner que les champs dont
+// l'utilisateur a besoin (1 champ, plusieurs, ou quasi-tous).
+// Les champs possibles sont listés dans src/main/services/exporting/exportFields.js
+// (récupérés ici via une constante statique alignée sur DEFAULT_FIELDS).
+const EXPORT_FIELDS = [
+  { key: 'id', label: 'ID' },
+  { key: 'title', label: 'Titre' },
+  { key: 'url', label: 'URL' },
+  { key: 'produitIdentifie', label: 'Produit identifié (IA)' },
+  { key: 'resumeIA', label: 'Résumé IA' },
+  { key: 'prix', label: 'Prix' },
+  { key: 'ville', label: 'Ville' },
+  { key: 'codePostal', label: 'Code postal' },
+  { key: 'vendeurNom', label: 'Vendeur (nom)' },
+  { key: 'vendeurType', label: 'Vendeur (type)' },
+  { key: 'vendeurId', label: 'Vendeur (ID)' },
+  { key: 'vendeurNote', label: 'Vendeur (note)' },
+  { key: 'vendeurNbAvis', label: 'Vendeur (nb avis)' },
+  { key: 'vendeurUrlProfil', label: 'Vendeur (URL profil)' },
+  { key: 'vendeurAnciennete', label: 'Vendeur (ancienneté)' },
+  { key: 'livraison', label: 'Livraison' },
+  { key: 'mainPropre', label: 'Main propre' },
+  { key: 'likes', label: 'Likes' },
+  { key: 'datePublication', label: 'Date publication' },
+  { key: 'dateModification', label: 'Date modification' },
+  { key: 'dateScraping', label: 'Date scraping' },
+  { key: 'etat', label: 'État déclaré' },
+  { key: 'photosCount', label: 'Nombre de photos' },
+  { key: 'photosUrls', label: 'URLs des photos' },
+  { key: 'description', label: 'Description' },
+  { key: 'verdict', label: 'Verdict IA Marché' },
+  { key: 'valeurMarche', label: 'Valeur marché (€)' },
+  { key: 'fourchette', label: 'Fourchette marché (€)' },
+  { key: 'benefice', label: 'Bénéfice/Perte (€)' },
+  { key: 'justification', label: 'Justification IA Marché' },
+];
+const exportModeRadios = document.querySelectorAll('input[name="exportMode"]');
+const exportFieldsPanel = document.getElementById('exportFieldsPanel');
+const exportFieldsList = document.getElementById('exportFieldsList');
+const exportFieldsAll = document.getElementById('exportFieldsAll');
+const exportFieldsNone = document.getElementById('exportFieldsNone');
+const exportFieldsCount = document.getElementById('exportFieldsCount');
+
+// Persistance localStorage du mode + des champs sélectionnés (clé : lbc-export-config).
+const EXPORT_CONFIG_KEY = 'lbc-export-config';
+function loadExportConfig() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(EXPORT_CONFIG_KEY) || 'null');
+    if (saved && (saved.mode === 'custom' || saved.mode === 'default')) return saved;
+  } catch { /* JSON corrompu : on retombe sur default */ }
+  return { mode: 'default', fields: [] };
+}
+function saveExportConfig() {
+  const cfg = {
+    mode: getSelectedExportMode(),
+    fields: getSelectedExportFields(),
+  };
+  try { localStorage.setItem(EXPORT_CONFIG_KEY, JSON.stringify(cfg)); } catch { /* quota */ }
+}
+function getSelectedExportMode() {
+  const el = document.querySelector('input[name="exportMode"]:checked');
+  return el ? el.value : 'default';
+}
+function getSelectedExportFields() {
+  if (!exportFieldsList) return [];
+  return [...exportFieldsList.querySelectorAll('input[type="checkbox"]:checked')]
+    .map((cb) => cb.value);
+}
+function updateExportFieldsCount() {
+  if (!exportFieldsCount) return;
+  const n = getSelectedExportFields().length;
+  exportFieldsCount.textContent = `${n} champ(s) sélectionné(s)`;
+}
+function renderExportFieldsList() {
+  if (!exportFieldsList) return;
+  const savedCfg = loadExportConfig();
+  const checkedSet = new Set(Array.isArray(savedCfg.fields) ? savedCfg.fields : []);
+  exportFieldsList.innerHTML = EXPORT_FIELDS.map((f) => {
+    const isChecked = checkedSet.has(f.key) ? 'checked' : '';
+    return `<label class="checkbox-label" style="font-size:0.8rem;"><input type="checkbox" value="${f.key}" ${isChecked}> ${escapeHtml(f.label)}</label>`;
+  }).join('');
+  // Ré-attache les listeners de changement (innerHTML les a effacés)
+  exportFieldsList.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+    cb.addEventListener('change', () => { updateExportFieldsCount(); saveExportConfig(); });
+  });
+  updateExportFieldsCount();
+}
+function setExportMode(mode) {
+  for (const r of exportModeRadios) r.checked = (r.value === mode);
+  if (exportFieldsPanel) exportFieldsPanel.classList.toggle('hidden', mode !== 'custom');
+  saveExportConfig();
+}
+if (exportModeRadios && exportModeRadios.length > 0) {
+  for (const r of exportModeRadios) {
+    r.addEventListener('change', () => setExportMode(r.value));
+  }
+}
+if (exportFieldsAll) {
+  exportFieldsAll.addEventListener('click', () => {
+    if (!exportFieldsList) return;
+    for (const cb of exportFieldsList.querySelectorAll('input[type="checkbox"]')) cb.checked = true;
+    updateExportFieldsCount(); saveExportConfig();
+  });
+}
+if (exportFieldsNone) {
+  exportFieldsNone.addEventListener('click', () => {
+    if (!exportFieldsList) return;
+    for (const cb of exportFieldsList.querySelectorAll('input[type="checkbox"]')) cb.checked = false;
+    updateExportFieldsCount(); saveExportConfig();
+  });
+}
+renderExportFieldsList();
+// Restaure le mode sauvegardé
+setExportMode(loadExportConfig().mode);
+
 const autoAiMarket = document.getElementById('autoAiMarket');
 const aiVisionModelEl = document.getElementById('aiVisionModel');
 const analyzeImages = { checked: true }; // rétro-compat : la vision est désormais intégrée à l'IA Analyse
@@ -805,6 +922,11 @@ startBtn.addEventListener('click', () => {
       ollamaUrl: getOllamaUrl(),
       apiKey: getAiApiKey(),
     },
+    // Mode d'export (Défaut / Personnalisé) + champs sélectionnés. Le main
+    // process applique ce mode à TOUS les exports : JSON, TXT, Texte raccourci,
+    // XLSX, CSV. En mode Défaut, exportFields est ignoré (toutes les colonnes).
+    exportMode: getSelectedExportMode(),
+    exportFields: getSelectedExportMode() === 'custom' ? getSelectedExportFields() : null,
   };
 
   startBtn.disabled = true;
@@ -945,16 +1067,16 @@ function renderHistoryTable(jobs) {
     .map(
       (j) => `
     <tr>
-      <td>${j.date}</td>
+      <td>${j.date}${j.exportMeta && j.exportMeta.exportMode === 'custom' ? '<br><span class="tag-export-custom" title="Mode Personnalisé : uniquement les champs sélectionnés">✂️ Personnalisé</span>' : ''}</td>
       <td><strong>${j.adsCount}</strong> annonces</td>
       <td>
         <div class="file-tags">
           ${j.files.xlsx ? `<span class="file-tag tag-xlsx" onclick="openFile('${escapePath(j.files.xlsx)}')">XLSX</span>` : ''}
           ${j.files.csv ? `<span class="file-tag tag-csv" onclick="openFile('${escapePath(j.files.csv)}')">CSV</span>` : ''}
           ${j.files.json ? `<span class="file-tag" onclick="openFile('${escapePath(j.files.json)}')">JSON</span>` : ''}
-
+          ${j.files.txt ? `<span class="file-tag tag-txt" onclick="openFile('${escapePath(j.files.txt)}')">TXT</span>` : ''}
+          ${j.files.short ? `<span class="file-tag tag-short" onclick="openFile('${escapePath(j.files.short)}')">TXT court</span>` : ''}
           ${j.files.resumes ? `<span class="file-tag" onclick="openFile('${escapePath(j.files.resumes)}')">RÉSUMÉS IA</span>` : ''}
-          ${j.files.txt ? `<span class="file-tag" onclick="openFile('${escapePath(j.files.txt)}')">TXT</span>` : ''}
         </div>
       </td>
       <td>
@@ -1601,7 +1723,16 @@ async function geocodeCityGov(cityName, zipcode) {
 
 // 🗺️ CARTE INTERACTIVE LEAFLET AVEC FILTRAGE MAIN PROPRE ET API GOUV (SUR SAUVEGARDE PROPRE)
 async function renderMap(ads) {
-  if (typeof L === 'undefined') return;
+  // Diagnostic Leaflet : si le script CDN n'a pas pu charger (réseau bloqué,
+  // CSP, etc.), on prévient l'utilisateur au lieu de rester silencieux.
+  if (typeof L === 'undefined') {
+    const mapEl = document.getElementById('leafletMap');
+    if (mapEl) {
+      mapEl.innerHTML = '<div style="display:flex; align-items:center; justify-content:center; height:100%; color:var(--text-muted); font-size:0.85rem; padding:20px; text-align:center;">⚠️ Leaflet non chargé (vérifiez votre connexion Internet).<br>Rechargez l\'onglet pour réessayer.</div>';
+    }
+    console.warn('[Carte] Leaflet non disponible (L undefined) — vérifiez la connectivité ou la CSP.');
+    return;
+  }
 
   // Invalide tout run précédent : on est désormais la plus récente renderMap.
   const gen = ++mapRenderGen;
@@ -1637,12 +1768,17 @@ async function renderMap(ads) {
       }
     }
 
-    // Filtrer les annonces "main propre" uniquement (shipping === false,
-    // pas null qui signifie « info non extraite »).
+    // Filtrer les annonces "main propre" uniquement (livraison === false,
+    // pas null qui signifie « info non extraite »). On lit les DEUX champs
+    // (nouveau `livraison` ET legacy `shipping`) pour rester compatible avec
+    // d'anciens jobs scrapés avant l'unification des noms. Le filtre
+    // « Remise en main propre uniquement » avait cessé d'afficher quoi que ce
+    // soit depuis l'introduction du champ `livraison` car la carte lisait
+    // toujours `shipping` (toujours absent → 0 marqueur).
     let targetAds = dedupedAds;
     if (mapHandDeliveryOnly) {
-      targetAds = dedupedAds.filter((a) => a.shipping === false);
-      console.log(`[Carte] Filtre main propre ON : ${targetAds.length}/${dedupedAds.length} annonces (shipping=false uniquement) — ${ads.length - dedupedAds.length} doublon(s) supprimé(s)`);
+      targetAds = dedupedAds.filter((a) => (a.livraison ?? a.shipping) === false);
+      console.log(`[Carte] Filtre main propre ON : ${targetAds.length}/${dedupedAds.length} annonces (livraison=false uniquement) — ${ads.length - dedupedAds.length} doublon(s) supprimé(s)`);
     } else {
       console.log(`[Carte] Filtre main propre OFF : ${dedupedAds.length} annonces affichées — ${ads.length - dedupedAds.length} doublon(s) supprimé(s)`);
     }

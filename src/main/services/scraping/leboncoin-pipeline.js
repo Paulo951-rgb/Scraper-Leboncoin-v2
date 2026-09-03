@@ -66,7 +66,10 @@ function parseArgs(argv) {
       case '--export-fields':
         // Liste de clés séparées par des virgules. Utilisée uniquement si
         // exportMode === 'custom'. Si vide, retombe sur le mode Défaut.
-        opts.exportFields = argv[++i] ? argv[++i].split(',').map((s) => s.trim()).filter(Boolean) : null;
+        {
+          const raw = argv[++i];
+          opts.exportFields = raw ? String(raw).split(',').map((s) => s.trim()).filter(Boolean) : null;
+        }
         break;
       default:
         if (a.startsWith('--')) throw new CliError(`Option inconnue : ${a}`);
@@ -660,75 +663,9 @@ function _fmtDate(iso) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
-function _boolTri(v) {
-  if (v === true) return 'OUI';
-  if (v === false) return 'NON';
-  return 'null';
-}
-
-/**
- * Bloc TXT lisible d'une annonce. Structure SIMPLE et COMPACTE demandée :
- *   ID, Titre, URL, Prix, Ville, Code postal
- *   Nom, Type, ID vendeur, Note vendeur, URL profil, Date de création du compte
- *   Livraison, Main propre, Likes
- *   Date publication / dernière modification, Date scraping
- *   État déclaré
- *   Nombre + Photos
- *   DESCRIPTION
- */
-function toReadableBlock(ad, index) {
-  const urls = Array.isArray(ad.photosUrls) ? ad.photosUrls : [];
-  const imgLines = urls.length > 0
-    ? urls.map((img, i) => `  - Photo ${i + 1} : ${img}`).join('\n')
-    : '  - Aucune photo';
-
-  const note = ad.vendeurNote;
-  const nbAvis = ad.nombreAvis;
-  const noteLine = note != null ? `${note}/5${nbAvis != null ? ` (${nbAvis} avis)` : ''}` : 'null';
-
-  const datePub = _fmtDate(ad.datePublication);
-  const dateMod = _fmtDate(ad.dateModification);
-  const datePubModLine = (datePub && dateMod && datePub !== dateMod)
-    ? `${datePub} / ${dateMod}`
-    : (datePub || 'null');
-
-  const lines = [
-    `===== ANNONCE ${index + 1} =====`,
-    '',
-    `ID                 : ${ad.id ?? 'null'}`,
-    `Titre              : ${ad.title ?? 'null'}`,
-    `URL                : ${ad.url ?? 'null'}`,
-    `Prix               : ${ad.prix != null ? ad.prix + ' €' : 'null'}`,
-    `Ville              : ${ad.city ?? 'null'}`,
-    `Code postal        : ${ad.zipcode ?? 'null'}`,
-    '',
-    `Nom                : ${ad.vendeurNom ?? 'null'}`,
-    `Type               : ${ad.vendeurType ?? 'null'}`,
-    `ID vendeur         : ${ad.vendeurId ?? 'null'}`,
-    `Note vendeur       : ${noteLine}`,
-    `URL profil         : ${ad.vendeurUrlProfil ?? 'null'}`,
-    `Date de création du compte : ${ad.vendeurAncienneteJours ?? 'null'}`,
-    '',
-    `Livraison          : ${_boolTri(ad.livraison)}`,
-    `Main propre        : ${_boolTri(ad.mainPropre)}`,
-    `Likes de l'annonce : ${ad.likes ?? 'null'}`,
-    '',
-    `Date publication / dernière modification : ${datePubModLine}`,
-    `Date scraping                            : ${_fmtDate(ad.dateScraping) ?? 'null'}`,
-    '',
-    `État déclaré       : ${ad.etat ?? 'null'}`,
-    '',
-    `Nombre             : ${urls.length}`,
-    imgLines,
-    '',
-    `DESCRIPTION :`,
-    ad.description || '(non disponible)',
-    '',
-    '========================',
-    '',
-  ];
-  return lines.join('\n');
-}
+// toReadableBlock : importé depuis services/exporting/exportFields (supporte
+// le mode Défaut / Personnalisé). L'ancienne implémentation locale a été
+// supprimée pour éviter le shadowing.
 
 function writeOutputsFactory(outDir, opts) {
   const jsonPath = path.join(outDir, 'annonces.json');
@@ -764,6 +701,17 @@ function writeOutputsFactory(outDir, opts) {
     writeWithChecksum(jsonPath, jsonAds, null, 2);
     atomicWriteFileSync(txtPath, ads.map((a, i) => toReadableBlock(a, i, fields)).join('\n'));
     atomicWriteFileSync(shortPath, toShortText(ads, fields));
+    // Méta-données d'export (mode + liste de champs) : utilisées par market:analyze
+    // pour régénérer XLSX/CSV en respectant le même mode. Sans cela, un scrape
+    // en mode Personnalisé perdait son paramétrage au moment de relancer l'IA
+    // Marché (qui réécrit les XLSX/CSV).
+    const meta = {
+      version: 1,
+      exportMode: fields ? 'custom' : 'default',
+      exportFields: fields || null,
+      generatedAt: new Date().toISOString(),
+    };
+    atomicWriteFileSync(path.join(outDir, 'export-meta.json'), JSON.stringify(meta, null, 2));
   };
 }
 
@@ -801,7 +749,7 @@ async function main() {
   };
 
   logger.info(`=== Pipeline Leboncoin (Vitesse: ${opts.speed || 'moyen'} — ${preset.mode}, concurrency=${preset.concurrency}) ===`);
-  logger.debug(`[main] Options : harPath=${opts.harPath} | outDir=${opts.outDir} | headless=${opts.headless}  noDesc=${opts.noDesc} | limit=${opts.limit ?? '(aucun)'} | fresh=${opts.fresh} | speed=${opts.speed || 'moyen'} | concurrency=${opts.concurrency} | minDelay=${opts.minDelayMs} | maxDelay=${opts.maxDelayMs}`);
+  logger.debug(`[main] Options : harPath=${opts.harPath} | outDir=${opts.outDir} | headless=${opts.headless}  noDesc=${opts.noDesc} | limit=${opts.limit ?? '(aucun)'} | fresh=${opts.fresh} | speed=${opts.speed || 'moyen'} | concurrency=${opts.concurrency} | minDelay=${opts.minDelayMs} | maxDelay=${opts.maxDelayMs} | exportMode=${opts.exportMode || 'default'} | exportFields=${opts.exportFields ? `[${opts.exportFields.join(', ')}]` : '(toutes)'}`);
 
   const writeOutputs = writeOutputsFactory(opts.outDir, opts);
   const jsonPath = path.join(opts.outDir, 'annonces.json');

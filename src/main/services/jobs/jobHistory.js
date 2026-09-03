@@ -123,7 +123,9 @@ class JobHistoryManager {
       const xlsxPath = path.join(resultsDir, 'annonces.xlsx');
       const csvPath = path.join(resultsDir, 'annonces.csv');
       const txtPath = path.join(resultsDir, 'annonces.txt');
+      const shortTxtPath = path.join(resultsDir, 'annonces.short.txt');
       const resumesPath = path.join(resultsDir, 'resumes-ia.json');
+      const exportMetaPath = path.join(resultsDir, 'export-meta.json');
 
       let rawAds = [];
       // Formatage lisible : le nom du dossier est job-<ISO> (ex: job-2026-08-12T02-21-16-123Z).
@@ -165,8 +167,20 @@ class JobHistoryManager {
           xlsx: fs.existsSync(xlsxPath) ? xlsxPath : null,
           csv: fs.existsSync(csvPath) ? csvPath : null,
           txt: fs.existsSync(txtPath) ? txtPath : null,
+          short: fs.existsSync(shortTxtPath) ? shortTxtPath : null,
           resumes: fs.existsSync(resumesPath) ? resumesPath : null,
         },
+        // Méta-données d'export (mode Défaut / Personnalisé + liste de champs).
+        // Chargées depuis export-meta.json (écrit par le pipeline). Fallback
+        // 'default' si le fichier manque (anciens jobs).
+        exportMeta: (() => {
+          try {
+            if (fs.existsSync(exportMetaPath)) {
+              return JSON.parse(fs.readFileSync(exportMetaPath, 'utf8'));
+            }
+          } catch { /* silencieux : fallback default */ }
+          return { exportMode: 'default', exportFields: null };
+        })(),
       });
     }
 

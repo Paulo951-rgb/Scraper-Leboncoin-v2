@@ -21,6 +21,7 @@ const { writeWithChecksum, readWithChecksum } = require('../utils/integrity');
 const { atomicWriteFileSync } = require('../utils/helpers');
 const { loadSettings, saveSettings } = require('./settings');
 const { listSearchProviders } = require('../services/ai/search/searchProviderRegistry');
+const { filterAdByFields: filterAdsForExport, ALL_FIELD_KEYS: ALL_EXPORT_KEYS } = require('../services/exporting/exportFields');
 
 /**
  * Génère un fichier résumé compact (JSON) destiné à être transmis à une autre IA
@@ -182,7 +183,19 @@ function setupIpcHandlers(getMainWindow) {
     sessionStats.t0 = Date.now();
     sessionStats.pagesRequested = parseInt(config.pages, 10) || 1;
 
-    const { searchUrl, pages = 1, noDesc = false, autoAiMarket = true, analyzeImages = false, limit, aiConfig, proxyUrl } = config;
+    const { searchUrl, pages = 1, noDesc = false, autoAiMarket = true, analyzeImages = false, limit, aiConfig, proxyUrl, exportMode, exportFields } = config;
+    // Normalisation des options d'export : le mode Défaut est implicite si rien
+    // n'est fourni. `exportFields` n'a de sens qu'avec exportMode === 'custom'.
+    const normalizedExportMode = (exportMode === 'custom') ? 'custom' : 'default';
+    const normalizedExportFields = (normalizedExportMode === 'custom' && Array.isArray(exportFields) && exportFields.length > 0)
+      ? exportFields.filter((k) => ALL_EXPORT_KEYS.includes(k))
+      : null;
+    if (normalizedExportMode === 'custom' && (!normalizedExportFields || normalizedExportFields.length === 0)) {
+      // Mode custom demandé mais aucun champ valide fourni : on conserve le mode
+      // (le pipeline appliquera un fallback sur les essentiels) mais on log un
+      // avertissement pour aider l'utilisateur à comprendre ce qu'il a choisi.
+      sendLog({ level: 'warn', message: '[job:start] Mode Personnalisé actif mais aucun champ valide sélectionné — fallback sur les champs essentiels (id, title, url, prix, description).' });
+    }
     // Note : analyzeImages est conservé pour rétro-compatibilité UI mais n'a plus
     // d'effet séparé — l'IA Analyse (adAnalyzer) combine déjà texte + vision en
     // un seul appel quand des photos sont disponibles et qu'un modèle vision est configuré.
@@ -279,6 +292,9 @@ function setupIpcHandlers(getMainWindow) {
         speed: userSettings.scrapeSpeed || 'fast',
         headless: userSettings.headless !== false,
         userAgent: activeCapturer ? activeCapturer._userAgent : undefined,
+        // Mode d'export : appliqué par le pipeline (annonces.json + txt + short.txt).
+        exportMode: normalizedExportMode,
+        exportFields: normalizedExportFields,
       });
       sendLog({ level: 'debug', message: `[job:start] Phase pipeline terminée en ${Math.round((Date.now() - t0Pipeline) / 1000)}s.` });
 
@@ -361,13 +377,16 @@ function setupIpcHandlers(getMainWindow) {
               sendLog({ level: 'debug', message: '[job:start] IA Analyse ignorée (autoAiMarket=false).' });
             }
 
-            await ExcelExporter.exportToXlsx(adsWithAi, xlsxPath);
+            // Mode Personnalisé : on restreint le XLSX/CSV aux colonnes
+            // sélectionnées. Le mode Défaut garde l'export exhaustif.
+            const xlsxOptions = (normalizedExportMode === 'custom' && normalizedExportFields) ? { fields: normalizedExportFields } : {};
+            await ExcelExporter.exportToXlsx(adsWithAi, xlsxPath, xlsxOptions);
             sendLog({ level: 'info', message: '📊 Export Excel (.xlsx) généré avec succès !' });
             // Export CSV jumeau (compatible Excel FR, BOM UTF-8) : permet l'import
             // dans un tableur alternatif ou un script sans dépendre d'Excel.
             const csvPath = path.join(resultsDir, 'annonces.csv');
             try {
-              await ExcelExporter.exportToCsv(adsWithAi, csvPath);
+              await ExcelExporter.exportToCsv(adsWithAi, csvPath, xlsxOptions);
               sendLog({ level: 'debug', message: `📄 Export CSV généré : ${csvPath}` });
             } catch (csvErr) {
               sendLog({ level: 'warn', message: `Export CSV impossible : ${csvErr.message}` });
@@ -566,12 +585,30 @@ function setupIpcHandlers(getMainWindow) {
 
     writeWithChecksum(targetJob.files.json, ads, null, 2);
     writeSummaryFile(ads, path.join(path.dirname(targetJob.files.json), 'resumes-ia.json'));
+
+    // Récupère les options d'export du job pour que le XLSX/CSV régénéré
+    // après l'IA Marché respecte le mode choisi au moment du scraping
+    // (Défaut / Personnalisé + liste de champs). Sans cela, un scrape
+    // en mode Personnalisé perdait sa sélection après l'IA Marché.
+    let exportOptions = {};
+    try {
+      const metaPath = path.join(path.dirname(targetJob.files.json), 'export-meta.json');
+      if (fs.existsSync(metaPath)) {
+        const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+        if (meta && meta.exportMode === 'custom' && Array.isArray(meta.exportFields) && meta.exportFields.length > 0) {
+          exportOptions = { fields: meta.exportFields };
+        }
+      }
+    } catch (metaErr) {
+      sendLog({ level: 'debug', message: `[market:analyze] export-meta.json illisible (${metaErr.message}) — XLSX/CSV en mode Défaut.` });
+    }
+
     if (targetJob.files.xlsx) {
-      await ExcelExporter.exportToXlsx(ads, targetJob.files.xlsx);
+      await ExcelExporter.exportToXlsx(ads, targetJob.files.xlsx, exportOptions);
       // Régénère aussi le CSV (jumeau du xlsx) avec les données marché mises à
       // jour : sans cela, le CSV restait à l'état du dernier job:start.
       try {
-        await ExcelExporter.exportToCsv(ads, path.join(path.dirname(targetJob.files.xlsx), 'annonces.csv'));
+        await ExcelExporter.exportToCsv(ads, path.join(path.dirname(targetJob.files.xlsx), 'annonces.csv'), exportOptions);
       } catch (csvErr) {
         sendLog({ level: 'warn', message: `Mise à jour CSV impossible : ${csvErr.message}` });
       }

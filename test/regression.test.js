@@ -1388,7 +1388,7 @@ assert(/replace\(\/\"\/g, '""'\)/.test(excelCodeG), 'excelExporter: _csvField do
 assert(/\\uFEFF/.test(excelCodeG), 'excelExporter: exportToCsv ajoute le BOM UTF-8 (accents Excel)');
 assert(/\\r\\n/.test(excelCodeG), 'excelExporter: exportToCsv utilise CRLF (compat Excel Windows)');
 
-assert(/exportToCsv\(adsWithAi, csvPath\)/.test(ipcCode2), 'ipcHandlers: job:start génère le CSV après le XLSX');
+assert(/exportToCsv\(adsWithAi,\s*csvPath/.test(ipcCode2), 'ipcHandlers: job:start génère le CSV après le XLSX');
 assert(/exportToCsv\(ads, path\.join\(path\.dirname\(targetJob\.files\.xlsx\)/.test(ipcCode2), 'ipcHandlers: market:analyze régénère le CSV après le XLSX');
 
 const jobHistCodeG = fs.readFileSync(path.join(base, 'services/jobs/jobHistory.js'), 'utf8');
@@ -1442,8 +1442,233 @@ assert(/\.tag-csv\s*\{/.test(fs.readFileSync(path.join(__dirname, '..', 'src/ren
   });
 }
 
+// ─── [10/10] Modes d'export (Défaut / Personnalisé) + Texte raccourci ───
+console.log('\n[10/10] Export modes + Short text');
+{
+  const exporting = require('../src/main/services/exporting/exportFields');
+  assert(typeof exporting.filterAdByFields === 'function', 'exportFields: filterAdByFields présent');
+  assert(typeof exporting.toReadableBlock === 'function', 'exportFields: toReadableBlock présent');
+  assert(typeof exporting.toShortText === 'function', 'exportFields: toShortText présent');
+  assert(typeof exporting.fromShortText === 'function', 'exportFields: fromShortText (décodeur) présent');
+  assert(Array.isArray(exporting.DEFAULT_FIELDS) && exporting.DEFAULT_FIELDS.length > 0, 'exportFields: DEFAULT_FIELDS non vide');
+  assert(Array.isArray(exporting.FIELD_CATEGORIES) && exporting.FIELD_CATEGORIES.length > 0, 'exportFields: FIELD_CATEGORIES non vide');
+  assert(Array.isArray(exporting.ALL_FIELD_KEYS) && exporting.ALL_FIELD_KEYS.length === exporting.DEFAULT_FIELDS.length, 'exportFields: ALL_FIELD_KEYS aligné sur DEFAULT_FIELDS');
+
+  // Mode Défaut : toReadableBlock renvoie un bloc avec tous les champs.
+  const ad1 = {
+    id: '1', title: 'Nintendo DS Lite', prix: 30, city: 'Dijon', zipcode: '21000',
+    vendeurNom: 'Jean', vendeurNote: 4.5, likes: 10,
+    description: 'Console en bon état',
+    livraison: true, mainPropre: false,
+    etat: 'Bon état',
+    dateScraping: '2026-08-31T22:43:15Z',
+    url: 'https://lbc.fr/1',
+    adAnalysis: { identifiedProduct: 'Nintendo DS Lite', summary: 'Console portable' },
+    marketAnalysis: { verdictLabel: 'Bonne affaire', realValue: 45, valueRangeLow: 40, valueRangeHigh: 50, deltaEur: 15, rationale: 'Bon prix' },
+  };
+  const blockDefaut = exporting.toReadableBlock(ad1, 0);
+  assert(blockDefaut.includes('===== ANNONCE 1 ====='), 'TXT Défaut: en-tête annonce');
+  assert(blockDefaut.includes('Nintendo DS Lite'), 'TXT Défaut: titre');
+  assert(blockDefaut.includes('30 €'), 'TXT Défaut: prix formaté');
+  assert(blockDefaut.includes('Console en bon état'), 'TXT Défaut: description');
+  assert(blockDefaut.includes('Jean'), 'TXT Défaut: vendeur');
+  assert(blockDefaut.includes('OUI'), 'TXT Défaut: livraison OUI');
+  assert(blockDefaut.includes('Nintendo DS Lite'), 'TXT Défaut: produit identifié IA');
+  assert(blockDefaut.includes('Bonne affaire'), 'TXT Défaut: verdict IA Marché');
+
+  // Mode Personnalisé (1 champ : titre + prix) : le bloc ne contient que ça.
+  const blockPerso = exporting.toReadableBlock(ad1, 0, ['title', 'prix']);
+  assert(blockPerso.includes('Titre'), 'TXT Perso (titre): libellé Titre');
+  assert(blockPerso.includes('Prix'), 'TXT Perso (prix): libellé Prix');
+  assert(blockPerso.includes('Nintendo DS Lite'), 'TXT Perso: titre présent');
+  assert(blockPerso.includes('30 €'), 'TXT Perso: prix présent');
+  assert(!blockPerso.includes('Description'), 'TXT Perso: pas de section Description');
+  assert(!blockPerso.includes('Ville'), 'TXT Perso: pas de section Ville');
+  assert(!blockPerso.includes('Vendeur'), 'TXT Perso: pas de section Vendeur');
+
+  // Mode Personnalisé (presque tous les champs) : 1 seul champ exclu.
+  const almostAll = exporting.ALL_FIELD_KEYS.filter((k) => k !== 'description');
+  const blockAlmostAll = exporting.toReadableBlock(ad1, 0, almostAll);
+  assert(blockAlmostAll.includes('Titre'), 'TXT quasi-complet: Titre');
+  assert(blockAlmostAll.includes('Description') === false || blockAlmostAll.includes('Description :') === false,
+    'TXT quasi-complet: pas de Description (exclue)');
+
+  // filterAdByFields : mode Défaut (= null) → objet tel quel.
+  const filteredDefault = exporting.filterAdByFields(ad1);
+  assert(filteredDefault.id === '1', 'filterAdByFields default: id conservé');
+  assert(filteredDefault.description === 'Console en bon état', 'filterAdByFields default: description conservée');
+
+  // filterAdByFields : mode Personnalisé → uniquement les clés sélectionnées.
+  const filteredCustom = exporting.filterAdByFields(ad1, ['id', 'title', 'prix']);
+  assert(filteredCustom.id === '1' && filteredCustom.title === 'Nintendo DS Lite' && filteredCustom.prix === 30,
+    'filterAdByFields custom: clés sélectionnées conservées');
+  assert(filteredCustom.description === undefined, 'filterAdByFields custom: description retirée');
+  assert(filteredCustom.adAnalysis === undefined, 'filterAdByFields custom: adAnalysis retiré (pas de champ IA sélectionné)');
+  assert(filteredCustom.marketAnalysis === undefined, 'filterAdByFields custom: marketAnalysis retiré');
+
+  // filterAdByFields : custom avec uniquement des champs IA → garde slim adAnalysis
+  const filteredIA = exporting.filterAdByFields(ad1, ['produitIdentifie', 'verdict']);
+  assert(filteredIA.adAnalysis && filteredIA.adAnalysis.identifiedProduct === 'Nintendo DS Lite',
+    'filterAdByFields: adAnalysis slim (produitIdentifie seul)');
+  assert(!('summary' in (filteredIA.adAnalysis || {})), 'filterAdByFields: summary absent (non sélectionné)');
+  assert(filteredIA.marketAnalysis && filteredIA.marketAnalysis.verdictLabel === 'Bonne affaire',
+    'filterAdByFields: marketAnalysis slim (verdict seul)');
+  assert(!('realValue' in (filteredIA.marketAnalysis || {})), 'filterAdByFields: realValue absent (non sélectionné)');
+
+  // Texte raccourci : format et compression
+  const short = exporting.toShortText([ad1]);
+  assert(short.startsWith('##SC## 1 '), 'Short: en-tête ##SC## 1');
+  // 1 en-tête + 1 annonce séparés par 0x1D (Group Separator, non-imprimable)
+  assert(short.split('\x1D').length === 2, 'Short: 1 en-tête + 1 annonce = 2 sections (séparateur \\x1D)');
+  // Sérialisation : taille largement plus petite que le TXT normal.
+  const txtSize = Buffer.byteLength(blockDefaut, 'utf8');
+  const shortSize = Buffer.byteLength(short, 'utf8');
+  assert(shortSize < txtSize, `Short est plus compact que le TXT normal (short=${shortSize} < txt=${txtSize})`);
+
+  // Texte raccourci : décodeur restituant les valeurs
+  const decoded = exporting.fromShortText(short);
+  assert(decoded.items.length === 1, 'Short: 1 item décodé');
+  // Le décodeur renvoie les codes courts en clé. On doit retrouver l'identifiant (court) qui correspond au titre.
+  const decodedItem = decoded.items[0];
+  const titleField = exporting.DEFAULT_FIELDS.find((f) => f.key === 'title');
+  const titleShort = titleField.short;
+  assert(decodedItem[titleShort] === 'Nintendo DS Lite',
+    `Short: titre restitué via code court "${titleShort}"`);
+
+  // Texte raccourci : valeurs avec séparateurs / caractères spéciaux
+  const ad2 = {
+    id: '2', title: 'Titre|avec|pipe', prix: 100,
+    description: 'Ligne1\nLigne2\rLigne3|avec|pipe',
+    livraison: true, mainPropre: false,
+  };
+  const short2 = exporting.toShortText([ad2]);
+  const decoded2 = exporting.fromShortText(short2);
+  const titleField2 = exporting.DEFAULT_FIELDS.find((f) => f.key === 'title');
+  const descField2 = exporting.DEFAULT_FIELDS.find((f) => f.key === 'description');
+  assert(decoded2.items[0][titleField2.short] === 'Titre|avec|pipe',
+    'Short: titre avec | préservé (échappement length-prefixed)');
+  assert(decoded2.items[0][descField2.short] === 'Ligne1\nLigne2\rLigne3|avec|pipe',
+    'Short: description multi-ligne + pipe préservés (length-prefixed)');
+
+  // Texte raccourci : valeurs nulles / absentes
+  const ad3 = { id: '3', title: 'T3', prix: null, vendeurNom: null };
+  const short3 = exporting.toShortText([ad3]);
+  const decoded3 = exporting.fromShortText(short3);
+  const prixField = exporting.DEFAULT_FIELDS.find((f) => f.key === 'prix');
+  const vendeurField = exporting.DEFAULT_FIELDS.find((f) => f.key === 'vendeurNom');
+  assert(decoded3.items[0][prixField.short] === null, 'Short: prix null → null au décodage');
+  assert(decoded3.items[0][vendeurField.short] === null, 'Short: vendeur null → null au décodage');
+
+  // Texte raccourci : annonces multiples
+  const shortMany = exporting.toShortText([ad1, ad2, ad3]);
+  const decodedMany = exporting.fromShortText(shortMany);
+  assert(decodedMany.items.length === 3, 'Short: 3 items décodés depuis un fichier multi-annonces');
+
+  // Texte raccourci : un en-tête absent/invalide doit lever une erreur
+  try {
+    exporting.fromShortText('pas un fichier short');
+    assert(false, 'Short: doit lever une erreur sur en-tête invalide');
+  } catch (err) {
+    assert(/invalide/i.test(err.message), 'Short: erreur explicite sur en-tête invalide');
+  }
+
+  // Champ "URLs des photos" : par défaut les URLs sont conservées dans le short
+  // (elles sont sélectionnées), mais le user peut les exclure via le mode
+  // Personnalisé pour gagner de la place.
+  const adPhotos = {
+    id: '4', title: 'Avec photos', photosCount: 2,
+    photosUrls: ['https://a.com/1.jpg', 'https://a.com/2.jpg'],
+  };
+  const shortAll = exporting.toShortText([adPhotos]); // mode Défaut → tout inclus
+  const shortNoPhotos = exporting.toShortText([adPhotos], ['id', 'title', 'photosCount']);
+  assert(Buffer.byteLength(shortAll, 'utf8') > Buffer.byteLength(shortNoPhotos, 'utf8'),
+    'Short: exclure photosUrls réduit la taille');
+}
+
+// Intégration pipeline : writeOutputs respecte le mode (annonces.json filtré + short créé)
+{
+  const pipelinePath = path.join(base, 'services/scraping/leboncoin-pipeline.js');
+  const pipelineCode = fs.readFileSync(pipelinePath, 'utf8');
+  assert(/--export-mode/.test(pipelineCode), 'pipeline: option CLI --export-mode');
+  assert(/--export-fields/.test(pipelineCode), 'pipeline: option CLI --export-fields');
+  assert(/annonces\.short\.txt/.test(pipelineCode), 'pipeline: écrit annonces.short.txt');
+  assert(/export-meta\.json/.test(pipelineCode), 'pipeline: écrit export-meta.json (mode + champs)');
+  assert(/filterAdByFields/.test(pipelineCode), 'pipeline: utilise filterAdByFields pour mode Personnalisé');
+}
+
+// Integration pipelineRunner → pipeline
+{
+  const runnerCode = fs.readFileSync(path.join(base, 'services/scraping/pipelineRunner.js'), 'utf8');
+  assert(/exportMode/.test(runnerCode), 'pipelineRunner: déstructure exportMode');
+  assert(/--export-mode/.test(runnerCode), 'pipelineRunner: forward --export-mode au pipeline');
+  assert(/--export-fields/.test(runnerCode), 'pipelineRunner: forward --export-fields au pipeline');
+}
+
+// ipcHandlers : wiring complet du mode
+{
+  const ipcCodeNew = fs.readFileSync(path.join(base, 'core/ipcHandlers.js'), 'utf8');
+  assert(/exportMode/.test(ipcCodeNew), 'ipcHandlers: lit exportMode depuis la config renderer');
+  assert(/exportFields/.test(ipcCodeNew), 'ipcHandlers: lit exportFields depuis la config renderer');
+  assert(/ALL_EXPORT_KEYS/.test(ipcCodeNew) || /ALL_FIELD_KEYS/.test(ipcCodeNew),
+    'ipcHandlers: valide les clés contre ALL_FIELD_KEYS');
+  assert(/export-meta\.json/.test(ipcCodeNew), 'ipcHandlers: market:analyze lit export-meta.json pour régénérer XLSX/CSV en mode Personnalisé');
+  assert(/exportOptions/.test(ipcCodeNew), 'ipcHandlers: exportOptions transmis à ExcelExporter');
+}
+
+// ExcelExporter : XLSX/CSV en mode Personnalisé
+{
+  const excelCode = fs.readFileSync(path.join(base, 'infrastructure/excelExporter.js'), 'utf8');
+  assert(/DEFAULT_COLUMNS/.test(excelCode), 'excelExporter: DEFAULT_COLUMNS centralisé');
+  assert(/_selectColumns/.test(excelCode), 'excelExporter: méthode _selectColumns présente');
+  assert(/options\.fields/.test(excelCode), 'excelExporter: accepte options.fields (mode Personnalisé)');
+}
+
+// jobHistory : export-meta + short file
+{
+  const jobHistCode = fs.readFileSync(path.join(base, 'services/jobs/jobHistory.js'), 'utf8');
+  assert(/shortTxtPath/.test(jobHistCode), 'jobHistory: déclare shortTxtPath');
+  assert(/short:/.test(jobHistCode), 'jobHistory: fichier short listé dans files');
+  assert(/exportMeta/.test(jobHistCode), 'jobHistory: exportMeta chargé depuis export-meta.json');
+}
+
+// UI : mode + sélection des champs
+{
+  const indexCode = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/index.html'), 'utf8');
+  assert(/id="exportModeDefault"/.test(indexCode), 'index.html: radio mode Défaut');
+  assert(/id="exportModeCustom"/.test(indexCode), 'index.html: radio mode Personnalisé');
+  assert(/id="exportFieldsPanel"/.test(indexCode), 'index.html: panneau sélection des champs');
+  assert(/id="exportFieldsAll"/.test(indexCode), 'index.html: bouton Tout sélectionner');
+  assert(/id="exportFieldsNone"/.test(indexCode), 'index.html: bouton Tout désélectionner');
+  assert(/id="exportFieldsList"/.test(indexCode), 'index.html: liste des champs cochables');
+
+  const appCodeNew = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/app.js'), 'utf8');
+  assert(/EXPORT_FIELDS/.test(appCodeNew), 'app.js: liste EXPORT_FIELDS');
+  assert(/getSelectedExportMode/.test(appCodeNew), 'app.js: accesseur mode sélectionné');
+  assert(/getSelectedExportFields/.test(appCodeNew), 'app.js: accesseur champs sélectionnés');
+  assert(/exportMode:\s*getSelectedExportMode\(\)/.test(appCodeNew),
+    'app.js: startScraping envoie exportMode');
+  assert(/exportFields:\s*getSelectedExportMode\(\)\s*===\s*.custom.\s*\?/.test(appCodeNew),
+    'app.js: startScraping envoie exportFields uniquement si mode=custom');
+  assert(/tag-short/.test(appCodeNew), 'app.js: tag "TXT court" dans la table d\'historique');
+  assert(/tag-export-custom/.test(appCodeNew), 'app.js: badge "Personnalisé" affiché en mode custom');
+  assert(/tag-txt/.test(appCodeNew), 'app.js: tag "TXT" affiché dans la table');
+
+  const stylesCode = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/styles.css'), 'utf8');
+  assert(/\.tag-short\s*\{/.test(stylesCode), 'styles.css: .tag-short');
+  assert(/\.tag-txt\s*\{/.test(stylesCode), 'styles.css: .tag-txt');
+  assert(/\.tag-export-custom\s*\{/.test(stylesCode), 'styles.css: .tag-export-custom');
+}
+
+// Carte Leaflet : fix du filtre main propre (utilise livraison OU shipping)
+{
+  const appCodeMap = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/app.js'), 'utf8');
+  assert(/a\.livraison\s*\?\?\s*a\.shipping/.test(appCodeMap),
+    'app.js: filtre carte utilise livraison ?? shipping (fallback legacy)');
+  assert(/Leaflet non (chargé|disponible)/.test(appCodeMap),
+    'app.js: diagnostic Leaflet non chargé (L undefined)');
+}
+
 console.log(`\n=== RÉSULTAT : ${pass} réussis, ${fail} échoués ===`);
 process.exit(fail > 0 ? 1 : 0);
 }
-
 main().catch((err) => { console.error(err); process.exit(1); });

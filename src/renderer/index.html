@@ -95,6 +95,38 @@
             </div>
           </div>
 
+          <!-- MODE D'EXPORT (Défaut / Personnalisé) + sélection des champs -->
+          <div class="card subcard">
+            <h3>🗂️ Données à récupérer / exporter</h3>
+            <p class="text-muted font-small" style="margin-bottom:10px;">
+              Le mode <strong>Défaut</strong> récupère et exporte toutes les informations disponibles (titre, prix, description, vendeur, dates, photos, etc.).
+              Le mode <strong>Personnalisé</strong> vous permet de ne récupérer / exporter <strong>que les champs que vous sélectionnez</strong>.
+            </p>
+
+            <div class="form-row checkboxes" style="margin-bottom:6px;">
+              <label class="checkbox-label">
+                <input type="radio" name="exportMode" id="exportModeDefault" value="default" checked>
+                <strong>📦 Défaut</strong> — toutes les informations (recommandé)
+              </label>
+              <label class="checkbox-label">
+                <input type="radio" name="exportMode" id="exportModeCustom" value="custom">
+                <strong>✂️ Personnalisé</strong> — uniquement les champs que je choisis
+              </label>
+            </div>
+
+            <div id="exportFieldsPanel" class="hidden" style="border:1px solid var(--border-color); border-radius:8px; padding:12px; margin-top:8px; background-color:var(--bg-color);">
+              <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+                <button type="button" id="exportFieldsAll" class="btn btn-secondary btn-small">✅ Tout sélectionner</button>
+                <button type="button" id="exportFieldsNone" class="btn btn-secondary btn-small">🚫 Tout désélectionner</button>
+                <span id="exportFieldsCount" class="text-muted font-small" style="align-self:center;">0 champ(s) sélectionné(s)</span>
+              </div>
+              <div id="exportFieldsList" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:6px 14px;"></div>
+              <p class="text-muted font-small" style="margin-top:10px;">
+                💡 Les champs non sélectionnés ne figureront dans aucun export (JSON, TXT, Texte raccourci, XLSX, CSV).
+              </p>
+            </div>
+          </div>
+
           <!-- PROXIES -->
           <div class="card subcard">
             <h3>🌐 Configuration Proxy Rotatif (Optionnel)</h3>

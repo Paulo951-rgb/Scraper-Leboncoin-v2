@@ -279,6 +279,41 @@ renderer/                    app.js, index.html, styles.css, widget.html, aiStud
 - Tests : `npm test` (ou `node test/regression.test.js`) — 718 assertions
 - Branche stable : `refactor/professional-architecture`
 
+## Améliorations globales (session 2026-09, 8e passe — modes d'export + Texte raccourci + carte)
+- **Nouveau module `src/main/services/exporting/exportFields.js`** : centralise
+  la définition des champs exportables, le filtrage par mode et la sérialisation.
+  Exports : `DEFAULT_FIELDS` (30 champs, avec `key`/`label`/`short`/`get`),
+  `ALL_FIELD_KEYS`, `FIELD_CATEGORIES`, `FIELDS_BY_KEY`, `filterAdByFields`,
+  `toReadableBlock`, `toShortText`, `fromShortText` (décodeur pour tests).
+- **Mode d'export (Défaut / Personnalisé)** ajouté à l'UI (onglet Scraper) et au
+  pipeline. Le mode Défaut conserve l'export exhaustif. Le mode Personnalisé
+  permet de sélectionner 1, plusieurs, ou quasi-tous les champs.
+  Boutons "Tout sélectionner" / "Tout désélectionner" + sauvegarde localStorage.
+  Validation côté main process (clés filtrées contre `ALL_FIELD_KEYS`).
+- **Nouveau type d'export : Texte raccourci (`annonces.short.txt`)** : sérialisation
+  ultra-compacte (séparateurs ASCII non-imprimables 0x1F/0x1D, échappement
+  length-prefixed 0x1E) qui compresse 30-50% par rapport au TXT normal SANS
+  aucune perte d'information (mêmes champs, mêmes valeurs). Décodeur round-trip
+  testé (annonces avec `|`, sauts de ligne, valeurs nulles, multi-annonces).
+- **Métadonnées d'export** : `export-meta.json` écrit par le pipeline (mode +
+  liste de champs), lu par `market:analyze` pour régénérer XLSX/CSV en
+  respectant le mode Personnalisé choisi au moment du scraping.
+- **ExcelExporter** : `DEFAULT_COLUMNS` centralisé + `_selectColumns(options.fields)`
+  qui restreint les colonnes XLSX/CSV au mode Personnalisé. Mapping automatique
+  des clés `exportFields` vers les colonnes (ex. `produitIdentifie` →
+  `identifiedProduct`, `fourchette` → `valueRangeLow/High`).
+- **Carte Leaflet** : correction du bug "carte vide". Le filtre "Remise en main
+  propre uniquement" lisait `a.shipping === false` mais les nouveaux jobs
+  n'utilisent plus `shipping` (remplacé par `livraison`). Fix : fallback
+  `(a.livraison ?? a.shipping) === false`. Ajout d'un diagnostic explicite si
+  Leaflet n'est pas chargé (L undefined → message dans le conteneur carte).
+- **UI** : tags `.tag-txt` (gris) et `.tag-short` (teal) dans l'historique +
+  badge violet `.tag-export-custom` ("✂️ Personnalisé") sous la date.
+- **Tests** : 802 assertions (était 718). Nouveaux tests fonctionnels pour
+  filterAdByFields, toReadableBlock (Défaut/Personnalisé/quasi-complet), 
+  toShortText (compression, échappement, décodeur, multi-lignes, null),
+  et intégration pipeline/XLSX/CSV/jobHistory/UI pour le mode d'export.
+
 ## Améliorations globales (session 2026-08, 7e passe — scraping pur + correction description)
 - **Correction du bug `[object Object]` dans la description** : la fonction
   `extractDescription()` d'`adFields.js` acceptait n'importe quelle valeur non-null
