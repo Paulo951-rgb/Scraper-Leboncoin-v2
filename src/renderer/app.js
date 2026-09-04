@@ -1220,7 +1220,7 @@ function renderExplorerAds() {
   // Helpers lecture champs structurés / legacy
   const livraisonOf = (a) => a.livraison ?? a.shipping;
   const mainPropreOf = (a) => a.mainPropre ?? a.handDelivery;
-  const typeVendeurOf = (a) => a.vendeurType || (a.isPro ? 'pro' : 'particulier');
+  const typeVendeurOf = (a) => a.vendeurType || 'particulier';
   const noteOf = (a) => a.vendeurNote != null ? a.vendeurNote : a.sellerRating;
   const likesOf = (a) => a.likes != null ? a.likes : (a.favorites_count != null ? a.favorites_count : null);
   const datePubOf = (a) => a.datePublication || a.date;
@@ -1334,8 +1334,8 @@ function renderExplorerAds() {
         const valueHtml = marketValueText(ma);
         const deltaHtml = marketDeltaText(ma);
         const summaryHtml = `<div class="desc-tooltip" title="${escapeHtml(analysisSummary(a))}">${escapeHtml(analysisSummary(a))}</div>`;
-        const sellerChip = `<small style="color:var(--text-muted);">${escapeHtml(a.vendeurNom || a.seller || 'Particulier')}${a.isPro ? ' (Pro)' : ''}</small>`;
-        const typeVendeurBadge = a.isPro ? '<span style="background:var(--accent); color:white; padding:1px 5px; border-radius:3px; font-size:0.7rem;">PRO</span>' : '<span style="background:var(--bg-secondary); padding:1px 5px; border-radius:3px; font-size:0.7rem;">PART</span>';
+        const sellerChip = `<small style="color:var(--text-muted);">${escapeHtml(a.vendeurNom || 'Particulier')}</small>`;
+        const typeVendeurBadge = (a.vendeurType === 'pro') ? '<span style="background:var(--accent); color:white; padding:1px 5px; border-radius:3px; font-size:0.7rem;">PRO</span>' : '<span style="background:var(--bg-secondary); padding:1px 5px; border-radius:3px; font-size:0.7rem;">PART</span>';
 
         return `
         <tr>
@@ -1664,7 +1664,7 @@ function renderStatsView() {
     else nonRenseigneCount++;
   }
 
-  const proCount = sourceAds.filter((a) => a.isPro).length;
+  const proCount = sourceAds.filter((a) => a.vendeurType === 'pro').length;
   const partCount = sourceAds.length - proCount;
 
   statHandDelivery.textContent = fmt(mainPropreCount);
@@ -1747,7 +1747,7 @@ async function renderMap(ads) {
       }).addTo(mapInstance);
     }
 
-    // Effacer les anciens marqueurs de la carte
+    // Effacer les anciens marqueurs (mais garder le tile layer)
     mapInstance.eachLayer((layer) => {
       if (layer instanceof L.Marker) mapInstance.removeLayer(layer);
     });
@@ -1756,8 +1756,6 @@ async function renderMap(ads) {
     const mapHandDeliveryOnly = !!(mapHandDeliveryEl && mapHandDeliveryEl.checked);
 
     // Déduplication : une même annonce peut apparaître dans plusieurs sessions
-    // de scraping (ex. « tous les scrapings combinés »). On ne l'affiche qu'une
-    // seule fois sur la carte, identifiée par son id Leboncoin (fiable).
     const seenIds = new Set();
     const dedupedAds = [];
     for (const a of ads) {
@@ -1783,22 +1781,21 @@ async function renderMap(ads) {
       console.log(`[Carte] Filtre main propre OFF : ${dedupedAds.length} annonces affichées — ${ads.length - dedupedAds.length} doublon(s) supprimé(s)`);
     }
 
-    // Géocodage à concurrence limitée (au lieu d'un await séquentiel qui
-    // pouvait prendre plusieurs minutes pour 100+ annonces). On borne à 6
-    // requêtes parallèles pour rester dans les limites de l'API Gouv.
+    // Géocodage à concurrence limitée
     const GEOCODE_CONCURRENCY = 6;
     const queue = [...targetAds];
     const placeMarker = (a, coords) => {
       if (!coords) return;
-      if (isStale()) return; // une renderMap plus récente a démarré : on n'ajoute pas
+      if (isStale()) return;
       const jitterCoords = [
         coords[0] + (Math.random() - 0.5) * 0.012,
         coords[1] + (Math.random() - 0.5) * 0.012
       ];
       const marker = L.marker(jitterCoords).addTo(mapInstance);
-      const deliveryTxt = (a.livraison === true || a.shipping === true)
+      const livraison = a.livraison ?? a.shipping;
+      const deliveryTxt = livraison === true
         ? '📦 Livraison possible'
-        : (a.livraison === false || a.shipping === false)
+        : livraison === false
           ? '🤝 Remise en main propre'
           : 'ℹ️ Remise non précisée';
       marker.bindPopup(`
@@ -1814,7 +1811,7 @@ async function renderMap(ads) {
 
     const worker = async () => {
       while (queue.length > 0) {
-        if (isStale()) return; // abandon si une renderMap plus récente a démarré
+        if (isStale()) return;
         const a = queue.shift();
         if (!a) break;
         try {
@@ -1827,6 +1824,9 @@ async function renderMap(ads) {
     };
 
     await Promise.all(Array.from({ length: Math.min(GEOCODE_CONCURRENCY, targetAds.length) }, () => worker()));
+
+    // Important : invalider la taille après le rendu pour que Leaflet recalcule
+    if (mapInstance) mapInstance.invalidateSize();
   } catch (err) {
     console.error('[Carte] Erreur lors du rendu de la carte :', err.message);
   }
@@ -1892,7 +1892,7 @@ function renderCharts(ads, transactionStats) {
 
   // 2) Vendeurs particuliers vs pros — barres horizontales comparatives
   // (remplace le camembert/doughnut peu lisible pour comparer 2 valeurs).
-  const proCount = ads.filter((a) => a.isPro).length;
+  const proCount = ads.filter((a) => a.vendeurType === 'pro').length;
   const partCount = ads.length - proCount;
   const total = partCount + proCount;
   const partPct = total ? Math.round((partCount / total) * 100) : 0;
