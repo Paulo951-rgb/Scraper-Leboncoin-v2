@@ -276,10 +276,11 @@ assert(!/openAdDetail\('\$\{a\.id\}'\)/.test(appCode), 'app.js: a.id échappé d
 assert(!/toggleStar\('\$\{a\.id\}'\)/.test(appCode), 'app.js: a.id échappé dans toggleStar onclick');
 // Le bouton "Ouvrir le dossier" utilise maintenant openJobsFolder (ouvre results/)
 assert(/openJobsFolder\(\)/.test(appCode), 'app.js: output button uses openJobsFolder');
-// « main propre » = livraison explicitement indisponible (shipping === false).
-// shipping=null (info non extraite) ne doit PAS être compté comme main propre.
-assert(/a\.shipping === false/.test(appCode), 'app.js: filtre main-propre utilise shipping === false (pas !a.shipping)');
-assert(!/return !a\.shipping;/.test(appCode), 'app.js: plus de !a.shipping (comptait null comme main propre)');
+// « main propre » = mainPropre === true (champ structuré v3).
+// mainPropre=null (info non extraite) ne doit PAS être compté comme main propre.
+// Le code utilise mainPropreOf(a) = a.mainPropre ?? a.handDelivery (legacy).
+assert(/mainPropreOf\s*=\s*\(a\)\s*=>\s*a\.mainPropre\s*\?\?\s*a\.handDelivery/.test(appCode), 'app.js: filtre main-propre utilise mainPropre ?? handDelivery (fallback legacy)');
+assert(/matchesMainPropre\s*=\s*mainPropreOf\(a\)\s*===\s*true/.test(appCode), 'app.js: filtre main-propre OUI utilise === true (pas !a.shipping)');
 assert(/MAX_LOG_LINES\s*=\s*1000/.test(appCode), 'app.js: log line cap (1000)');
 // Modules supprimés : Analyse Globale IA + Planificateur (scheduler)
 assert(!/loadSchedulerPage/.test(appCode), 'app.js: loadSchedulerPage supprimé (module Planificateur retiré)');
