@@ -1588,15 +1588,18 @@ window.openAdDetail = (adId) => {
     const authScore = vision.authenticityScore != null ? `${vision.authenticityScore}/100` : '-';
     const authColor = vision.authenticityScore >= 70 ? '#4caf50' : (vision.authenticityScore >= 40 ? '#ff9800' : '#f44336');
 
+    // Les champs vision proviennent du LLM : ils ne sont PAS fiables.
+    // Échapper systématiquement avant injection HTML pour prévenir le XSS.
+    const safe = (v) => escapeHtml(v == null ? '' : String(v));
     modalVisionContent.innerHTML = `
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px;">
-        <div><strong>Type photo :</strong><br>${photoType}</div>
-        <div><strong>État visible :</strong><br>${condition}</div>
-        <div><strong>Défauts :</strong><br>${defects}</div>
-        <div><strong>Authenticité :</strong><br><span style="color:${authColor}; font-weight:bold;">${authScore}</span></div>
+        <div><strong>Type photo :</strong><br>${safe(photoType)}</div>
+        <div><strong>État visible :</strong><br>${safe(condition)}</div>
+        <div><strong>Défauts :</strong><br>${safe(defects)}</div>
+        <div><strong>Authenticité :</strong><br><span style="color:${authColor}; font-weight:bold;">${safe(authScore)}</span></div>
       </div>
       <div style="padding:8px; background:var(--bg-secondary); border-radius:6px; margin-top:6px;">
-        💬 ${vision.summary || vision.visionSummary || 'Aucun résumé visuel disponible.'}
+        💬 ${safe(vision.summary || vision.visionSummary || 'Aucun résumé visuel disponible.')}
       </div>
     `;
     modalVisionCard.classList.remove('hidden');

@@ -352,7 +352,32 @@ function _shortEncodeValue(v) {
   let s;
   if (typeof v === 'string') s = v;
   else s = String(v);
+  // Échappe les séparateurs internes pour éviter la corruption du fichier :
+  //   \x1F (séparateur de champs) et \x1D (séparateur de lignes) ne doivent
+  //   pas apparaître bruts dans une valeur, sinon le decoder split dessus
+  //   avant le parsing length-prefixed. On utilise \x1E comme caractère
+  //   d'échappement (déjà réservé pour cet usage).
+  s = s.replace(/\x1E/g, '\x1E\x1E').replace(/\x1F/g, '\x1E\x1F').replace(/\x1D/g, '\x1E\x1D');
   return SHORT_ESC + Buffer.byteLength(s, 'utf8') + ':' + s;
+}
+
+function _shortDecodeValue(encoded) {
+  if (encoded == null) return null;
+  if (!encoded.startsWith(SHORT_ESC)) return null;
+  const rest = encoded.slice(1);
+  const colonIdx = rest.indexOf(':');
+  if (colonIdx < 0) return null;
+  const lenStr = rest.slice(0, colonIdx);
+  const len = parseInt(lenStr, 10);
+  let value = rest.slice(colonIdx + 1);
+  if (len === 0) return null;
+  if (!Number.isFinite(len) || Buffer.byteLength(value, 'utf8') < len) return null;
+  // Tronque à la longueur en octets UTF-8 (pas en caractères JS).
+  const buf = Buffer.from(value, 'utf8');
+  value = buf.slice(0, len).toString('utf8');
+  // Déséchappe les séparateurs internes.
+  value = value.replace(/\x1E\x1E/g, '\x1E').replace(/\x1E\x1F/g, '\x1F').replace(/\x1E\x1D/g, '\x1D');
+  return value;
 }
 
 /**
@@ -425,31 +450,7 @@ function fromShortText(text) {
     for (let i = 0; i < codes.length && i * 2 + 1 < parts.length; i++) {
       const code = codes[i];
       const encoded = parts[i * 2 + 1];
-      if (encoded == null) {
-        obj[code] = null;
-        continue;
-      }
-      if (!encoded.startsWith(SHORT_ESC)) {
-        obj[code] = null;
-        continue;
-      }
-      const rest = encoded.slice(1);
-      const colonIdx = rest.indexOf(':');
-      if (colonIdx < 0) {
-        obj[code] = null;
-        continue;
-      }
-      const lenStr = rest.slice(0, colonIdx);
-      const len = parseInt(lenStr, 10);
-      const value = rest.slice(colonIdx + 1);
-      if (len === 0) {
-        // Valeur nulle (champ présent mais vide) → null au décodage.
-        obj[code] = null;
-      } else if (Number.isFinite(len) && Buffer.byteLength(value, 'utf8') >= len) {
-        obj[code] = value.slice(0, len);
-      } else {
-        obj[code] = null;
-      }
+      obj[code] = _shortDecodeValue(encoded);
     }
     items.push(obj);
   }

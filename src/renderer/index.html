@@ -5,6 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Leboncoin Scraper Pro</title>
   <link rel="stylesheet" href="styles.css">
+  <!-- Content-Security-Policy : restrictions de sécurité pour l'application Electron.
+       Note: 'unsafe-inline' est conservé car l'UI génère des onclick dynamiques
+       via innerHTML. Une migration vers addEventListener est prévue. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline' https://unpkg.com; img-src 'self' data: https: http:; font-src 'self' https:; connect-src 'self' http://127.0.0.1:11434 https:; frame-src 'self' https://aistudio.google.com https://*.google.com;">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <!-- Leaflet.js pour la Carte Interactive (Sécurisé pour l'environnement hybride Electron) -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />

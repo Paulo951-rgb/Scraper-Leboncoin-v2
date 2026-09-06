@@ -253,7 +253,7 @@ class MarketValueAnalyzer {
     if (!ad || !ad.id) throw new Error('MarketValueAnalyzer.analyzeMarket: annonce invalide.');
     if (!ad.adAnalysis) throw new Error('MarketValueAnalyzer: annonce sans adAnalysis (IA 1 manquante).');
 
-    const cached = aiCache.get(ad.id, CACHE_PREFIX);
+    const cached = aiCache.get(ad.id, CACHE_PREFIX, aiCache.computeFingerprint(ad));
     if (cached && !cached._fallback) return cached;
 
     const t0 = Date.now();
@@ -347,7 +347,7 @@ class MarketValueAnalyzer {
     parsed.deltaEur = v.deltaEur;
     parsed.deltaPct = v.deltaPct;
 
-    aiCache.set(ad.id, parsed, CACHE_PREFIX);
+    aiCache.set(ad.id, parsed, CACHE_PREFIX, aiCache.computeFingerprint(ad));
     log({ level: 'debug', message: `[IA2] ${ad.id} — ✅ marché estimé en ${formatMs(Date.now() - t0)} → valeur=${parsed.realValue != null ? parsed.realValue + '€' : 'N/A'} | fourchette=${parsed.valueRangeLow}-${parsed.valueRangeHigh}€ | verdict=${parsed.verdict} | delta=${parsed.deltaEur}€` });
     return parsed;
   }

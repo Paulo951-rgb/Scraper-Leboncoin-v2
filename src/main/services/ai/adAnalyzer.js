@@ -28,6 +28,7 @@
 const { getAIProvider } = require('./providers/aiProviderRegistry');
 const aiCache = require('./aiCache');
 const { truncate, formatMs } = require('../../utils/diagnostics');
+const { validateRemoteUrl } = require('../../utils/urlSecurity');
 
 const CACHE_PREFIX = 'analyse';
 const MAX_IMAGES = 3;
@@ -118,36 +119,61 @@ ${jsonSpec}`;
  * en-têtes + corps, validation du content-type et plafond de taille.
  */
 async function downloadImageAsBase64(url, timeoutMs = 8000) {
-  // Le signal couvre TOUT le cycle (en-têtes + arrayBuffer). Sinon, une image
-  // qui envoie les en-têtes puis bloque le corps pendait indéfiniment.
+  // Validation SSRF : l'URL d'image ne doit pas pointer vers un service local,
+  // une IP privée, ou un protocole non autorisé. On vérifie avant ET après
+  // redirection (suivie manuelle) pour éviter les chaînes de redirect.
+  const preCheck = await validateRemoteUrl(url);
+  if (!preCheck.safe) {
+    throw new Error(`URL image interdite (${preCheck.reason})`);
+  }
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(url, {
       signal: controller.signal,
       headers: { 'Accept': 'image/*' },
-      redirect: 'follow',
+      redirect: 'manual',
     });
-    if (!res.ok) throw new Error(`image HTTP ${res.status}`);
 
-    // Valide le content-type : une URL d'image peut renvoyer du HTML (page
-    // d'erreur 200, redirection de login anti-bot). Base64-encoder du HTML et
-    // l'envoyer au modèle vision provoquerait une erreur ou un résultat aberrant.
-    const mime = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+    // Suivre manuellement les redirections pour re-valider chaque destination.
+    let finalRes = res;
+    let finalUrl = res.url;
+    if (res.status >= 300 && res.status < 400 && res.headers.get('location')) {
+      let redirectUrl = res.headers.get('location');
+      if (redirectUrl && !redirectUrl.startsWith('http')) {
+        const base = new URL(url);
+        redirectUrl = new URL(redirectUrl, base).toString();
+      }
+      const redirectCheck = await validateRemoteUrl(redirectUrl);
+      if (!redirectCheck.safe) {
+        throw new Error(`Redirection image interdite (${redirectCheck.reason})`);
+      }
+      finalRes = await fetch(redirectUrl, {
+        signal: controller.signal,
+        headers: { 'Accept': 'image/*' },
+      });
+      finalUrl = redirectUrl;
+    }
+
+    if (!finalRes.ok) throw new Error(`image HTTP ${finalRes.status}`);
+
+    const postCheck = await validateRemoteUrl(finalUrl, { response: finalRes });
+    if (!postCheck.safe) {
+      throw new Error(`URL image finale interdite (${postCheck.reason})`);
+    }
+
+    const mime = (finalRes.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
     if (!mime.startsWith('image/')) {
       throw new Error(`type MIME non-image ignoré : ${mime || '(absent)'}`);
     }
 
-    // Plafond de taille : une image énorme (ex. 20 Mo) gonfle le base64 à ~27 Mo
-    // et peut saturer le contexte Ollama / la mémoire. On ignore au-delà de 5 Mo
-    // (l'analyse bascule en texte-seul via allSettled).
-    const contentLength = parseInt(res.headers.get('content-length') || '0', 10);
+    const contentLength = parseInt(finalRes.headers.get('content-length') || '0', 10);
     if (contentLength > MAX_IMAGE_BYTES) {
       throw new Error(`image trop volumineuse (${(contentLength / 1048576).toFixed(1)} Mo > ${MAX_IMAGE_BYTES / 1048576} Mo)`);
     }
 
-    const buf = await res.arrayBuffer();
-    // Double-vérification sur la taille réelle (content-length peut mentir/absent).
+    const buf = await finalRes.arrayBuffer();
     if (buf.byteLength > MAX_IMAGE_BYTES) {
       throw new Error(`image trop volumineuse (${(buf.byteLength / 1048576).toFixed(1)} Mo)`);
     }
@@ -214,7 +240,8 @@ class AdAnalyzer {
     if (!ad || !ad.id) throw new Error('AdAnalyzer.analyzeAd: annonce invalide (id requis).');
 
     // 1. Cache
-    const cached = aiCache.get(ad.id, CACHE_PREFIX);
+    const fp = aiCache.computeFingerprint(ad);
+    const cached = aiCache.get(ad.id, CACHE_PREFIX, fp);
     if (cached && !cached._fallback) return cached;
 
     const ai = getAIProvider(aiConfig);
@@ -297,7 +324,7 @@ class AdAnalyzer {
     parsed.attributes = a;
     parsed.keyInfo = Array.isArray(parsed.keyInfo) ? parsed.keyInfo : [];
 
-    aiCache.set(ad.id, parsed, CACHE_PREFIX);
+    aiCache.set(ad.id, parsed, CACHE_PREFIX, fp);
     log({ level: 'debug', message: `[IA1] ${ad.id} — ✅ analysé en ${formatMs(Date.now() - t0)} → produit="${truncate(parsed.identifiedProduct || '?', 50)}" | keyInfo=${parsed.keyInfo.length} | défauts=${a.defects.length}` });
     return parsed;
   }
@@ -338,7 +365,8 @@ class AdAnalyzer {
           // Vérifier le cache AVANT de compter comme "en cours" pour éviter
           // l'effet "rafale puis lenteur" : les cache-hit sont instantanés
           // mais ne doivent pas masquer le vrai travail en cours.
-          const cached = aiCache.get(ad.id, CACHE_PREFIX);
+          const adFp = aiCache.computeFingerprint(ad);
+          const cached = aiCache.get(ad.id, CACHE_PREFIX, adFp);
           if (cached && !cached._fallback) {
             ad.adAnalysis = cached;
             cacheHits++;

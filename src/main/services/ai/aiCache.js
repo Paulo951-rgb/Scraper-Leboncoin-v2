@@ -1,13 +1,24 @@
 'use strict';
 
-/**
- * Cache IA persistant sur disque.
- * Évite de re-demander à l'IA d'analyser une annonce déjà vue (même list_id).
- * Le cache est stocké dans ai-cache.json et indexé par list_id.
- */
+const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 const { atomicWriteFileSync } = require('../../utils/helpers');
+
+// Empreinte du contenu pertinent d'une annonce pour invalider le cache si
+// l'annonce change (prix, description, titre, photos). Sans cela, un list_id
+// identique renverrait une analyse obsolète.
+function computeFingerprint(ad) {
+  if (!ad || !ad.id) return null;
+  const payload = [
+    String(ad.id),
+    String(ad.title || ''),
+    String(ad.description || ''),
+    String(ad.prix ?? ad.price ?? ''),
+    String(Array.isArray(ad.images) ? ad.images.length : 0),
+  ].join('|');
+  return crypto.createHash('sha256').update(payload, 'utf8').digest('hex').slice(0, 16);
+}
 
 let _cachePath = null;
 function getCachePath() {
@@ -80,25 +91,28 @@ function _load() {
   return _cache;
 }
 
-function _key(listId, prefix) {
-  return prefix ? `${prefix}:${String(listId)}` : String(listId);
+function _key(listId, prefix, fingerprint) {
+  const fp = fingerprint ? `:${fingerprint}` : '';
+  return prefix ? `${prefix}:${String(listId)}${fp}` : `${String(listId)}${fp}`;
 }
 
-function get(listId, prefix) {
+function get(listId, prefix, fingerprint) {
   if (!listId) return null;
   const cache = _load();
-  const entry = cache[_key(listId, prefix)];
-  // Renvoie la valeur mise en cache (entry.specs), pas le wrapper
-  // { specs, cachedAt } — sinon les appelants (AdAnalyzer/MarketValueAnalyzer)
-  // reçoivent un objet sans les champs attendus (identifiedProduct, realValue,
-  // _fallback...) et la détection des fallbacks échoue silencieusement.
-  return entry && entry.specs != null ? entry.specs : null;
+  const entry = cache[_key(listId, prefix, fingerprint)];
+  if (!entry || entry.specs == null) return null;
+  // Ne pas servir un fallback caché : si l'IA a échoué précédemment,
+  // on re-tente l'appel pour voir si le service est revenu.
+  if (entry.specs._fallback) return null;
+  return entry.specs;
 }
 
-function set(listId, specs, prefix) {
+function set(listId, specs, prefix, fingerprint) {
   if (!listId || !specs) return;
+  // Ne pas cacher les fallbacks : ce sont des échecs, pas des résultats valides.
+  if (specs._fallback) return;
   const cache = _load();
-  cache[_key(listId, prefix)] = {
+  cache[_key(listId, prefix, fingerprint)] = {
     specs,
     cachedAt: Date.now(),
   };
@@ -129,4 +143,4 @@ function clear() {
   try { fs.unlinkSync(getCachePath()); } catch { /* n'existe pas */ }
 }
 
-module.exports = { get, set, stats, clear, _flushSave };
+module.exports = { get, set, stats, clear, _flushSave, computeFingerprint };
