@@ -24,6 +24,7 @@ const DEFAULTS = Object.freeze({
   outDir: '.',
   concurrency: 10,
   recycleContextEvery: 200, // Recycler la mémoire tous les 200 produits extraits
+  includeSellerData: true,
 });
 
 class CliError extends Error {}
@@ -63,14 +64,17 @@ function parseArgs(argv) {
         // 'default' (tous les champs) ou 'custom' (Personnalisé)
         opts.exportMode = argv[++i];
         break;
-      case '--export-fields':
-        // Liste de clés séparées par des virgules. Utilisée uniquement si
-        // exportMode === 'custom'. Si vide, retombe sur le mode Défaut.
-        {
-          const raw = argv[++i];
-          opts.exportFields = raw ? String(raw).split(',').map((s) => s.trim()).filter(Boolean) : null;
-        }
-        break;
+        case '--export-fields':
+          // Liste de clés séparées par des virgules. Utilisée uniquement si
+          // exportMode === 'custom'. Si vide, retombe sur le mode Défaut.
+          {
+            const raw = argv[++i];
+            opts.exportFields = raw ? String(raw).split(',').map((s) => s.trim()).filter(Boolean) : null;
+          }
+          break;
+        case '--no-seller-data':
+          opts.includeSellerData = false;
+          break;
       default:
         if (a.startsWith('--')) throw new CliError(`Option inconnue : ${a}`);
         positional.push(a);
@@ -688,6 +692,8 @@ function writeOutputsFactory(outDir, opts) {
     return null; // null = toutes les clés (mode Défaut)
   }
 
+  const exportOptions = opts.includeSellerData === false ? { excludeSellerData: true } : {};
+
   return function writeOutputs(ads) {
     for (const ad of ads) {
       if (ad && typeof ad === 'object') {
@@ -697,10 +703,10 @@ function writeOutputsFactory(outDir, opts) {
     const fields = _resolveFields();
     // JSON : on filtre chaque annonce pour respecter strictement le mode
     // Personnalisé (seuls les champs sélectionnés sont conservés en clair).
-    const jsonAds = fields ? ads.map((a) => filterAdByFields(a, fields)) : ads;
+    const jsonAds = fields ? ads.map((a) => filterAdByFields(a, fields, exportOptions)) : ads;
     writeWithChecksum(jsonPath, jsonAds, null, 2);
-    atomicWriteFileSync(txtPath, ads.map((a, i) => toReadableBlock(a, i, fields)).join('\n'));
-    atomicWriteFileSync(shortPath, toShortText(ads, fields));
+    atomicWriteFileSync(txtPath, ads.map((a, i) => toReadableBlock(a, i, fields, exportOptions)).join('\n'));
+    atomicWriteFileSync(shortPath, toShortText(ads, fields, exportOptions));
     // Méta-données d'export (mode + liste de champs) : utilisées par market:analyze
     // pour régénérer XLSX/CSV en respectant le même mode. Sans cela, un scrape
     // en mode Personnalisé perdait son paramétrage au moment de relancer l'IA
@@ -709,6 +715,7 @@ function writeOutputsFactory(outDir, opts) {
       version: 1,
       exportMode: fields ? 'custom' : 'default',
       exportFields: fields || null,
+      includeSellerData: opts.includeSellerData !== false,
       generatedAt: new Date().toISOString(),
     };
     atomicWriteFileSync(path.join(outDir, 'export-meta.json'), JSON.stringify(meta, null, 2));
@@ -749,7 +756,7 @@ async function main() {
   };
 
   logger.info(`=== Pipeline Leboncoin (Vitesse: ${opts.speed || 'moyen'} — ${preset.mode}, concurrency=${preset.concurrency}) ===`);
-  logger.debug(`[main] Options : harPath=${opts.harPath} | outDir=${opts.outDir} | headless=${opts.headless}  noDesc=${opts.noDesc} | limit=${opts.limit ?? '(aucun)'} | fresh=${opts.fresh} | speed=${opts.speed || 'moyen'} | concurrency=${opts.concurrency} | minDelay=${opts.minDelayMs} | maxDelay=${opts.maxDelayMs} | exportMode=${opts.exportMode || 'default'} | exportFields=${opts.exportFields ? `[${opts.exportFields.join(', ')}]` : '(toutes)'}`);
+  logger.debug(`[main] Options : harPath=${opts.harPath} | outDir=${opts.outDir} | headless=${opts.headless}  noDesc=${opts.noDesc} | limit=${opts.limit ?? '(aucun)'} | fresh=${opts.fresh} | speed=${opts.speed || 'moyen'} | concurrency=${opts.concurrency} | minDelay=${opts.minDelayMs} | maxDelay=${opts.maxDelayMs} | exportMode=${opts.exportMode || 'default'} | exportFields=${opts.exportFields ? `[${opts.exportFields.join(', ')}]` : '(toutes)'} | includeSellerData=${opts.includeSellerData}`);
 
   const writeOutputs = writeOutputsFactory(opts.outDir, opts);
   const jsonPath = path.join(opts.outDir, 'annonces.json');

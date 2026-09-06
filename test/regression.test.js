@@ -1669,6 +1669,70 @@ console.log('\n[10/10] Export modes + Short text');
     'app.js: diagnostic Leaflet non chargé (L undefined)');
 }
 
+// === 5. Données vendeur + minimisation ===
+console.log('\n[5/5] Données vendeur + minimisation');
+const exporting = require('../src/main/services/exporting/exportFields');
+const runnerCode = fs.readFileSync(path.join(base, 'services/scraping/pipelineRunner.js'), 'utf8');
+const ipcCodeNew = fs.readFileSync(path.join(base, 'core/ipcHandlers.js'), 'utf8');
+const indexCode = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/index.html'), 'utf8');
+const appCodeNew = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/app.js'), 'utf8');
+const stylesCode = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/styles.css'), 'utf8');
+
+// Settings : includeSellerData par défaut = true
+assert(/includeSellerData:\s*true/.test(settingsCode), 'settings: includeSellerData default true');
+
+// exportFields : SELLER_FIELD_KEYS présent
+const exportFieldsCode = fs.readFileSync(path.join(base, 'services/exporting/exportFields.js'), 'utf8');
+assert(/SELLER_FIELD_KEYS/.test(exportFieldsCode), 'exportFields: SELLER_FIELD_KEYS défini');
+assert(/excludeSellerData/.test(exportFieldsCode), 'exportFields: excludeSellerData supporté');
+
+// filterAdByFields exclut les champs vendeur quand excludeSellerData=true
+const testAd = { id: '1', title: 'Test', prix: 100, vendeurNom: 'Jean', vendeurNote: 4.8, city: 'Paris' };
+const filteredNoSeller = exporting.filterAdByFields(testAd, exporting.ALL_FIELD_KEYS, { excludeSellerData: true });
+assert(!('vendeurNom' in filteredNoSeller), 'filterAdByFields: excludeSellerData=true retire vendeurNom');
+assert(!('vendeurNote' in filteredNoSeller), 'filterAdByFields: excludeSellerData=true retire vendeurNote');
+assert(filteredNoSeller.id === '1', 'filterAdByFields: garde les champs non-vendeur');
+
+// toReadableBlock exclut les champs vendeur
+const blockNoSeller = exporting.toReadableBlock(testAd, 0, exporting.ALL_FIELD_KEYS, { excludeSellerData: true });
+assert(!blockNoSeller.includes('Vendeur'), 'toReadableBlock: excludeSellerData=true exclut section Vendeur');
+
+// toShortText exclut les champs vendeur
+const shortNoSeller = exporting.toShortText([testAd], exporting.ALL_FIELD_KEYS, { excludeSellerData: true });
+assert(!shortNoSeller.includes('Vn'), 'toShortText: excludeSellerData=true exclut code Vendeur (Vn)');
+
+// ExcelExporter _selectColumns exclut colonnes vendeur
+assert(/excludeSellerData/.test(excelCode), 'excelExporter: supporte excludeSellerData');
+assert(/startsWith\('vendeur'\)/.test(excelCode), 'excelExporter: filtre colonnes vendeur par prefixe');
+
+// Pipeline : --no-seller-data argument parsé
+assert(/--no-seller-data/.test(pipelineCode), 'pipeline: argument CLI --no-seller-data');
+assert(/includeSellerData/.test(pipelineCode), 'pipeline: includeSellerData dans writeOutputsFactory');
+assert(/export-meta\.json/.test(pipelineCode) && /includeSellerData/.test(pipelineCode), 'pipeline: export-meta.json inclut includeSellerData');
+
+// pipelineRunner : forward --no-seller-data
+assert(/--no-seller-data/.test(runnerCode), 'pipelineRunner: forward --no-seller-data');
+
+// ipcHandlers : includeSellerData passé au pipeline et à ExcelExporter
+assert(/includeSellerData/.test(ipcCodeNew), 'ipcHandlers: passe includeSellerData au pipeline');
+assert(/excludeSellerData/.test(ipcCodeNew), 'ipcHandlers: passe excludeSellerData à ExcelExporter');
+
+// index.html : modal légal + checkbox données vendeur
+assert(/id="legalNoticeModal"/.test(indexCode), 'index.html: modal Utilisation autorisée uniquement');
+assert(/id="cfgIncludeSellerData"/.test(indexCode), 'index.html: checkbox Données vendeur');
+assert(/id="legalNoticeAcceptBtn"/.test(indexCode), 'index.html: bouton J\'ai compris');
+
+// app.js : logique modal légal + visibilité données vendeur
+assert(/legalNoticeModal/.test(appCodeNew), 'app.js: référence modal légal');
+assert(/LEGAL_NOTICE_KEY/.test(appCodeNew), 'app.js: clé localStorage pour notice légale');
+assert(/includeSellerData/.test(appCodeNew), 'app.js: gestion includeSellerData');
+assert(/applySellerDataVisibility/.test(appCodeNew), 'app.js: fonction applySellerDataVisibility');
+assert(/seller-data-hidden/.test(appCodeNew) || /seller-data-hidden/.test(stylesCode), 'app.js/styles: classe seller-data-hidden');
+
+// Fichiers documentation
+assert(fs.existsSync(path.join(__dirname, '..', 'LEGAL.md')), 'LEGAL.md existe à la racine');
+assert(fs.existsSync(path.join(__dirname, '..', 'docs', 'DATA_HANDLING.md')), 'docs/DATA_HANDLING.md existe');
+
 console.log(`\n=== RÉSULTAT : ${pass} réussis, ${fail} échoués ===`);
 process.exit(fail > 0 ? 1 : 0);
 }

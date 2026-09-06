@@ -690,3 +690,10 @@ input:focus, select:focus { border-color: var(--primary-color); }
 .prompt-section-sep h4 { font-size: 0.85rem; color: var(--text-muted, #94a3b8); margin: 0; }
 
 @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+
+/* Masquage des données vendeur lorsque l'option est désactivée */
+body.seller-data-hidden .seller-info-banner,
+body.seller-data-hidden .modal-extra-val[data-seller="true"],
+body.seller-data-hidden [data-seller-field] {
+  display: none !important;
+}

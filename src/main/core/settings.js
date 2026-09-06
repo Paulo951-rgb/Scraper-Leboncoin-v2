@@ -30,6 +30,7 @@ const SETTINGS_DEFAULTS = Object.freeze({
   aiConcurrency: 5,         // nb d'annonces analysées en parallèle par l'IA
   logRetentionDays: 7,      // rétention des logs rotatifs (jours)
   autoCleanJobsDays: 0,     // 0 = désactivé ; sinon nb de jours avant suppression auto des jobs
+  includeSellerData: true,  // inclure les données vendeur dans les exports et l'interface
 });
 
 function loadSettings() {

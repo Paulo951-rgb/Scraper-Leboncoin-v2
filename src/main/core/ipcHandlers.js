@@ -295,6 +295,7 @@ function setupIpcHandlers(getMainWindow) {
         // Mode d'export : appliqué par le pipeline (annonces.json + txt + short.txt).
         exportMode: normalizedExportMode,
         exportFields: normalizedExportFields,
+        includeSellerData: userSettings.includeSellerData !== false,
       });
       sendLog({ level: 'debug', message: `[job:start] Phase pipeline terminée en ${Math.round((Date.now() - t0Pipeline) / 1000)}s.` });
 
@@ -380,6 +381,7 @@ function setupIpcHandlers(getMainWindow) {
             // Mode Personnalisé : on restreint le XLSX/CSV aux colonnes
             // sélectionnées. Le mode Défaut garde l'export exhaustif.
             const xlsxOptions = (normalizedExportMode === 'custom' && normalizedExportFields) ? { fields: normalizedExportFields } : {};
+            if (userSettings.includeSellerData === false) xlsxOptions.excludeSellerData = true;
             await ExcelExporter.exportToXlsx(adsWithAi, xlsxPath, xlsxOptions);
             sendLog({ level: 'info', message: '📊 Export Excel (.xlsx) généré avec succès !' });
             // Export CSV jumeau (compatible Excel FR, BOM UTF-8) : permet l'import
@@ -597,6 +599,9 @@ function setupIpcHandlers(getMainWindow) {
         const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
         if (meta && meta.exportMode === 'custom' && Array.isArray(meta.exportFields) && meta.exportFields.length > 0) {
           exportOptions = { fields: meta.exportFields };
+        }
+        if (meta && meta.includeSellerData === false) {
+          exportOptions.excludeSellerData = true;
         }
       }
     } catch (metaErr) {

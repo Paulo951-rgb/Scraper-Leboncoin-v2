@@ -2,6 +2,8 @@
 
 Application de bureau **Electron** pour scraper, enrichir et analyser (via IA **100% locale**) des annonces [Leboncoin.fr](https://www.leboncoin.fr) : identification du produit, résumé, analyse visuelle, puis estimation de la **valeur marché réelle en €** (via recherche Internet + IA) avec verdict bénéfice/perte.
 
+> **Leboncoin Scraper Pro** est un outil d'automatisation, de structuration et d'analyse de données destiné à faciliter le traitement de données auxquelles l'utilisateur est autorisé à accéder et à traiter. L'utilisateur reste responsable du respect des conditions d'utilisation, des droits applicables et de la réglementation concernant les données collectées. Ce logiciel ne fournit aucune autorisation d'accès ou de réutilisation des données de sites tiers.
+>
 > Document écrit pour qu'une IA ou un développeur sans aucune connaissance préalable du projet puisse comprendre entièrement son fonctionnement, son architecture et son code.
 
 ---
@@ -95,8 +97,11 @@ L'application est pensée pour un usage **semi-automatisé** : l'utilisateur peu
 - 🖥️ **Widget flottant** always-on-top (progression temps réel).
 - 🎨 **13 thèmes visuels**.
 - 📶 **Mode hors-ligne** — badge de connectivité, scraping désactivé mais historique consultable.
-- 📜 **Logs rotatifs** (un fichier par jour, rétention configurable) + console en direct avec mode normal/debug, auto-scroll, copie.
+- 📜 **Logs rotatifs** (un fichier par jour, rétention configurable) + console en direct avec mode normal/debug, auto-scroll, copie, vidage, compteur.
 - ❓ **Système d'aide intégré** — FAQ (accordéon), guide d'utilisation pas à pas et formulaire de feedback (problèmes & améliorations), accessibles depuis l'en-tête.
+- 🛡️ **Écran d'information légal** au premier lancement : rappel des responsabilités de l'utilisateur et de la nécessité de vérifier les droits d'accès. Sauvegardé une fois accepté, réaffichage possible depuis les paramètres.
+- ✂️ **Mode d'export personnalisé** : sélection granulaires des champs à exporter (JSON, TXT, Texte raccourci, XLSX, CSV). Boutons « Tout sélectionner » / « Tout désélectionner ». Sauvegarde de la sélection en localStorage.
+- 👤 **Données vendeur désactivables** : un paramètre dédié permet d'exclure les champs vendeur (nom, ID, note, avis, URL profil, ancienneté) de tous les exports et de l'interface, pour respecter le principe de minimisation des données.
 
 ---
 
@@ -273,31 +278,35 @@ Chaque annonce normalisée (dans `annonces.json`) :
 {
   "id": "2831923847",
   "title": "PC portable Gamer",
-  "price": 450,
-  "description": "Texte complet...",
+  "prix": 450,
   "url": "https://www.leboncoin.fr/ad/2831923847.htm",
-  "images": ["https://...jpg"],
-  "main_image": "https://...jpg",
   "city": "Lyon",
   "zipcode": "69000",
-  "shipping": true,              // true = livraison, false = main propre, null = inconnu
-  "handDelivery": false,         // true = remise en main propre uniquement
-  "deliveryMode": "livraison",   // 'livraison' | 'main_propre' | 'inconnu'
-  "deliveryLabel": "Chronopost", // libellé du transporteur si dispo (sinon null)
-  "seller": "Jean D.",
-  "isPro": false,
-  "sellerRating": 4.8,           // note vendeur (0-5), null si indisponible
-  "sellerRatingCount": 27,       // nombre d'avis, null si indisponible
-  "date": "2026-08-01T10:00:00Z",
-  "category": "Ordinateurs",     // catégorie exacte de l'annonce
-  "raw": { /* objet __NEXT_DATA__ brut, pour debug */ },
+  "livraison": true,
+  "mainPropre": false,
+  "vendeurNom": "Jean D.",
+  "vendeurType": "particulier",
+  "vendeurId": "123456",
+  "vendeurNote": 4.8,
+  "nombreAvis": 27,
+  "vendeurUrlProfil": "https://www.leboncoin.fr/u/123456.htm",
+  "vendeurAncienneteJours": 120,
+  "likes": 5,
+  "datePublication": "2026-08-01T10:00:00Z",
+  "dateScraping": "2026-08-01T12:30:00Z",
+  "etat": "Très bon état",
+  "photosCount": 4,
+  "photosUrls": ["https://...jpg"],
+  "description": "Texte complet...",
+  "produit": {
+    "etat": "Très bon état"
+  },
 
   // adAnalysis — produit par l'IA 1 (AdAnalyzer) pendant le scraping.
   // Absent si l'analyse IA est décochée. _fallback:true si l'IA a échoué.
   "adAnalysis": {
     "identifiedProduct": "ASUS ROG Strix G15 (Ryzen 7, RTX 3060, 16Go)",
     "summary": "PC portable gamer ASUS ROG Strix G15, Ryzen 7 5800H, RTX 3060 6Go, 16Go RAM, SSD 512Go. Bon état général, coque légèrement rayée.",
-    "category": "PC portable gamer",
     "attributes": {
       "brand": "ASUS",
       "model": "ROG Strix G15",
@@ -444,7 +453,7 @@ Les listeners utilisent `removeAllListeners` avant re-souscription pour éviter 
 
 ---
 
-## 🛡️ Anti-blocage & session
+## 🔒 Sécurité & transparence
 
 - **Session globale persistante** (`global-session.json`) : cookies validés réutilisés pour tous les jobs suivants.
 - **Sauvegarde intelligente** : session globale sauvegardée dès la 1ère page réussie (HTTP <400), **jamais écrasée ensuite** (les 403 suivants ne corrompent pas la session).
@@ -524,10 +533,13 @@ Pour chaque job (`output/jobs/job-<timestamp>/`) :
 | `session-state.json` | Cookies/session du job (si sauvegardés) | HarCapturer / pipeline |
 | `results/annonces.json` | Données structurées + `adAnalysis` + `marketAnalysis` (checksum SHA-256) | Pipeline + AdAnalyzer + MarketValueAnalyzer |
 | `results/annonces.txt` | Export texte lisible (blocs) | Pipeline |
+| `results/annonces.short.txt` | Export texte raccourci (compression sans perte) | Pipeline |
+| `results/annonces.csv` | Export CSV (RFC 4180, BOM UTF-8, séparateur `;`) | ExcelExporter |
 | `results/annonces.xlsx` | Export Excel stylisé (verdict, valeur marché, sources) | ExcelExporter |
 | `results/resumes-ia.json` | Résumés IA compacts (numéro, titre, URL, prix, résumé) pour transmission externe | ipcHandlers (writeSummaryFile) |
+| `results/export-meta.json` | Métadonnées d'export (mode + liste de champs) | Pipeline |
 
-> **Pas de CSV** : le pipeline ne génère que JSON + TXT (+ XLSX par l'ExcelExporter). L'Excel (.xlsx) remplace le CSV avec une mise en forme conditionnelle selon le verdict.
+> L'export CSV est généré automatiquement en même temps que le XLSX. Le Texte raccourci utilise un format compact avec séparateurs ASCII non-imprimables (0x1F/0x1D) et échappement length-prefixed (0x1E) pour une compression de 30-50% sans perte d'information.
 
 Fichiers runtime (dossier `userData` ou `output/` en dev) :
 - `global-session.json` — session Leboncoin persistante (Master Session)
@@ -540,7 +552,7 @@ Fichiers runtime (dossier `userData` ou `output/` en dev) :
 
 ## 🧪 Tests de non-régression
 
-`test/regression.test.js` — script Node.js autonome (sans framework externe), **588 assertions** couvrant :
+`test/regression.test.js` — script Node.js autonome (sans framework externe), **802 assertions** couvrant :
 
 1. **utils** — diagnostics, helpers, integrity (checksum), rateLimiter, logger, secretStore.
 2. **Modules principaux** — AdAnalyzer, MarketValueAnalyzer, AdStats, StorageCleaner, settings, aiCache.
@@ -557,7 +569,7 @@ Fichiers runtime (dossier `userData` ou `output/` en dev) :
 node test/regression.test.js
 ```
 
-Résultat attendu : `=== RÉSULTAT : 588 réussis, 0 échoués ===`
+Résultat attendu : `=== RÉSULTAT : 802 réussis, 0 échoués ===`
 
 > Le test installe des **stubs** pour `electron`, `playwright` et `exceljs` afin de `require()` les modules en Node pur, sans lancer Electron/Chromium.
 
@@ -568,13 +580,52 @@ Résultat attendu : `=== RÉSULTAT : 588 réussis, 0 échoués ===`
 - Le scraping repose sur la structure actuelle de Leboncoin (`__NEXT_DATA__`, endpoints de recherche) : toute évolution du site peut nécessiter une adaptation du parsing.
 - La résolution de captcha est **manuelle** (l'app ouvre une fenêtre visible), mais la **détection de résolution est automatique** (polling contenu 2s + confirmation) — l'utilisateur n'a pas à fermer la fenêtre ni à cliquer quoi que ce soit.
 - L'analyse IA dépend de la qualité du modèle Ollama (`llama3` local peut être moins précis qu'un modèle cloud).
-- L'IA Marché dépend de la disponibilité du moteur de recherche : DuckDuckGo (sans clé) peut être bloqué par son anti-bot en concurrence → utiliser Tavily (à clé) pour plus de fiabilité.
+- L'IA Marché dépend de la disponibilité du moteur de recherche : DuckDuckGo (sans clé) peut être bloqué par des protections anti-bot en contexte de forte concurrence → utiliser Tavily (à clé) pour plus de fiabilité.
 - L'enrichissement des descriptions est parallèle (10 simultanées en mode Rapide) : en cas de 403, arrêt auto après 3 blocages et sauvegarde des données collectées.
 - Un blocage IP déjà actif peut nécessiter d'attendre ou d'utiliser un proxy.
-- La connexion Google dans AI Studio peut être bloquée par Google malgré l'anti-détection (UA spoofing, Client Hints, `navigator.userAgentData`).
+- La connexion Google dans AI Studio peut être bloquée par Google malgré les mesures de compatibilité navigateur (UA réaliste, Client Hints, `navigator.userAgentData`).
 
 ---
 
-## ⚖️ Avertissement légal
+## ⚖️ Avertissement légal et responsabilités
 
-Cet outil interagit avec un site tiers (Leboncoin.fr) dont les [conditions d'utilisation](https://www.leboncoin.fr/) peuvent restreindre ou interdire le scraping automatisé. L'utilisation de cette application est sous l'entière responsabilité de l'utilisateur, qui doit s'assurer de respecter la législation applicable (RGPD pour les données de vendeurs particuliers, CGU du site) avant tout usage, notamment commercial.
+Ce logiciel est fourni en tant qu'outil technique d'automatisation et d'analyse. L'utilisateur est seul responsable de son utilisation, notamment en ce qui concerne :
+
+- le respect des conditions d'utilisation des sites concernés ;
+- le respect des lois applicables en matière de collecte, de traitement et de conservation de données ;
+- le respect du droit à la vie privée et des réglementations sur la protection des données personnelles.
+
+Ce logiciel ne fournit aucune autorisation d'accès ou de réutilisation des données de sites tiers. Le fait de pouvoir techniquement accéder à des données ne signifie pas que l'utilisateur est autorisé à les collecter, les conserver, les analyser ou les réutiliser.
+
+Le développeur ne prétend pas que Leboncoin ou tout autre site tiers autorise officiellement ce logiciel, sauf mention expresse et écrite contraire.
+
+Pour plus de détails, consultez le fichier [`LEGAL.md`](LEGAL.md) à la racine du projet et [`docs/DATA_HANDLING.md`](docs/DATA_HANDLING.md) pour la gestion des données.
+
+## 🎛️ Modes d'export et minimisation des données
+
+### Mode Défaut / Personnalisé
+
+L'utilisateur peut choisir entre :
+- **Mode Défaut** : export exhaustif de toutes les informations disponibles.
+- **Mode Personnalisé** : sélection granulaires des champs à exporter (JSON, TXT, Texte raccourci, XLSX, CSV).
+
+### Données vendeur
+
+Un paramètre dédié permet d'exclure systématiquement les données vendeur de tous les exports :
+- Nom, ID, type, note, nombre d'avis, URL profil, ancienneté.
+
+Cela s'applique quel que soit le mode d'export (Défaut ou Personnalisé). Dans l'interface, les informations vendeur sont également masquées lorsque cette option est désactivée.
+
+### Descriptions
+
+L'utilisateur peut ignorer les descriptions lors du scraping (case « Ignorer les descriptions » dans le formulaire de recherche) pour accélérer le traitement et réduire la quantité de texte conservé.
+
+### Écran d'information légal
+
+Au premier lancement, un écran d'information rappelle à l'utilisateur que :
+- ce logiciel est un outil technique d'automatisation et d'analyse ;
+- il doit vérifier que son utilisation est autorisée par le site concerné ;
+- il est responsable des données collectées, conservées, analysées et exportées ;
+- le logiciel ne lui accorde aucune autorisation particulière concernant les sites ou données de tiers.
+
+Cet écran n'est affiché qu'une fois (sauvegarde dans `localStorage`). Il peut être réaffiché depuis les paramètres ou l'aide.
