@@ -575,7 +575,14 @@ if (aiProvider) {
 // Presets
 const presetsRow = document.getElementById('presetsRow');
 const savePresetBtn = document.getElementById('savePresetBtn');
-let presets = JSON.parse(localStorage.getItem('search-presets') || '[]');
+let presets = [];
+try {
+  const raw = localStorage.getItem('search-presets');
+  if (raw) presets = JSON.parse(raw);
+  if (!Array.isArray(presets)) presets = [];
+} catch {
+  presets = [];
+}
 
 function renderPresets() {
   if (presets.length === 0) {
@@ -929,7 +936,16 @@ let isConfirming = false;
 
 // État de la vue (Tableau vs Galerie) & Favoris
 let viewMode = localStorage.getItem('explorer-view') || 'table';
-let starredAds = new Set(JSON.parse(localStorage.getItem('starred-ads') || '[]'));
+let starredAds = new Set();
+try {
+  const raw = localStorage.getItem('starred-ads');
+  if (raw) {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) starredAds = new Set(parsed);
+  }
+} catch {
+  starredAds = new Set();
+}
 
 // BASCULE DE VUE TABLEAU / GALERIE
 viewTableBtn.addEventListener('click', () => {
@@ -1112,7 +1128,7 @@ async function loadHistoryPage() {
     allJobsCache = await window.api.getHistory();
     renderHistoryTable(allJobsCache);
   } catch (err) {
-    historyTableBody.innerHTML = `<tr><td colspan="4" class="text-center">Erreur : ${err.message}</td></tr>`;
+    historyTableBody.innerHTML = `<tr><td colspan="4" class="text-center">Erreur : ${escapeHtml(err && err.message ? err.message : 'inconnue')}</td></tr>`;
   }
 }
 
@@ -1126,8 +1142,8 @@ function renderHistoryTable(jobs) {
     .map(
       (j) => `
     <tr>
-      <td>${j.date}${j.exportMeta && j.exportMeta.exportMode === 'custom' ? '<br><span class="tag-export-custom" title="Mode Personnalisé : uniquement les champs sélectionnés">✂️ Personnalisé</span>' : ''}</td>
-      <td><strong>${j.adsCount}</strong> annonces</td>
+      <td>${escapeHtml(j.date)}${j.exportMeta && j.exportMeta.exportMode === 'custom' ? '<br><span class="tag-export-custom" title="Mode Personnalisé : uniquement les champs sélectionnés">✂️ Personnalisé</span>' : ''}</td>
+      <td><strong>${escapeHtml(String(j.adsCount))}</strong> annonces</td>
       <td>
         <div class="file-tags">
           ${j.files.xlsx ? `<span class="file-tag tag-xlsx" onclick="openFile('${escapePath(j.files.xlsx)}')">XLSX</span>` : ''}
@@ -1139,10 +1155,7 @@ function renderHistoryTable(jobs) {
         </div>
       </td>
       <td>
-        <div style="display:flex; gap:6px;">
-          <button class="btn btn-secondary btn-small" onclick="openFolder('${escapePath(j.jobDir)}')">📁 Ouvrir</button>
-          <button class="btn btn-danger btn-small" onclick="askDeleteJob('${j.id}')">🗑️ Supprimer</button>
-        </div>
+        ${j.id ? `<span class="file-tag" onclick="askDeleteJob('${escapePath(j.id)}')">🗑</span>` : ''}
       </td>
     </tr>
   `
@@ -1396,12 +1409,13 @@ function renderExplorerAds() {
         const sellerChip = includeSellerData ? `<small style="color:var(--text-muted);">${escapeHtml(a.vendeurNom || 'Particulier')}</small>` : '';
         const typeVendeurBadge = includeSellerData ? ((a.vendeurType === 'pro') ? '<span style="background:var(--accent); color:white; padding:1px 5px; border-radius:3px; font-size:0.7rem;">PRO</span>' : '<span style="background:var(--bg-secondary); padding:1px 5px; border-radius:3px; font-size:0.7rem;">PART</span>') : '';
 
+        const priceText = a.prix != null ? a.prix + ' €' : (a.price != null ? a.price + ' €' : '-');
         return `
         <tr>
           <td class="text-center"><input type="checkbox" ${isChecked ? 'checked' : ''} onchange="toggleCompare('${escapePath(a.id)}')"></td>
           <td class="text-center">${starIcon}</td>
           <td>${nameHtml}</td>
-          <td><strong>${a.prix != null ? a.prix + ' €' : (a.price != null ? a.price + ' €' : '-')}</strong></td>
+          <td><strong>${escapeHtml(String(priceText))}</strong></td>
           <td>${valueHtml}</td>
           <td>${deltaHtml}</td>
           <td>${badgeHtml}</td>
@@ -1439,7 +1453,7 @@ function renderExplorerAds() {
           </div>
           <div class="ad-card-body">
             <div class="ad-card-title">${escapeHtml(identifiedName(a))}</div>
-            <div class="ad-card-price">${a.prix != null ? a.prix + ' €' : (a.price != null ? a.price + ' €' : '-')}</div>
+            <div class="ad-card-price">${escapeHtml(String(a.prix != null ? a.prix + ' €' : (a.price != null ? a.price + ' €' : '-')))}</div>
             <div class="ad-card-city">📍 ${escapeHtml(a.city || 'Inconnue')}</div>
             <div class="ad-card-footer">
               <button class="btn btn-secondary btn-small" style="flex:1;" onclick="openAdDetail('${escapePath(a.id)}')">👁️ Fiche Détaillée</button>

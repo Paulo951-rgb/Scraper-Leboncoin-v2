@@ -412,9 +412,24 @@ class DescriptionEnricher {
     }
 
     const sequential = this.opts.sequential === true;
-    return await page.evaluate(async ({ items, seq }) => {
+    const fetchTimeoutMs = this.opts.fetchTimeoutMs || 15000;
+    return await page.evaluate(async ({ items, seq, timeoutMs }) => {
       const results = {};
       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+      async function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+          const res = await fetch(url, { ...options, signal: controller.signal });
+          return res;
+        } catch (err) {
+          if (err && err.name === 'AbortError') throw new Error(`fetch timeout (${timeoutMs}ms)`);
+          throw err;
+        } finally {
+          clearTimeout(timer);
+        }
+      }
 
       if (seq) {
         for (const item of items) {
@@ -425,9 +440,9 @@ class DescriptionEnricher {
               results[item.id] = { error: 'BLOCKED_URL' };
               continue;
             }
-            const res = await fetch(item.url, {
+            const res = await fetchWithTimeout(item.url, {
               headers: { 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' },
-            });
+            }, timeoutMs);
             if (!res.ok) {
               if (res.status === 403 || res.status === 429) results[item.id] = { error: 'BLOCKED_403' };
               else results[item.id] = { error: 'HTTP_' + res.status };
@@ -450,9 +465,9 @@ class DescriptionEnricher {
               results[item.id] = { error: 'BLOCKED_URL' };
               return;
             }
-            const res = await fetch(item.url, {
+            const res = await fetchWithTimeout(item.url, {
               headers: { 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' },
-            });
+            }, timeoutMs);
             if (!res.ok) {
               if (res.status === 403 || res.status === 429) results[item.id] = { error: 'BLOCKED_403' };
               else results[item.id] = { error: 'HTTP_' + res.status };
@@ -467,7 +482,7 @@ class DescriptionEnricher {
         await Promise.all(promises);
       }
       return results;
-    }, { items: safeItems, seq: sequential });
+    }, { items: safeItems, seq: sequential, timeoutMs: fetchTimeoutMs });
   }
 
   parseHtmlDescription(html, adId) {
@@ -809,8 +824,13 @@ async function main() {
   if (fs.existsSync(jsonPath) && !opts.fresh) {
     logger.info('annonces.json existant trouvé -> Reprise automatique.');
     logger.debug(`[main] Reprise depuis : ${jsonPath}`);
-    ads = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
-    logger.debug(`[main] ${summarizeAds(ads)}`);
+    try {
+      ads = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+    } catch (err) {
+      logger.error(`[main] annonces.json corrompu (${err.message}) -> re-scraping complet.`);
+      ads = null;
+    }
+    if (ads) logger.debug(`[main] ${summarizeAds(ads)}`);
   } else {
     logger.debug(`[main] Étape 1/3 : Chargement du HAR depuis ${opts.harPath}`);
     const entries = loadHar(opts.harPath, logger);
