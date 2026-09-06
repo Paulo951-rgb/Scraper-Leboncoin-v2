@@ -124,16 +124,6 @@ function extractTransaction(raw) {
       mainPropre = true;
     }
   }
-  // Si on n'a toujours pas d'info livraison mais on a des attributs, par défaut
-  // pas de livraison (Leboncoin ne montre pas l'option d'envoi).
-  if (livraison === null && Array.isArray(raw?.attributes) && raw.attributes.length > 0) {
-    livraison = false;
-  }
-  // Si mainPropre est null mais livraison est explicitement false, alors
-  // c'est implicitement de la remise en main propre.
-  if (mainPropre === null && livraison === false) {
-    mainPropre = true;
-  }
 
   return { livraison, mainPropre };
 }
@@ -227,7 +217,7 @@ function extractSeller(raw) {
 
   return {
     nom,
-    type: type || (isPro ? 'pro' : 'particulier'),
+    type,
     isPro,
     id: id != null ? String(id) : null,
     note,

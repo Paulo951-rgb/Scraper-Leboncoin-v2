@@ -195,6 +195,13 @@ class ExcelExporter {
 
   static _csvField(value, sep = ';') {
     const s = value == null ? '' : String(value);
+    // Neutralise les injections de formules Excel/LibreOffice : une valeur
+    // commençant par = + - @ ou une tabulation est interprétée comme une formule.
+    // Le préfixe par une simple quote (') laisse la cellule affichée telle quelle
+    // tout en empêchant l'interprétation (ex: '=1+1 reste affiché =1+1, pas exécuté).
+    if (s.length > 0 && /^[=+\-@\t\r]/.test(s)) {
+      return "'" + s;
+    }
     if (s.includes(sep) || s.includes('"') || s.includes('\n') || s.includes('\r')) {
       return `"${s.replace(/"/g, '""')}"`;
     }

@@ -13,6 +13,7 @@ const { summarizeAds, summarizeHarEntries, truncate, formatBytes, formatMs } = r
 const { getRandomUserAgent } = require('./userAgents');
 const { writeWithChecksum } = require('../../utils/integrity');
 const { AdaptiveRateLimiter } = require('../../utils/rateLimiter');
+const { validateRemoteUrl } = require('../../utils/urlSecurity');
 const adFields = require('./adFields');
 const { filterAdByFields, toReadableBlock, toShortText, ALL_FIELD_KEYS } = require('../exporting/exportFields');
 
@@ -229,9 +230,29 @@ function findAdsIterative(root, logger) {
   return found;
 }
 
-function firstDefined(...vals) {
-  for (const v of vals) if (v !== undefined && v !== null && v !== '') return v;
-  return null;
+// Allowlist des domaines autorisés pour les fetches in-page (descriptions).
+// Les URLs proviennent du HAR Leboncoin : ce sont des annonces Leboncoin ou
+// leurs CDN d'images. Toute URL hors allowlist est rejetée pour éviter le SSRF.
+const ALLOWED_FETCH_HOSTS = [
+  'leboncoin.fr', 'www.leboncoin.fr',
+  'leboncoin.com', 'www.leboncoin.com',
+  'leboncoindirect.com', 'www.leboncoindirect.com',
+];
+
+function isFetchUrlAllowed(urlStr) {
+  try {
+    const u = new URL(urlStr);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+    const host = u.hostname.toLowerCase();
+    if (ALLOWED_FETCH_HOSTS.includes(host)) return true;
+    // Allow sous-domaines explicites de leboncoin (ex: img.leboncoin.fr)
+    for (const allowed of ALLOWED_FETCH_HOSTS) {
+      if (host === allowed || host.endsWith('.' + allowed)) return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
 }
 
 // Note : les wrappers extractDeliveryInfo et extractSellerRating ont été
@@ -322,8 +343,11 @@ function mergeKeepingNonNull(existing, incoming) {
       merged[key] = existing[key];
     }
   }
-  // raw reste l'objet brut le plus riche (on garde incoming.raw si plus de clés)
-  merged.raw = existing.raw || incoming.raw;
+  // raw : garde l'objet brut le plus riche (celui avec le plus de clés).
+  // Si égalité, on garde existing.raw (première occurrence).
+  const existingKeys = existing.raw && typeof existing.raw === 'object' ? Object.keys(existing.raw).length : 0;
+  const incomingKeys = incoming.raw && typeof incoming.raw === 'object' ? Object.keys(incoming.raw).length : 0;
+  merged.raw = incomingKeys > existingKeys ? incoming.raw : existing.raw;
   return merged;
 }
 
@@ -376,15 +400,31 @@ class DescriptionEnricher {
   }
 
   async fetchBatchInPage(page, batchItems) {
+    // Filtre préventif : ne passe au navigateur que les URLs autorisées.
+    // Si une URL est rejetée, elle est marquée comme erreur immédiatement.
+    const safeItems = [];
+    for (const item of batchItems) {
+      if (isFetchUrlAllowed(item.url)) {
+        safeItems.push(item);
+      } else {
+        this.logger.warn(`[DescriptionEnricher] URL bloquée (SSRF) : ${truncate(item.url, 80)}`);
+      }
+    }
+
     const sequential = this.opts.sequential === true;
     return await page.evaluate(async ({ items, seq }) => {
       const results = {};
       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
       if (seq) {
-        // MODE PRUDENT : séquentiel avec délais humains (anti-blocage max)
         for (const item of items) {
           try {
+            // Double vérification côté navigateur (défense en profondeur).
+            const u = new URL(item.url);
+            if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+              results[item.id] = { error: 'BLOCKED_URL' };
+              continue;
+            }
             const res = await fetch(item.url, {
               headers: { 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' },
             });
@@ -403,9 +443,13 @@ class DescriptionEnricher {
           }
         }
       } else {
-        // MODE RAPIDE/ÉQUILIBRÉ : fetchs parallèles (Promise.all)
         const promises = items.map(async (item) => {
           try {
+            const u = new URL(item.url);
+            if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+              results[item.id] = { error: 'BLOCKED_URL' };
+              return;
+            }
             const res = await fetch(item.url, {
               headers: { 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' },
             });
@@ -423,7 +467,7 @@ class DescriptionEnricher {
         await Promise.all(promises);
       }
       return results;
-    }, { items: batchItems, seq: sequential });
+    }, { items: safeItems, seq: sequential });
   }
 
   parseHtmlDescription(html, adId) {
@@ -718,7 +762,7 @@ function writeOutputsFactory(outDir, opts) {
       includeSellerData: opts.includeSellerData !== false,
       generatedAt: new Date().toISOString(),
     };
-    atomicWriteFileSync(path.join(outDir, 'export-meta.json'), JSON.stringify(meta, null, 2));
+    writeWithChecksum(path.join(outDir, 'export-meta.json'), meta, null, 2);
   };
 }
 
@@ -730,7 +774,7 @@ async function main() {
     console.error(`Erreur CLI : ${err.message}`);
     // Exit code 1 (erreur) : le PipelineRunner doit savoir que le pipeline a
     // échoué, sinon il voit code 0 et croit que tout s'est bien passé.
-    process.exit(1);
+    throw err;
   }
 
   // Preset de vitesse : ajuste concurrence et délais selon le choix utilisateur.
@@ -778,7 +822,7 @@ async function main() {
       logger.error('Aucune réponse JSON exploitable trouvée dans le HAR.');
       logger.warn(`[main] Causes possibles : (1) Leboncoin a bloqué la recherche (captcha/403) durant la capture HAR ; (2) structure du HAR différente de celle attendue ; (3) le fichier HAR est vide ou corrompu.`);
       logger.debug(`[main] Diagnostic : ${summarizeHarEntries(entries)}`);
-      process.exit(0);
+      return;
     }
 
     logger.debug(`[main] Étape 3/3 : Recherche d'annonces dans ${jsonResponses.length} réponse(s) JSON`);
@@ -809,16 +853,16 @@ async function main() {
       logger.error('0 annonce extraite de ce HAR.');
       logger.warn(`[main] Récapitulatif diagnostic : ${entries.length} entrées HAR | ${jsonResponses.length} JSON parsés | ${rawAds.length} annonces brutes | ${normalized.length} après normalisation | 0 après déduplication.`);
       logger.warn(`[main] Causes probables : page de recherche non chargée, réponse réseau absente, données reçues mais ne contenant pas d'annonces, ou filtre ayant tout supprimé.`);
-      process.exit(0);
+      return;
     }
 
     writeOutputs(ads);
     logger.info(`Étape HAR -> Annonces terminée : ${ads.length} annonces extraites.`);
-    const shippingTrue = ads.filter((a) => a.shipping === true).length;
-    const shippingFalse = ads.filter((a) => a.shipping === false).length;
-    const shippingNull = ads.filter((a) => a.shipping == null).length;
+    const livraisonTrue = ads.filter((a) => a.livraison === true).length;
+    const livraisonFalse = ads.filter((a) => a.livraison === false).length;
+    const livraisonNull = ads.filter((a) => a.livraison == null).length;
     logger.debug(`[main] ${summarizeAds(ads)}`);
-    logger.debug(`[main] Livraison : ${shippingTrue} avec shipping=true | ${shippingFalse} avec shipping=false | ${shippingNull} sans info shipping (null).`);
+    logger.debug(`[main] Livraison : ${livraisonTrue} avec livraison=true | ${livraisonFalse} avec livraison=false | ${livraisonNull} sans info livraison (null).`);
   }
 
   if (opts.limit) {
@@ -837,12 +881,10 @@ async function main() {
   writeOutputs(ads);
   logger.info('\n✅ Opération terminée avec succès.');
   logger.debug(`[main] Bilan final : ${summarizeAds(ads)}`);
-
-  // 🛑 FIX CLEF : Fermeture explicite pour débloquer l'IPC Electron immédiatement !
-  process.exit(0);
 }
 
 main().catch((err) => {
   console.error('Erreur fatale :', err.stack || err.message);
-  process.exit(1);
+  // Exit code 1 : le PipelineRunner doit savoir que le pipeline a échoué.
+  process.exitCode = 1;
 });

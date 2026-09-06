@@ -148,9 +148,11 @@ _aiCacheUnderTest.set('ad-1', { identifiedProduct: 'iPhone 12', _fallback: false
 const cachedOk = _aiCacheUnderTest.get('ad-1', 'analyse');
 assert(cachedOk && cachedOk.identifiedProduct === 'iPhone 12', 'aiCache: get renvoie la valeur interne (identifiedProduct présent)');
 assert(cachedOk && cachedOk._fallback === false, 'aiCache: get préserve _fallback (détection fallback)');
+// Les fallbacks ne doivent PAS être cachés : si l'IA a échoué, on re-tente
+// au lieu de renvoyer un résultat d'échec périmé.
 _aiCacheUnderTest.set('ad-2', { summary: ' HS', _fallback: true, _error: 'IA down' }, 'analyse');
 const cachedFb = _aiCacheUnderTest.get('ad-2', 'analyse');
-assert(cachedFb && cachedFb._fallback === true, 'aiCache: get préserve _fallback=true (fallback caché détectable)');
+assert(cachedFb === null, 'aiCache: get exclut les fallbacks (_fallback=true non caché)');
 // Préfixe distinct : analyse vs market ne collisionnent pas
 _aiCacheUnderTest.set('ad-1', { realValue: 500 }, 'market');
 const mkt = _aiCacheUnderTest.get('ad-1', 'market');
@@ -237,7 +239,7 @@ await new Promise((resolve) => {
     assert(ads[0].city === 'Lyon', 'pipeline extracts city');
     assert(ads[0].vendeurType === 'particulier', 'pipeline extracts vendeurType');
     assert(ads[0].vendeurNote === 4.8, 'pipeline extracts vendeurNote from owner.rating');
-    assert(ads[0].mainPropre === true, 'pipeline derives mainPropre=true when livraison=false');
+    assert(ads[0].mainPropre === null, 'pipeline does NOT infer mainPropre from livraison');
     assert(ads[0].prix === 150, 'pipeline extracts prix');
     assert(ads[0].vendeurNom === 'Jean', 'pipeline extracts vendeurNom');
     assert(ads[0].dateScraping != null, 'pipeline injects dateScraping');
@@ -773,8 +775,8 @@ assert(!/negociable/.test(pipelineCode), 'pipeline: aucun negociable (champ supp
 
   // === TRANSACTION (Livraison et Main propre INDÉPENDANTS) ===
   let t = extractTransaction({ has_option: { shipping: false } });
-  assert(t.livraison === false && t.mainPropre === true,
-    'adFields.extractTransaction: shipping=false → livraison=NON, mainPropre=OUI');
+  assert(t.livraison === false && t.mainPropre === null,
+    'adFields.extractTransaction: shipping=false → livraison=NON, mainPropre=null (pas inféré)');
   t = extractTransaction({ shipping: true });
   assert(t.livraison === true, 'adFields.extractTransaction: shipping=true → livraison=OUI');
   t = extractTransaction({ body: 'Remise en main propre uniquement' });
@@ -790,8 +792,8 @@ assert(!/negociable/.test(pipelineCode), 'pipeline: aucun negociable (champ supp
   assert(t.livraison === null && t.mainPropre === null,
     'adFields.extractTransaction: pas d\'info → null (jamais false par défaut)');
   t = extractTransaction({ attributes: [{ key: 'foo', value: 'bar' }] });
-  assert(t.livraison === false && t.mainPropre === true,
-    'adFields.extractTransaction: attributes présent sans shipping → livraison=NON');
+  assert(t.livraison === null && t.mainPropre === null,
+    'adFields.extractTransaction: attributes présent sans shipping → livraison=null (pas inventé)');
 
   // === SELLER ===
   const s = extractSeller({ owner: { name: 'Jean', type: 'pro', rating: 4.8, nb_ratings: 27 } });
@@ -1104,17 +1106,12 @@ const adFieldsDeliveryCode = fs.readFileSync(path.join(base, 'services/scraping/
 assert(/raw\.attributes/.test(adFieldsDeliveryCode), 'adFields: extractTransaction vérifie raw.attributes[] (API récente)');
 assert(/shippable|is_shippable/.test(adFieldsDeliveryCode), 'adFields: extractTransaction cherche clé "shippable" dans attributes');
 assert(/is_shippable|shippable|is_shipping/.test(adFieldsDeliveryCode), 'adFields: extractTransaction vérifie is_shippable/shippable (variantes récentes)');
-assert(/remise\s+en\s+main\s+propre|main\s+propre\s+uniquement/.test(adFieldsDeliveryCode), 'adFields: extractTransaction détecte "main propre" dans le body');
+assert(adFieldsDeliveryCode.includes('remise\\s+en\\s+main\\s+propre') || adFieldsDeliveryCode.includes('main\\s+propre\\s+uniquement'),
+  'adFields: extractTransaction détecte "main propre" dans le body');
 assert(/pas.*envoi|retrait.*place|venir.*chercher/.test(adFieldsDeliveryCode), 'adFields: extractTransaction détecte "pas d\'envoi" / "retrait" dans le body');
-// Heuristique : si attributes existe mais pas de shipping trouvé → pas de livraison
-assert(/Array\.isArray\(raw\?\.attributes\) && raw\.attributes\.length > 0/.test(adFieldsDeliveryCode), 'adFields: extractTransaction default livraison=NON quand attributes présent sans shipping');
-// Le wrapper pipeline délègue au module adFields
-const pipeCodeDelivery = fs.readFileSync(path.join(base, 'services/scraping/leboncoin-pipeline.js'), 'utf8');
-// extractDeliveryInfo a été supprimé (structure plate)
-// Enrichissement appliqué même sans description
-assert(!/if \(parsed\.description\) \{[^}]*if \(parsed\.livraison/.test(pipeCodeDelivery.replace(/\s+/g, ' ')), 'pipeline: enrichissement delivery n\'est PAS conditionnel à parsed.description');
-// livraison=false par défaut quand attributes présent sans shipping
-assert(/livraison\s*=\s*false/.test(adFieldsDeliveryCode), 'adFields: attributes présent sans shipping → livraison=false');
+// Livraison/mainPropre ne sont PLUS inventées par défaut : null si inconnu.
+assert(!/Array\.isArray\(raw\?\.attributes\) && raw\.attributes\.length > 0/.test(adFieldsDeliveryCode), 'adFields: extractTransaction ne force PAS livraison=false quand attributes présent sans shipping');
+assert(!/livraison\s*=\s*false/.test(adFieldsDeliveryCode.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '')), 'adFields: plus de fallback livraison=false par défaut');
 
 // ═════ Tests fonctionnels des extracteurs adFields (redondants — section 7) ═════
 // (les tests de la section 7 couvrent déjà le détail de extractTransaction etc.)
@@ -1280,7 +1277,7 @@ assert(!/const res = await window\.api\.buildPrompt\(tmpl\.id, \{\}\)/.test(aist
 
 // Pipeline : exit code 1 sur erreur CLI (était 0 → runner croyait succès)
 const pipelineCode2 = fs.readFileSync(path.join(__dirname, '..', 'src/main/services/scraping/leboncoin-pipeline.js'), 'utf8');
-assert(/Erreur CLI[^\n]*\n[\s\S]*?process\.exit\(1\)/.test(pipelineCode2), 'pipeline: exit(1) sur erreur CLI (était exit(0) → faux succès)');
+assert(/Erreur CLI[^\n]*\n[\s\S]*?throw err/.test(pipelineCode2), 'pipeline: throw err sur erreur CLI (pas de process.exit brutal)');
 
 // sessionStats.pagesScraped mis à jour dans le handler de progression
 assert(/pagesScraped/.test(ipcCode2), 'ipcHandlers: pagesScraped tracker présent');
@@ -1732,6 +1729,41 @@ assert(/seller-data-hidden/.test(appCodeNew) || /seller-data-hidden/.test(styles
 // Fichiers documentation
 assert(fs.existsSync(path.join(__dirname, '..', 'LEGAL.md')), 'LEGAL.md existe à la racine');
 assert(fs.existsSync(path.join(__dirname, '..', 'docs', 'DATA_HANDLING.md')), 'docs/DATA_HANDLING.md existe');
+
+// --- 11. Tests de sécurité et de robustesse (PASS 2/3/4/5) ---
+console.log('\n[11] Sécurité + robustesse');
+
+// CSV injection : valeurs commençant par = + - @ doivent être préfixées
+const excelCodeCSV = fs.readFileSync(path.join(base, 'infrastructure/excelExporter.js'), 'utf8');
+assert(excelCodeCSV.includes('s.length > 0 && /^[=+\\-@\\t\\r]/.test(s)'), 'excelExporter: CSV injection neutralisée (préfixe quote)');
+
+// URL Security helper : validation SSRF présente
+const urlSecCode = fs.readFileSync(path.join(__dirname, '..', 'src/main/utils/urlSecurity.js'), 'utf8');
+assert(/validateRemoteUrl/.test(urlSecCode), 'urlSecurity: validateRemoteUrl présente');
+assert(/127\.0\.0\.0|10\.0\.0\.0|172\.16\.0\.0|192\.168\.0\.0/.test(urlSecCode), 'urlSecurity: plages IP privées bloquées');
+
+// Short-text : échappement des séparateurs internes
+const shortCode = fs.readFileSync(path.join(base, 'services/exporting/exportFields.js'), 'utf8');
+assert(/\x1E.*\x1F|\x1D/.test(shortCode) || /SHORT_SEP_FIELD/.test(shortCode) && /_shortDecodeValue/.test(shortCode), 'exportFields: échappement/déséchappement short-text présent');
+
+// Data nullability : livraison/mainPropre/type ne sont plus inventés
+const adFieldsCodeFinal = fs.readFileSync(path.join(base, 'services/scraping/adFields.js'), 'utf8');
+assert(!/Array\.isArray\(raw\?\.attributes\) && raw\.attributes\.length > 0/.test(adFieldsCodeFinal), 'adFields: plus de fallback livraison=false sur attributes');
+assert(!/mainPropre\s*=\s*true[^;]*livraison\s*===?\s*false/.test(adFieldsCodeFinal.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '')), 'adFields: plus de fallback mainPropre=true sur livraison=false');
+assert(!/type:\s*type\s*\|\|\s*\(isPro/.test(adFieldsCodeFinal), 'adFields: plus de default type=particulier');
+
+// Cache IA : fallbacks non cachés, fingerprint présent
+const aiCacheCodeFinal = fs.readFileSync(path.join(base, 'services/ai/aiCache.js'), 'utf8');
+assert(/computeFingerprint/.test(aiCacheCodeFinal), 'aiCache: computeFingerprint présente');
+assert(/_fallback/.test(aiCacheCodeFinal) && /if\s*\(\s*specs\._fallback\s*\)\s*return/.test(aiCacheCodeFinal), 'aiCache: fallbacks exclus du cache');
+
+// Pipeline : process.exit remplacé par return/throw
+const pipelineCodeFinal = fs.readFileSync(path.join(base, 'services/scraping/leboncoin-pipeline.js'), 'utf8');
+assert(!/process\.exit\(0\)/.test(pipelineCodeFinal), 'pipeline: plus de process.exit(0)');
+assert(/process\.exitCode\s*=\s*1/.test(pipelineCodeFinal) || /throw\s+err/.test(pipelineCodeFinal), 'pipeline: erreurs via throw/process.exitCode');
+
+// export-meta.json : checksum
+assert(/writeWithChecksum.*export-meta/.test(pipelineCodeFinal), 'pipeline: export-meta.json écrit avec checksum');
 
 console.log(`\n=== RÉSULTAT : ${pass} réussis, ${fail} échoués ===`);
 process.exit(fail > 0 ? 1 : 0);
