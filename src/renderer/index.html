@@ -27,6 +27,25 @@
 <body>
   <div class="app-container">
     
+    <!-- ÉCRAN D'INFORMATION LÉGALE (premier lancement) -->
+    <div id="legalNoticeModal" class="modal-overlay" style="z-index:9999;">
+      <div class="modal-card modal-large" style="max-width:600px;">
+        <div class="modal-header">
+          <h3 style="margin:0;">⚠️ Utilisation autorisée uniquement</h3>
+        </div>
+        <div class="modal-body" style="font-size:0.9rem; line-height:1.6;">
+          <p>Ce logiciel est un outil technique d'automatisation et d'analyse.</p>
+          <p>Avant toute collecte, vérifiez que votre utilisation est autorisée par le site concerné et respecte ses conditions d'utilisation ainsi que les lois applicables.</p>
+          <p>Vous êtes responsable des données que vous collectez, conservez, analysez et exportez.</p>
+          <p>Le logiciel ne vous accorde aucune autorisation particulière concernant les sites ou données de tiers.</p>
+          <p style="font-size:0.8rem; color:var(--text-muted); margin-top:12px;">Cet écran est une information destinée à l'utilisateur. Il ne constitue pas une protection juridique absolue.</p>
+        </div>
+        <div class="modal-actions" style="margin-top:18px; text-align:right;">
+          <button id="legalNoticeAcceptBtn" class="btn btn-primary">J'ai compris</button>
+        </div>
+      </div>
+    </div>
+
     <header class="header">
       <div class="logo">
         <h1>Leboncoin <span>Scraper Pro</span></h1>
@@ -656,6 +675,14 @@
           <input type="checkbox" id="cfgHeadless" checked>
           <span>Invisible (headless) — le navigateur n'est pas visible sauf en cas de CAPTCHA</span>
         </label>
+      </div>
+
+      <div class="form-group text-left" style="margin-top:12px;">
+        <label style="font-size:0.85rem; display:flex; align-items:center; gap:8px; cursor:pointer;">
+          <input type="checkbox" id="cfgIncludeSellerData" checked>
+          <span>👤 Inclure les données vendeur</span>
+        </label>
+        <small style="color:var(--text-muted); display:block; margin-top:4px; font-size:0.72rem;">Les données vendeur (nom, ID, note, avis, URL profil, ancienneté) peuvent contenir des informations permettant d'identifier une personne. Désactivez cette option lorsqu'elles ne sont pas nécessaires à votre analyse.</small>
       </div>
 
       <!-- SECTION : ANALYSE IA -->

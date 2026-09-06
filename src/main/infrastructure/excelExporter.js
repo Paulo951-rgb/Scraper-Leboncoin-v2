@@ -72,9 +72,19 @@ class ExcelExporter {
    * Si `fields` est null/undefined → toutes les colonnes (mode Défaut).
    * `fields` est une liste de clés (correspondant aux clés du module
    * services/exporting/exportFields.js) mappées vers les colonnes XLSX/CSV.
+   *
+   * @param {string[]} [fields] - Liste des clés exportFields sélectionnées
+   * @param {object} [options] - Options de filtrage
+   * @param {boolean} [options.excludeSellerData] - Si true, exclut les colonnes vendeur
    */
-  static _selectColumns(fields) {
-    if (!Array.isArray(fields) || fields.length === 0) return ExcelExporter.DEFAULT_COLUMNS;
+  static _selectColumns(fields, options) {
+    const excludeSeller = options && options.excludeSellerData === true;
+    if (!Array.isArray(fields) || fields.length === 0) {
+      if (excludeSeller) {
+        return ExcelExporter.DEFAULT_COLUMNS.filter((c) => !c.key.startsWith('vendeur'));
+      }
+      return ExcelExporter.DEFAULT_COLUMNS;
+    }
     // Mapping des clés exportFields → clés de colonnes XLSX/CSV.
     // Plusieurs clés de l'exporteur ne sont pas des colonnes dédiées (par ex.
     // `vendeurAnciennete` → 'vendeurAncienneteJours') — on accepte les deux.
@@ -116,9 +126,13 @@ class ExcelExporter {
     }
     // Si rien ne matche (sécurité) → on garde les essentiels.
     if (selectedKeys.size === 0) {
-      return ExcelExporter.DEFAULT_COLUMNS.filter((c) => ['id', 'title', 'url', 'price'].includes(c.key));
+      let cols = ExcelExporter.DEFAULT_COLUMNS.filter((c) => ['id', 'title', 'url', 'price'].includes(c.key));
+      if (excludeSeller) cols = cols.filter((c) => !c.key.startsWith('vendeur'));
+      return cols;
     }
-    return ExcelExporter.DEFAULT_COLUMNS.filter((c) => selectedKeys.has(c.key));
+    let result = ExcelExporter.DEFAULT_COLUMNS.filter((c) => selectedKeys.has(c.key));
+    if (excludeSeller) result = result.filter((c) => !c.key.startsWith('vendeur'));
+    return result;
   }
 
   static async exportToXlsx(ads, outputPath, options = {}) {
@@ -129,7 +143,7 @@ class ExcelExporter {
       views: [{ showGridLines: true }],
     });
 
-    const columns = ExcelExporter._selectColumns(options.fields);
+    const columns = ExcelExporter._selectColumns(options.fields, options);
     sheet.columns = columns.map((c) => ({ header: c.header, key: c.key, width: Math.max(10, c.header.length + 4) }));
 
     const headerRow = sheet.getRow(1);
@@ -189,7 +203,7 @@ class ExcelExporter {
 
   static async exportToCsv(ads, outputPath, options = {}) {
     const sep = ';';
-    const columns = ExcelExporter._selectColumns(options.fields);
+    const columns = ExcelExporter._selectColumns(options.fields, options);
     const headers = columns.map((c) => c.header);
 
     const rows = [headers.map((h) => this._csvField(h, sep)).join(sep)];

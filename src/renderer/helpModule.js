@@ -131,6 +131,16 @@ const FAQ_DATA = [
         <p>Cela consomme plus de ressources (RAM/VRAM) et ralentit l'analyse. Sans modèle vision ou sans photos, l'analyse se fait en texte seul (dégradation automatique).</p>`
   },
   {
+    q: 'Comment fonctionne la minimisation des données ?',
+    a: `<p>Le logiciel propose plusieurs niveaux de contrôle :</p>
+        <ul>
+          <li><strong>Mode d'export</strong> : choisissez entre Défaut (toutes les données) et Personnalisé (seuls les champs sélectionnés sont exportés).</li>
+          <li><strong>Données vendeur</strong> : vous pouvez désactiver les données vendeur (nom, ID, note, avis, URL profil, ancienneté) dans les Paramètres ⚙️. Elles sont alors exclues de tous les exports et masquées dans l'interface.</li>
+          <li><strong>Descriptions</strong> : vous pouvez ignorer les descriptions lors du scraping pour accélérer le traitement et réduire la quantité de texte conservé.</li>
+        </ul>
+        <p>Consultez <code>docs/DATA_HANDLING.md</code> pour le tableau complet des catégories de données et leur traçabilité.</p>`
+  },
+  {
     q: 'Où sont stockés mes fichiers exportés ?',
     a: `<p>Dans le <strong>dossier de sortie</strong> du logiciel (bouton « Dossier principal » dans l'onglet Historique). Chaque job crée un sous-dossier horodaté contenant :</p>
         <ul>
@@ -231,10 +241,21 @@ const HELP_SECTIONS = [
     body: `<p>Chaque job est stocké dans le <strong>dossier de sortie</strong> (bouton « Dossier principal » dans l'onglet Historique).</p>
       <ul>
         <li><strong>Excel (.xlsx)</strong> — stylisé, filtres auto, mise en forme conditionnelle.</li>
-        <li><strong>JSON / TXT</strong> — formats lisibles pour réutilisation.</li>
+        <li><strong>CSV</strong> — compatible Excel FR, BOM UTF-8, séparateur <code>;</code>.</li>
+        <li><strong>JSON / TXT / Texte raccourci</strong> — formats lisibles pour réutilisation.</li>
         <li>Les fichiers <code>.har</code> sont nettoyés automatiquement (Paramètres → rétention).</li>
       </ul>
       <p>L'onglet <strong>📁 Historique Jobs</strong> liste tous les scrapings passés, avec accès aux fichiers et suppression.</p>`
+  },
+  {
+    icon: '🛡️', title: '10. Données et responsabilités',
+    body: `<p>Ce logiciel est un outil technique d'automatisation et d'analyse. Vous êtes responsable de l'utilisation que vous en faites.</p>
+      <ul>
+        <li>Vérifiez que votre utilisation est autorisée par le site concerné et respecte ses conditions d'utilisation.</li>
+        <li>Les données vendeur peuvent contenir des informations permettant d'identifier une personne. Désactivez-les dans les Paramètres ⚙️ si elles ne sont pas nécessaires.</li>
+        <li>Utilisez le <strong>Mode Personnalisé</strong> pour ne conserver que les champs strictement nécessaires.</li>
+        <li>Consultez <code>LEGAL.md</code> et <code>docs/DATA_HANDLING.md</code> pour plus de détails.</li>
+      </ul>`
   },
 ];
 

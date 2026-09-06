@@ -4,6 +4,61 @@
 const savedTheme = localStorage.getItem('app-theme') || 'theme-dark';
 document.body.className = savedTheme;
 
+// ⚠️ ÉCRAN D'INFORMATION LÉGALE (premier lancement)
+const legalNoticeModal = document.getElementById('legalNoticeModal');
+const legalNoticeAcceptBtn = document.getElementById('legalNoticeAcceptBtn');
+const LEGAL_NOTICE_KEY = 'lbc-legal-notice-accepted';
+
+function showLegalNotice() {
+  if (legalNoticeModal) legalNoticeModal.classList.remove('hidden');
+}
+function hideLegalNotice() {
+  if (legalNoticeModal) legalNoticeModal.classList.add('hidden');
+  localStorage.setItem(LEGAL_NOTICE_KEY, '1');
+}
+
+if (legalNoticeAcceptBtn) {
+  legalNoticeAcceptBtn.addEventListener('click', hideLegalNotice);
+}
+
+// Afficher l'écran légal au premier lancement (pas encore accepté)
+if (!localStorage.getItem(LEGAL_NOTICE_KEY)) {
+  setTimeout(showLegalNotice, 500);
+}
+
+// 👤 DONNÉES VENDEUR — visibilité conditionnelle
+let includeSellerData = true;
+
+async function refreshSellerDataSetting() {
+  try {
+    const cfg = await window.api.getConfig();
+    includeSellerData = cfg.includeSellerData !== false;
+  } catch {
+    includeSellerData = true;
+  }
+}
+
+function applySellerDataVisibility() {
+  const hidden = includeSellerData ? '' : 'hidden';
+  // Filtres vendeur dans l'explorateur
+  const sellerFilterRow = document.getElementById('filterSellerType')?.closest('.form-group');
+  const ratingFilterRow = document.getElementById('filterMinRating')?.closest('.form-group');
+  if (sellerFilterRow) sellerFilterRow.classList.toggle('hidden', !includeSellerData);
+  if (ratingFilterRow) ratingFilterRow.classList.toggle('hidden', !includeSellerData);
+
+  // Colonne Vendeur dans le tableau explorateur
+  const sellerColHeader = document.querySelector('th[style*="Vendeur"]') || document.querySelector('th:nth-child(9)');
+  // On ne peut pas cacher facilement une colonne de tableau sans restructurer,
+  // mais on peut masquer les chips vendeur dans le rendu des cellules via CSS.
+  if (!includeSellerData) {
+    document.body.classList.add('seller-data-hidden');
+  } else {
+    document.body.classList.remove('seller-data-hidden');
+  }
+}
+
+refreshSellerDataSetting();
+
 // ONGLETS
 document.querySelectorAll('.tab-btn').forEach((btn) => {
   btn.addEventListener('click', () => {
@@ -691,6 +746,7 @@ const cfgTheme = document.getElementById('cfgTheme');
 const cfgScrapeSpeed = document.getElementById('cfgScrapeSpeed');
 const cfgPageDelay = document.getElementById('cfgPageDelay');
 const cfgHeadless = document.getElementById('cfgHeadless');
+const cfgIncludeSellerData = document.getElementById('cfgIncludeSellerData');
 const cfgAiConcurrency = document.getElementById('cfgAiConcurrency');
 const cfgCleanHarDays = document.getElementById('cfgCleanHarDays');
 const cfgAutoCleanJobs = document.getElementById('cfgAutoCleanJobs');
@@ -702,6 +758,7 @@ function applySettingsToUI(cfg) {
   cfgScrapeSpeed.value = cfg.scrapeSpeed || 'fast';
   cfgPageDelay.value = cfg.pageDelayMs ?? 1000;
   cfgHeadless.checked = cfg.headless !== false;
+  if (cfgIncludeSellerData) cfgIncludeSellerData.checked = cfg.includeSellerData !== false;
   cfgAiConcurrency.value = cfg.aiConcurrency ?? 5;
   cfgCleanHarDays.value = cfg.autoCleanHarDays || 7;
   const jobsDays = cfg.autoCleanJobsDays || 0;
@@ -738,6 +795,7 @@ saveSettingsBtn.addEventListener('click', async () => {
     scrapeSpeed: cfgScrapeSpeed.value,
     pageDelayMs: parseInt(cfgPageDelay.value, 10) || 1000,
     headless: cfgHeadless.checked,
+    includeSellerData: cfgIncludeSellerData ? cfgIncludeSellerData.checked : true,
     aiConcurrency: parseInt(cfgAiConcurrency.value, 10) || 5,
     autoCleanHarDays: parseInt(cfgCleanHarDays.value, 10) || 7,
     autoCleanJobsDays: cfgAutoCleanJobs.checked ? (parseInt(cfgAutoCleanJobsDays.value, 10) || 30) : 0,
@@ -755,12 +813,13 @@ resetSettingsBtn.addEventListener('click', async () => {
     scrapeSpeed: 'fast',
     pageDelayMs: 1000,
     headless: true,
+    includeSellerData: true,
     aiConcurrency: 5,
     autoCleanHarDays: 7,
     autoCleanJobsDays: 0,
     logRetentionDays: 7,
   });
-  applySettingsToUI({ scrapeSpeed: 'fast', pageDelayMs: 1000, headless: true, aiConcurrency: 5, autoCleanHarDays: 7, autoCleanJobsDays: 0, logRetentionDays: 7 });
+  applySettingsToUI({ scrapeSpeed: 'fast', pageDelayMs: 1000, headless: true, includeSellerData: true, aiConcurrency: 5, autoCleanHarDays: 7, autoCleanJobsDays: 0, logRetentionDays: 7 });
   alert('Paramètres réinitialisés.');
 });
 
@@ -1256,13 +1315,13 @@ function renderExplorerAds() {
     else if (mainPropreFilter === 'NON') matchesMainPropre = mainPropreOf(a) === false;
 
     // Type vendeur
-    const matchesSellerType = sellerTypeFilter === 'ALL' ||
+    const matchesSellerType = !includeSellerData || sellerTypeFilter === 'ALL' ||
       (sellerTypeFilter === 'PRO' && typeVendeurOf(a) === 'pro') ||
       (sellerTypeFilter === 'PART' && typeVendeurOf(a) === 'particulier');
 
     // Note min
-    let matchesRating = true;
-    if (minRating != null) {
+    let matchesRating = !includeSellerData || true;
+    if (includeSellerData && minRating != null) {
       const r = noteOf(a);
       matchesRating = r != null && r >= minRating;
     }
@@ -1327,15 +1386,15 @@ function renderExplorerAds() {
         const mainPropreChip = mainPropre === true ? ' <span title="Main propre" style="color:#22c55e;">🤝</span>'
           : mainPropre === false ? '' : '';
         const note = noteOf(a);
-        const noteChip = note != null ? ` <span title="Note vendeur" style="color:#facc15;">⭐${String(note).replace('.', ',')}</span>` : '';
+        const noteChip = includeSellerData && note != null ? ` <span title="Note vendeur" style="color:#facc15;">⭐${String(note).replace('.', ',')}</span>` : '';
         const likesVal = likesOf(a);
-        const likesChip = likesVal != null ? ` <span title="Likes" style="color:#ef4444;">❤️${likesVal}</span>` : '';
+        const likesChip = includeSellerData && likesVal != null ? ` <span title="Likes" style="color:#ef4444;">❤️${likesVal}</span>` : '';
 
         const valueHtml = marketValueText(ma);
         const deltaHtml = marketDeltaText(ma);
         const summaryHtml = `<div class="desc-tooltip" title="${escapeHtml(analysisSummary(a))}">${escapeHtml(analysisSummary(a))}</div>`;
-        const sellerChip = `<small style="color:var(--text-muted);">${escapeHtml(a.vendeurNom || 'Particulier')}</small>`;
-        const typeVendeurBadge = (a.vendeurType === 'pro') ? '<span style="background:var(--accent); color:white; padding:1px 5px; border-radius:3px; font-size:0.7rem;">PRO</span>' : '<span style="background:var(--bg-secondary); padding:1px 5px; border-radius:3px; font-size:0.7rem;">PART</span>';
+        const sellerChip = includeSellerData ? `<small style="color:var(--text-muted);">${escapeHtml(a.vendeurNom || 'Particulier')}</small>` : '';
+        const typeVendeurBadge = includeSellerData ? ((a.vendeurType === 'pro') ? '<span style="background:var(--accent); color:white; padding:1px 5px; border-radius:3px; font-size:0.7rem;">PRO</span>' : '<span style="background:var(--bg-secondary); padding:1px 5px; border-radius:3px; font-size:0.7rem;">PART</span>') : '';
 
         return `
         <tr>
@@ -1440,7 +1499,7 @@ window.openAdDetail = (adId) => {
     ? `${ma.deltaEur > 0 ? '+' : ''}${ma.deltaEur} € (${ma.verdictLabel || '—'})`
     : '-';
   modalCity.textContent = targetAd.city || 'Inconnue';
-  modalSeller.textContent = `${targetAd.vendeurNom || targetAd.seller || 'Particulier'}${targetAd.isPro ? ' (Pro)' : ''}`;
+  modalSeller.textContent = includeSellerData ? `${targetAd.vendeurNom || targetAd.seller || 'Particulier'}${targetAd.isPro ? ' (Pro)' : ''}` : ' Masqué';
   modalDate.textContent = targetAd.datePublication || targetAd.date || '-';
 
   // Nouveaux champs : catégorie, note vendeur, mode de remise
@@ -1456,11 +1515,11 @@ window.openAdDetail = (adId) => {
   let ratingText = '-';
   const note = targetAd.vendeurNote != null ? targetAd.vendeurNote : targetAd.sellerRating;
   const nbAvis = targetAd.nombreAvis != null ? targetAd.nombreAvis : null;
-  if (note != null) {
+  if (includeSellerData && note != null) {
     ratingText = `${note}/5`;
     if (nbAvis != null) ratingText += ` (${nbAvis} avis)`;
   }
-  setExtraVal('modalSellerRating', note != null ? ratingText : '❓ Aucune note');
+  setExtraVal('modalSellerRating', includeSellerData ? (note != null ? ratingText : '❓ Aucune note') : ' Masqué');
 
   // Livraison et Main propre INDÉPENDANTS
   const livraison = targetAd.livraison != null ? targetAd.livraison : targetAd.shipping;
@@ -1481,7 +1540,7 @@ window.openAdDetail = (adId) => {
 
   // Type vendeur
   const typeVendeur = targetAd.vendeurType || (targetAd.isPro ? 'pro' : 'particulier');
-  const typeVendeurLabel = typeVendeur === 'pro' ? '🏪 Professionnel' : '👤 Particulier';
+  const typeVendeurLabel = includeSellerData ? (typeVendeur === 'pro' ? '🏪 Professionnel' : '👤 Particulier') : ' Masqué';
   setExtraVal('modalTypeVendeur', typeVendeurLabel);
 
   // État déclaré uniquement

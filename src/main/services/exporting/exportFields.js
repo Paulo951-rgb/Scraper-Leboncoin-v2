@@ -156,6 +156,12 @@ const FIELD_CATEGORIES = [
   },
 ];
 
+// Clés des champs vendeur (pour exclusion optionnelle).
+const SELLER_FIELD_KEYS = new Set([
+  'vendeurNom', 'vendeurType', 'vendeurId', 'vendeurNote', 'vendeurNbAvis',
+  'vendeurUrlProfil', 'vendeurAnciennete'
+]);
+
 // Liste complète des clés pour faciliter les UI « Tout sélectionner ».
 const ALL_FIELD_KEYS = DEFAULT_FIELDS.map((f) => f.key);
 
@@ -210,14 +216,26 @@ function _formatValue(fieldDef, value) {
  * En mode Personnalisé, on retire les blocs IA de la racine pour respecter
  * strictement le mode (sinon l'utilisateur aurait accès à des données qu'il
  * n'a pas explicitement sélectionnées via l'UI).
+ *
+ * @param {object} ad - L'annonce à filtrer
+ * @param {string[]} [fields] - Liste des clés à conserver (null = toutes)
+ * @param {object} [options] - Options de filtrage
+ * @param {boolean} [options.excludeSellerData] - Si true, exclut les champs vendeur
  */
-function filterAdByFields(ad, fields) {
+function filterAdByFields(ad, fields, options) {
   if (!ad || typeof ad !== 'object') return ad;
-  // Mode Défaut (= null, undefined, ou contenant toutes les clés) → objet tel quel
   if (!fields || !Array.isArray(fields) || fields.length === 0) return ad;
-  if (fields.length >= ALL_FIELD_KEYS.length && ALL_FIELD_KEYS.every((k) => fields.includes(k))) {
+
+  const excludeSeller = options && options.excludeSellerData === true;
+  let selectedKeys = fields;
+  if (excludeSeller) {
+    selectedKeys = fields.filter((k) => !SELLER_FIELD_KEYS.has(k));
+  }
+
+  if (selectedKeys.length >= ALL_FIELD_KEYS.length && ALL_FIELD_KEYS.every((k) => selectedKeys.includes(k))) {
     return ad;
   }
+
   // Clés d'analyse IA : mappées vers les blocs adAnalysis / marketAnalysis
   // (elles ne sont pas présentes directement à la racine de l'ad).
   const IA_TO_AD_ANALYSIS = { produitIdentifie: 'identifiedProduct', resumeIA: 'summary' };
@@ -227,25 +245,25 @@ function filterAdByFields(ad, fields) {
 
   const out = {};
   // Copie les clés racines existantes dans la sélection
-  for (const key of fields) {
+  for (const key of selectedKeys) {
     if (IA_TO_AD_ANALYSIS[key] || IA_TO_MARKET[key]) continue; // traitées séparément
     if (Object.prototype.hasOwnProperty.call(ad, key)) out[key] = ad[key];
   }
   // adAnalysis slim
-  const hasAdAnalysis = fields.some((k) => k in IA_TO_AD_ANALYSIS);
+  const hasAdAnalysis = selectedKeys.some((k) => k in IA_TO_AD_ANALYSIS);
   if (hasAdAnalysis && ad.adAnalysis && typeof ad.adAnalysis === 'object') {
     const slim = {};
-    for (const k of fields) {
+    for (const k of selectedKeys) {
       const m = IA_TO_AD_ANALYSIS[k];
       if (m && ad.adAnalysis[m] != null) slim[m] = ad.adAnalysis[m];
     }
     if (Object.keys(slim).length > 0) out.adAnalysis = slim;
   }
   // marketAnalysis slim
-  const hasMarket = fields.some((k) => k in IA_TO_MARKET);
+  const hasMarket = selectedKeys.some((k) => k in IA_TO_MARKET);
   if (hasMarket && ad.marketAnalysis && typeof ad.marketAnalysis === 'object') {
     const slim = {};
-    for (const k of fields) {
+    for (const k of selectedKeys) {
       if (k === 'fourchette' && ad.marketAnalysis.valueRangeLow != null && ad.marketAnalysis.valueRangeHigh != null) {
         slim.valueRangeLow = ad.marketAnalysis.valueRangeLow;
         slim.valueRangeHigh = ad.marketAnalysis.valueRangeHigh;
@@ -269,9 +287,13 @@ function filterAdByFields(ad, fields) {
  * conserve le préfixe "===== ANNONCE X =====" pour la navigation humaine.
  *
  * `fields` = tableau de clés sélectionnées. null/undefined → toutes les clés.
+ * `options` = { excludeSellerData: boolean } pour exclure les champs vendeur.
  */
-function toReadableBlock(ad, index, fields) {
-  const selectedKeys = (Array.isArray(fields) && fields.length > 0) ? fields : ALL_FIELD_KEYS;
+function toReadableBlock(ad, index, fields, options) {
+  let selectedKeys = (Array.isArray(fields) && fields.length > 0) ? fields : ALL_FIELD_KEYS;
+  if (options && options.excludeSellerData) {
+    selectedKeys = selectedKeys.filter((k) => !SELLER_FIELD_KEYS.has(k));
+  }
 
   // Calcule la longueur max de label pour aligner joliment les valeurs.
   const fieldDefs = selectedKeys.map((k) => FIELDS_BY_KEY[k]).filter(Boolean);
@@ -336,20 +358,16 @@ function _shortEncodeValue(v) {
 /**
  * Sérialisation Texte raccourci d'un lot d'annonces, alignée sur le mode choisi.
  *
- * Format :
- *   <en-tête> \n
- *   <annonce 1> \n
- *   <annonce 2> \n
- *   ...
- *
- * Annonce : <code1>\x1F<val1>\x1F<code2>\x1F<val2>... (sans séparateur en fin)
- *
- * Aucune information n'est perdue : tous les champs présents dans le TXT
- * (pour le même `fields`) sont encodés ici. Les valeurs reprennent le
- * formatage lisible utilisé dans le TXT pour rester humainement déchiffrables.
+ * @param {Array} ads - Liste d'annonces
+ * @param {string[]} [fields] - Liste des clés sélectionnées (null = toutes)
+ * @param {object} [options] - Options de filtrage
+ * @param {boolean} [options.excludeSellerData] - Si true, exclut les champs vendeur
  */
-function toShortText(ads, fields) {
-  const selectedKeys = (Array.isArray(fields) && fields.length > 0) ? fields : ALL_FIELD_KEYS;
+function toShortText(ads, fields, options) {
+  let selectedKeys = (Array.isArray(fields) && fields.length > 0) ? fields : ALL_FIELD_KEYS;
+  if (options && options.excludeSellerData) {
+    selectedKeys = selectedKeys.filter((k) => !SELLER_FIELD_KEYS.has(k));
+  }
   const fieldDefs = selectedKeys.map((k) => FIELDS_BY_KEY[k]).filter(Boolean);
   const shorts = fieldDefs.map((f) => f.short).join(SHORT_SEP_FIELD);
 
@@ -443,6 +461,7 @@ module.exports = {
   ALL_FIELD_KEYS,
   FIELD_CATEGORIES,
   FIELDS_BY_KEY,
+  SELLER_FIELD_KEYS,
   filterAdByFields,
   toReadableBlock,
   toShortText,
