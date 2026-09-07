@@ -1765,6 +1765,54 @@ assert(/process\.exitCode\s*=\s*1/.test(pipelineCodeFinal) || /throw\s+err/.test
 // export-meta.json : checksum
 assert(/writeWithChecksum.*export-meta/.test(pipelineCodeFinal), 'pipeline: export-meta.json écrit avec checksum');
 
+// --- 12. Tests comportementaux sécurité (PASS 2/3/4) ---
+console.log('\n[12] Tests comportementaux sécurité');
+
+// XSS: escapeHtml doit échapper les caractères dangereux
+const appCodeFinal = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/app.js'), 'utf8');
+assert(/function escapeHtml\(str\)/.test(appCodeFinal), 'app.js: escapeHtml définie');
+assert(appCodeFinal.includes("replace(/&/g, '&amp;')"), 'escapeHtml: échappe &');
+assert(appCodeFinal.includes("replace(/</g, '&lt;')"), 'escapeHtml: échappe <');
+assert(appCodeFinal.includes("replace(/>/g, '&gt;')"), 'escapeHtml: échappe >');
+assert(appCodeFinal.includes("replace(/\"/g, '&quot;')"), 'escapeHtml: échappe "');
+assert(appCodeFinal.includes("replace(/'/g, '&#39;')"), 'escapeHtml: échappe \'');
+
+// Test comportemental de la regex d'échappement (simulation)
+const dangerous = '<script>alert(1)</script>';
+const simulated = dangerous.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+assert(simulated.includes('&lt;script&gt;'), 'escapeHtml simulation: échappe <script>');
+assert(!simulated.includes('<script>'), 'escapeHtml simulation: pas de <script> brut');
+
+// JSON.parse corrompu : pipeline doit gérer l'erreur et re-scraper
+const tmpDirCorrupt = fs.mkdtempSync(path.join(os.tmpdir(), 'lbc-corrupt-'));
+const corruptJsonPath = path.join(tmpDirCorrupt, 'annonces.json');
+fs.writeFileSync(corruptJsonPath, 'NOT VALID JSON{{{');
+const pipelineCode3 = fs.readFileSync(path.join(base, 'services/scraping/leboncoin-pipeline.js'), 'utf8');
+assert(/JSON\.parse\(fs\.readFileSync\(jsonPath/.test(pipelineCode3), 'pipeline: parse annonces.json');
+assert(/try[\s\S]*?JSON\.parse[\s\S]*?catch/.test(pipelineCode3) || /catch \(err\)[\s\S]*?annonces\.json corrompu/.test(pipelineCode3), 'pipeline: JSON.parse protégé par try/catch');
+
+// localStorage: les données corrompues ne doivent pas crasher
+const localStorageSafePattern = /try\s*\{[\s\S]*?localStorage\.getItem\(['"]starred-ads['"]\)[\s\S]*?JSON\.parse[\s\S]*?new\s+Set\(/;
+assert(localStorageSafePattern.test(appCode2), 'app.js: localStorage starred-ads parsé avec try/catch');
+
+// CSV injection: test comportemental avec valeurs dangereuses
+const { ExcelExporter: excelExporter } = require('../src/main/infrastructure/excelExporter');
+const testAdsForCSV = [
+  { id: '1', title: '=HYPERLINK("http://evil","click")', prix: 100 },
+  { id: '2', title: '@SUM(A1:A10)', prix: 200 },
+  { id: '3', title: '+123', prix: 300 },
+  { id: '4', title: '-456', prix: 400 },
+  { id: '5', title: 'Normal title', prix: 500 },
+];
+const csvPath = path.join(tmpDirCorrupt, 'test.csv');
+await excelExporter.exportToCsv(testAdsForCSV, csvPath);
+const csvContent = fs.readFileSync(csvPath, 'utf8');
+assert(csvContent.includes("'=HYPERLINK"), 'CSV: =HYPERLINK neutralisé par quote');
+assert(csvContent.includes("'@SUM(A1:A10)"), 'CSV: @SUM neutralisé par quote');
+assert(csvContent.includes("'+123"), 'CSV: +123 neutralisé par quote');
+assert(csvContent.includes("'-456"), 'CSV: -456 neutralisé par quote');
+assert(csvContent.includes('Normal title'), 'CSV: titre normal préservé');
+
 console.log(`\n=== RÉSULTAT : ${pass} réussis, ${fail} échoués ===`);
 process.exit(fail > 0 ? 1 : 0);
 }

@@ -184,7 +184,7 @@ const AiStudioModule = {
         errEl.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;padding:20px;background:rgba(0,0,0,0.8);border-radius:8px;max-width:80%;';
         container.appendChild(errEl);
       }
-      errEl.innerHTML = `<p style="color:#e57373;margin-bottom:10px;">${msg}</p><button class="btn btn-secondary" onclick="location.reload()">🔄 Recharger</button>`;
+      errEl.innerHTML = `<p style="color:#e57373;margin-bottom:10px;">${escapeHtml(msg)}</p><button class="btn btn-secondary" onclick="location.reload()">🔄 Recharger</button>`;
     }
     if (this.el.browserStatus) { this.el.browserStatus.textContent = msg; this.el.browserStatus.style.color = '#e57373'; }
   },
