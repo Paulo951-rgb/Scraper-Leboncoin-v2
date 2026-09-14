@@ -159,6 +159,16 @@ window.api.onLog(({ level, message }) => {
   // Plafond mémoire
   while (_logBuffer.length > MAX_LOG_BUFFER) _logBuffer.shift();
 
+  // Détection d'avertissement de changement de structure Leboncoin
+  if (message && message.includes('detectStructureChanges') && level === 'warn') {
+    const sw = document.getElementById('structureWarning');
+    const swt = document.getElementById('structureWarningText');
+    if (sw && swt) {
+      swt.textContent = 'Leboncoin a peut-être modifié sa structure JSON. Le scraping continue mais certaines données peuvent être incomplètes. Vérifiez les extracteurs si le problème persiste.';
+      sw.classList.remove('hidden');
+    }
+  }
+
   // Si le log n'est pas visible dans le mode actuel, on ne touche pas au DOM
   // (optimisation : pas de re-render complet pour un log caché).
   if (!_logLevelVisible(level)) {
@@ -315,6 +325,14 @@ if (chromiumWarningRetryBtn) {
   });
 }
 refreshChromiumCheck(); // vérification initiale
+
+// Fermeture du bandeau d'avertissement de changement de structure
+const structureWarningCloseBtn = document.getElementById('structureWarningClose');
+if (structureWarningCloseBtn) {
+  structureWarningCloseBtn.addEventListener('click', () => {
+    document.getElementById('structureWarning')?.classList.add('hidden');
+  });
+}
 
 
 const historyTableBody = document.getElementById('historyTableBody');
@@ -1037,6 +1055,13 @@ triggerMarketBtn.addEventListener('click', async () => {
   stopBtn.disabled = false;
   progressBar.style.width = '0%';
   statusText.textContent = 'Analyse de marché IA (recherche Internet + estimation)...';
+  // Affiche la barre de progression dédiée dans l'explorateur
+  const marketProgressContainer = document.getElementById('marketProgressContainer');
+  const marketProgressBar = document.getElementById('marketProgressBar');
+  const marketProgressText = document.getElementById('marketProgressText');
+  if (marketProgressContainer) marketProgressContainer.classList.remove('hidden');
+  if (marketProgressBar) marketProgressBar.style.width = '0%';
+  if (marketProgressText) marketProgressText.textContent = '0%';
 
   try {
     // adIds : si des annonces sont sélectionnées pour comparaison, on analyse
@@ -1065,12 +1090,15 @@ triggerMarketBtn.addEventListener('click', async () => {
     // « Analyse de marché… » qui reste affiché indéfiniment.
     progressBar.style.width = '100%';
     statusText.textContent = 'Statut : Analyse de marché terminée.';
+    if (marketProgressContainer) marketProgressContainer.classList.add('hidden');
   } catch (err) {
     statusText.textContent = 'Statut : Échec de l\'analyse de marché.';
     alert(`Erreur d'analyse : ${err.message}`);
+    if (marketProgressContainer) marketProgressContainer.classList.add('hidden');
   } finally {
     triggerMarketBtn.disabled = false;
     stopBtn.disabled = true;
+    if (marketProgressContainer) marketProgressContainer.classList.add('hidden');
   }
 });
 
@@ -1078,6 +1106,11 @@ window.api.onProgress(({ percent, status, eta }) => {
   if (percent !== undefined) progressBar.style.width = `${percent}%`;
   if (status) statusText.textContent = `Statut : ${status}`;
   if (eta) etaText.textContent = `ETA : ${eta}`;
+  // Met à jour aussi la barre de progression IA Marché dans l'explorateur
+  const mpBar = document.getElementById('marketProgressBar');
+  const mpText = document.getElementById('marketProgressText');
+  if (mpBar && percent !== undefined) mpBar.style.width = `${percent}%`;
+  if (mpText && percent !== undefined) mpText.textContent = `${Math.round(percent)}%`;
   else etaText.textContent = '';
   // Transmet au widget flottant (si ouvert)
   if (typeof window.api.sendWidgetProgress === 'function') {
