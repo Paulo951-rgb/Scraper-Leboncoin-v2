@@ -250,7 +250,9 @@ await new Promise((resolve) => {
 
 // --- 4. Corrections PR #3 (renderer + main) ---
 console.log('\n[4/4] Corrections PR #3');
-const appCode = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/app.js'), 'utf8');
+const rendererDir = path.join(__dirname, '..', 'src/renderer');
+const rendererFiles = ['appState.js', 'utils.js', 'logsModule.js', 'scraperModule.js', 'explorerModule.js', 'statsModule.js', 'historyModule.js', 'app.js'];
+const appCode = rendererFiles.map((f) => fs.readFileSync(path.join(rendererDir, f), 'utf8')).join('\n');
 const preloadCode = fs.readFileSync(path.join(__dirname, '..', 'src/main/preload.js'), 'utf8');
 const ipcCode = fs.readFileSync(path.join(__dirname, '..', 'src/main/core/ipcHandlers.js'), 'utf8');
 
@@ -379,7 +381,7 @@ assert(/ipcMain\.on\('widget:status'/.test(mainCode2), 'main.js: widget:status r
 assert(/toggleWidget/.test(preloadCode), 'preload.js: toggleWidget exposed');
 assert(/sendWidgetProgress/.test(preloadCode), 'preload.js: sendWidgetProgress exposed');
 assert(/sendWidgetStatus/.test(preloadCode), 'preload.js: sendWidgetStatus exposed');
-const appCode2 = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/app.js'), 'utf8');
+const appCode2 = appCode;
 assert(!/Le Widget Flottant n'est pas encore disponible/.test(appCode2), 'app.js: stale "not available" alert removed');
 assert(/sendWidgetProgress\(\{ percent, status \}\)/.test(appCode2), 'app.js: relays progress to widget');
 assert(/sendWidgetStatus\(\{ state, message \}\)/.test(appCode2), 'app.js: relays status to widget');
@@ -671,7 +673,7 @@ assert(/localStorage.*feedback-archive/.test(helpModCode), 'helpModule: rapport 
 console.log('\n[7] Architecture scraping pur (sans dépendance IA)');
 const pipelineCode = fs.readFileSync(path.join(__dirname, '..', 'src/main/services/scraping/leboncoin-pipeline.js'), 'utf8');
 const excelCode = fs.readFileSync(path.join(__dirname, '..', 'src/main/infrastructure/excelExporter.js'), 'utf8');
-const appCodeFull = fs.readFileSync(path.join(__dirname, '..', 'src/renderer', 'app.js'), 'utf8');
+const appCodeFull = appCode;
 const htmlCodeFull = fs.readFileSync(path.join(__dirname, '..', 'src/renderer', 'index.html'), 'utf8');
 
 // adFields est un module de SCRAPING PUR : aucun appel IA, aucun prompt.
@@ -1372,7 +1374,7 @@ assert(/id="chromiumWarning"/.test(indexHtmlG), 'index.html: élément #chromium
 assert(/chromiumWarningRetry/.test(indexHtmlG), 'index.html: bouton de revérification #chromiumWarningRetry présent');
 assert(/npx playwright install chromium/.test(indexHtmlG), 'index.html: commande de correction affichée dans le bandeau');
 
-const appJsCodeG = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/app.js'), 'utf8');
+const appJsCodeG = appCode;
 assert(/refreshChromiumCheck/.test(appJsCodeG), 'app.js: fonction refreshChromiumCheck définie');
 assert(/window\.api\.checkChromium\(\)/.test(appJsCodeG), 'app.js: appel à window.api.checkChromium() au démarrage');
 assert(/\/\/ vérification initiale/.test(appJsCodeG), 'app.js: refreshChromiumCheck() appelée à l\'init');
@@ -1639,7 +1641,7 @@ console.log('\n[10/10] Export modes + Short text');
   assert(/id="exportFieldsNone"/.test(indexCode), 'index.html: bouton Tout désélectionner');
   assert(/id="exportFieldsList"/.test(indexCode), 'index.html: liste des champs cochables');
 
-  const appCodeNew = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/app.js'), 'utf8');
+  const appCodeNew = appCode;
   assert(/EXPORT_FIELDS/.test(appCodeNew), 'app.js: liste EXPORT_FIELDS');
   assert(/getSelectedExportMode/.test(appCodeNew), 'app.js: accesseur mode sélectionné');
   assert(/getSelectedExportFields/.test(appCodeNew), 'app.js: accesseur champs sélectionnés');
@@ -1659,7 +1661,7 @@ console.log('\n[10/10] Export modes + Short text');
 
 // Carte Leaflet : fix du filtre main propre (utilise livraison OU shipping)
 {
-  const appCodeMap = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/app.js'), 'utf8');
+  const appCodeMap = appCode;
   assert(/a\.livraison\s*\?\?\s*a\.shipping/.test(appCodeMap),
     'app.js: filtre carte utilise livraison ?? shipping (fallback legacy)');
   assert(/Leaflet non (chargé|disponible)/.test(appCodeMap),
@@ -1672,7 +1674,7 @@ const exporting = require('../src/main/services/exporting/exportFields');
 const runnerCode = fs.readFileSync(path.join(base, 'services/scraping/pipelineRunner.js'), 'utf8');
 const ipcCodeNew = fs.readFileSync(path.join(base, 'core/ipcHandlers.js'), 'utf8');
 const indexCode = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/index.html'), 'utf8');
-const appCodeNew = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/app.js'), 'utf8');
+const appCodeNew = appCode;
 const stylesCode = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/styles.css'), 'utf8');
 
 // Settings : includeSellerData par défaut = true
@@ -1769,7 +1771,7 @@ assert(/writeWithChecksum.*export-meta/.test(pipelineCodeFinal), 'pipeline: expo
 console.log('\n[12] Tests comportementaux sécurité');
 
 // XSS: escapeHtml doit échapper les caractères dangereux
-const appCodeFinal = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/app.js'), 'utf8');
+const appCodeFinal = appCode;
 assert(/function escapeHtml\(str\)/.test(appCodeFinal), 'app.js: escapeHtml définie');
 assert(appCodeFinal.includes("replace(/&/g, '&amp;')"), 'escapeHtml: échappe &');
 assert(appCodeFinal.includes("replace(/</g, '&lt;')"), 'escapeHtml: échappe <');
