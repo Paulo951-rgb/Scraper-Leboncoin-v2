@@ -8,7 +8,7 @@
   <!-- Content-Security-Policy : restrictions de sécurité pour l'application Electron.
        Note: 'unsafe-inline' est conservé car l'UI génère des onclick dynamiques
        via innerHTML. Une migration vers addEventListener est prévue. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline' https://unpkg.com; img-src 'self' data: https: http:; font-src 'self' https:; connect-src 'self' http://127.0.0.1:11434 https:; frame-src 'self' https://aistudio.google.com https://*.google.com;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline' https://unpkg.com; img-src 'self' data: https: http:; font-src 'self' https://; connect-src 'self' https:; frame-src 'self';">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <!-- Leaflet.js pour la Carte Interactive (Sécurisé pour l'environnement hybride Electron) -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -30,7 +30,7 @@
 </head>
 <body>
   <div class="app-container">
-    
+
     <!-- ÉCRAN D'INFORMATION LÉGALE (premier lancement) -->
     <div id="legalNoticeModal" class="modal-overlay" style="z-index:9999;">
       <div class="modal-card modal-large" style="max-width:600px;">
@@ -50,32 +50,70 @@
       </div>
     </div>
 
-    <header class="header">
-      <div class="logo">
-        <h1>Leboncoin <span>Scraper Pro</span></h1>
-      </div>
-      <div class="header-right">
-        <span id="offlineBadge" class="badge badge-offline hidden" title="Mode hors-ligne — vous pouvez consulter les jobs déjà scrapés, mais le scraping est désactivé.">📶 Hors-ligne</span>
-        <button id="toggleWidgetBtn" class="btn btn-secondary btn-small">🖥️ Widget Flottant</button>
-        <button id="openSettingsModalBtn" class="btn btn-secondary btn-small">⚙️ Paramètres</button>
-        <div class="header-help-btns">
-          <button id="openFaqBtn" class="help-btn" title="Questions fréquentes" aria-label="FAQ">❓</button>
-          <button id="openHelpBtn" class="help-btn" title="Guide d'utilisation" aria-label="Aide">📖</button>
-          <button id="openFeedbackBtn" class="help-btn" title="Signaler un problème ou proposer une amélioration" aria-label="Problèmes & Améliorations">💬</button>
-        </div>
-
-        <div class="nav-tabs">
-          <button class="tab-btn active" data-tab="tab-scraper">🚀 Scraper</button>
-          <button class="tab-btn" data-tab="tab-ai-studio">🤖 Navigateur IA Studio</button>
-          <button class="tab-btn" data-tab="tab-logs">📜 Logs</button>
-          <button class="tab-btn" data-tab="tab-history">📁 Historique Jobs</button>
-          <button class="tab-btn" data-tab="tab-explorer">🔍 Explorateur Annonces</button>
-          <button class="tab-btn" data-tab="tab-stats">📊 Statistiques & Carte</button>
+    <!-- SIDEBAR -->
+    <aside class="sidebar">
+      <div class="sidebar-logo">
+        <span class="sidebar-logo-icon">🛒</span>
+        <div class="sidebar-logo-text">
+          <span class="sidebar-logo-title">Leboncoin</span>
+          <span class="sidebar-logo-sub">Scraper Pro</span>
         </div>
       </div>
-    </header>
 
-    <main class="content">
+      <span id="offlineBadge" class="badge badge-offline hidden" title="Mode hors-ligne — vous pouvez consulter les jobs déjà scrapés, mais le scraping est désactivé.">📶 Hors-ligne</span>
+
+      <nav class="sidebar-nav">
+        <button class="nav-item active" data-tab="tab-scraper">
+          <span class="nav-item-icon">🚀</span>
+          <span class="nav-item-label">Scraper</span>
+        </button>
+        <button class="nav-item" data-tab="tab-logs">
+          <span class="nav-item-icon">📜</span>
+          <span class="nav-item-label">Logs</span>
+        </button>
+        <button class="nav-item" data-tab="tab-history">
+          <span class="nav-item-icon">📁</span>
+          <span class="nav-item-label">Historique</span>
+        </button>
+        <button class="nav-item" data-tab="tab-explorer">
+          <span class="nav-item-icon">🔍</span>
+          <span class="nav-item-label">Explorateur</span>
+        </button>
+        <button class="nav-item" data-tab="tab-stats">
+          <span class="nav-item-icon">📊</span>
+          <span class="nav-item-label">Statistiques</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-divider"></div>
+
+      <div class="sidebar-bottom">
+        <span class="help-btn" style="display:none;" aria-hidden="true"></span>
+        <button id="toggleWidgetBtn" class="nav-item nav-item-action">
+          <span class="nav-item-icon">🖥️</span>
+          <span class="nav-item-label">Widget Flottant</span>
+        </button>
+        <button id="openSettingsModalBtn" class="nav-item nav-item-action">
+          <span class="nav-item-icon">⚙️</span>
+          <span class="nav-item-label">Paramètres</span>
+        </button>
+        <button id="openFaqBtn" class="nav-item nav-item-action" title="Questions fréquentes" aria-label="FAQ">
+          <span class="nav-item-icon">❓</span>
+          <span class="nav-item-label">FAQ</span>
+        </button>
+        <button id="openHelpBtn" class="nav-item nav-item-action" title="Guide d'utilisation" aria-label="Aide">
+          <span class="nav-item-icon">📖</span>
+          <span class="nav-item-label">Aide</span>
+        </button>
+        <button id="openFeedbackBtn" class="nav-item nav-item-action" title="Signaler un problème ou proposer une amélioration" aria-label="Problèmes & Améliorations">
+          <span class="nav-item-icon">💬</span>
+          <span class="nav-item-label">Feedback</span>
+        </button>
+      </div>
+    </aside>
+
+    <!-- MAIN CONTENT -->
+    <main class="main-content">
 
       <!-- BANDEAU D'AVERTISSEMENT CHROMIUM (Playwright) : affiché si le binaire
            Chromium utilisé pour le scraping n'est pas installé. Sans lui, tout
@@ -89,7 +127,13 @@
 
       <!-- PAGE 1 : SCRAPER -->
       <section id="tab-scraper" class="tab-content active">
-        
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Scraper</h1>
+            <p class="page-subtitle">Lancez une nouvelle recherche sur Leboncoin</p>
+          </div>
+        </div>
+
         <!-- PRESETS DE RECHERCHE FAVORIES -->
         <div class="card subcard">
           <h3>📌 Modèles de Recherche Favoris (Presets 1-Clic)</h3>
@@ -100,7 +144,7 @@
 
         <div class="card">
           <h2>Nouvelle recherche Leboncoin</h2>
-          
+
           <div class="form-group">
             <label for="searchUrl">URL de recherche :</label>
             <input type="url" id="searchUrl" placeholder="https://www.leboncoin.fr/recherche?text=processeur&price=50-150" required>
@@ -118,24 +162,31 @@
             </div>
           </div>
 
-          <!-- MODE D'EXPORT (Défaut / Personnalisé) + sélection des champs -->
+          <!-- PROFIL DE DONNÉES (Défaut / Maximum / Personnalisé) + sélection des champs -->
           <div class="card subcard">
             <h3>🗂️ Données à récupérer / exporter</h3>
             <p class="text-muted font-small" style="margin-bottom:10px;">
-              Le mode <strong>Défaut</strong> récupère et exporte toutes les informations disponibles (titre, prix, description, vendeur, dates, photos, etc.).
-              Le mode <strong>Personnalisé</strong> vous permet de ne récupérer / exporter <strong>que les champs que vous sélectionnez</strong>.
+              Choisissez le profil de données à récupérer. Le profil <strong>Défaut</strong> récupère les champs essentiels (rapide et léger).
+              Le profil <strong>Maximum</strong> récupère toutes les données disponibles techniquement.
+              Le profil <strong>Personnalisé</strong> vous permet de ne récupérer / exporter <strong>que les champs que vous sélectionnez</strong>.
             </p>
 
             <div class="form-row checkboxes" style="margin-bottom:6px;">
               <label class="checkbox-label">
                 <input type="radio" name="exportMode" id="exportModeDefault" value="default" checked>
-                <strong>📦 Défaut</strong> — toutes les informations (recommandé)
+                <strong>📦 Défaut</strong> — champs essentiels (recommandé)
+              </label>
+              <label class="checkbox-label">
+                <input type="radio" name="exportMode" id="exportModeMaximum" value="maximum">
+                <strong>🚀 Maximum</strong> — toutes les données disponibles
               </label>
               <label class="checkbox-label">
                 <input type="radio" name="exportMode" id="exportModeCustom" value="custom">
                 <strong>✂️ Personnalisé</strong> — uniquement les champs que je choisis
               </label>
             </div>
+
+            <p id="exportProfileDescription" class="text-muted font-small" style="margin:6px 0;"></p>
 
             <div id="exportFieldsPanel" class="hidden" style="border:1px solid var(--border-color); border-radius:8px; padding:12px; margin-top:8px; background-color:var(--bg-color);">
               <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
@@ -145,7 +196,7 @@
               </div>
               <div id="exportFieldsList" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:6px 14px;"></div>
               <p class="text-muted font-small" style="margin-top:10px;">
-                💡 Les champs non sélectionnés ne figureront dans aucun export (JSON, TXT, Texte raccourci, XLSX, CSV).
+                💡 Les champs non sélectionnés ne figureront dans aucun export (JSON, TXT).
               </p>
             </div>
           </div>
@@ -156,42 +207,6 @@
             <div class="form-group">
               <label for="proxyUrl">Serveur Proxy (HTTP / SOCKS5) :</label>
               <input type="text" id="proxyUrl" placeholder="http://user:pass@proxy.example.com:8080">
-            </div>
-          </div>
-
-          <!-- CONFIGURATION IA -->
-          <div class="card subcard">
-            <h3>🤖 Configuration IA & Modèle Custom</h3>
-            <div class="form-row">
-              <div class="form-group">
-                <label class="checkbox-label">
-                  <input type="checkbox" id="autoAiMarket" checked>
-                  <strong>🧠 Analyse IA pendant le scraping (texte + vision si photos)</strong>
-                </label>
-              </div>
-
-              <div class="form-group">
-                <label for="aiProvider">Moteur IA (texte) :</label>
-                <select id="aiProvider">
-                  <option value="ollama">Ollama Local (100% Gratuit sur votre PC)</option>
-                </select>
-              </div>
-
-              <div class="form-group">
-                <label for="aiModelName">Modèle texte (ex: llama3, mistral) :</label>
-                <input type="text" id="aiModelName" value="llama3">
-              </div>
-
-              <div class="form-group">
-                <label for="aiVisionModel">Modèle vision (ex: llava, moondream) :</label>
-                <input type="text" id="aiVisionModel" value="llava">
-              </div>
-
-              <div class="form-group">
-                <label for="ollamaUrl">URL du serveur Ollama :</label>
-                <input type="url" id="ollamaUrl" placeholder="http://127.0.0.1:11434" value="http://127.0.0.1:11434">
-                <small style="display:block; margin-top:4px; color:var(--text-muted); font-size:0.72rem;">URL de votre serveur Ollama local (100% gratuit, aucune clé API).</small>
-              </div>
             </div>
           </div>
 
@@ -220,122 +235,14 @@
         </div>
       </section>
 
-      <!-- PAGE NAVIGATEUR IA STUDIO -->
-      <section id="tab-ai-studio" class="tab-content">
-        <div class="card ai-studio-hero">
-          <h2>🤖 Navigateur IA Studio</h2>
-          <p class="text-muted mb-15">Utilisez Google AI Studio, gérez vos prompts et générez des analyses.</p>
-        </div>
-
-        <!-- Onglets internes -->
-        <div class="ai-studio-tabs">
-          <button id="aiTabBrowser" class="ai-tab active">🌐 Navigateur</button>
-          <button id="aiTabPrompts" class="ai-tab">📝 Prompts</button>
-          <button id="aiTabGenerator" class="ai-tab">⚡ Générateur</button>
-          <button id="aiTabSession" class="ai-tab">🔑 Session</button>
-        </div>
-
-        <!-- Panel Navigateur -->
-        <div id="aiPanelBrowser" class="ai-panel">
-          <div class="card ai-studio-browser-card">
-            <div class="browser-toolbar">
-              <button id="aistudioBackBtn" class="btn btn-secondary btn-small" title="Précédent">⬅</button>
-              <button id="aistudioFwdBtn" class="btn btn-secondary btn-small" title="Suivant">➡</button>
-              <button id="aistudioReloadBtn" class="btn btn-secondary btn-small" title="Recharger">🔄</button>
-              <button id="aistudioHomeBtn" class="btn btn-secondary btn-small" title="AI Studio">🏠</button>
-              <input type="text" id="aistudioUrlBar" class="browser-url" placeholder="https://aistudio.google.com/">
-              <button id="aistudioLoginBtn" class="btn btn-primary btn-small" title="Se connecter à Google">🔑 Se connecter</button>
-              <button id="aistudioOpenExternalBtn" class="btn btn-secondary btn-small" title="Ouvrir dans le navigateur externe">↗</button>
-            </div>
-            <div class="browser-container">
-              <webview id="aistudioWebview" src="https://aistudio.google.com/" allowpopups partition="persist:aistudio" preload="../main/aistudioLoginPreload.js" webpreferences="contextIsolation=no,nodeIntegration=no"></webview>
-              <div id="aistudioWebviewLoading" class="browser-loading-badge">⏳ Chargement…</div>
-            </div>
-            <p id="aiBrowserStatus" class="text-muted font-small" style="margin-top:6px;"></p>
-          </div>
-        </div>
-
-        <!-- Panel Prompts -->
-        <div id="aiPanelPrompts" class="ai-panel hidden">
-          <div class="card">
-            <h3>📝 Prompts préfaits</h3>
-            <p class="text-muted mb-15 font-small">Templates génériques à trous. Remplissez les champs puis copiez le prompt.</p>
-            <div id="aistudioCardsContainer" class="prompt-cards-grid">
-              <!-- Cartes générées dynamiquement -->
-            </div>
-            <p id="aistudioGenStatus" class="text-muted font-small" style="margin-top:8px;"></p>
-          </div>
-        </div>
-
-        <!-- Panel Générateur -->
-        <div id="aiPanelGenerator" class="ai-panel hidden">
-          <div class="card">
-            <h3>⚡ Générateur de prompts</h3>
-            <p class="text-muted mb-15 font-small">Créez un prompt personnalisé via l'IA locale (Ollama).</p>
-            <form id="aiGenForm" class="ai-gen-form">
-              <div class="form-row">
-                <label>Domaine</label>
-                <input type="text" id="aiGenDomain" placeholder="Ex: Informatique, voitures, meubles…" value="produits d'occasion">
-              </div>
-              <div class="form-row">
-                <label>Objectif</label>
-                <textarea id="aiGenObjective" rows="2" placeholder="Ex: Trouver les meilleures affaires">Trouver les meilleures affaires et opportunités d'achat-revente</textarea>
-              </div>
-              <div class="form-row">
-                <label>Données disponibles</label>
-                <input type="text" id="aiGenVars" placeholder="Ex: titre, prix, description, ville" value="titre, prix, description, ville, vendeur">
-              </div>
-              <div class="form-row">
-                <label>Contraintes</label>
-                <textarea id="aiGenHints" rows="2" placeholder="Ex: Budget max 1000€, uniquement très bon état"></textarea>
-              </div>
-              <div class="form-row">
-                <label>Prix min-max</label>
-                <input type="text" id="aiGenPriceRange" placeholder="Ex: 0-1000" value="0-1000">
-              </div>
-              <div class="form-row">
-                <label>Top N résultats</label>
-                <input type="number" id="aiGenTopN" value="10" min="1" max="100">
-              </div>
-              <div class="form-row">
-                <label>Classements</label>
-                <input type="text" id="aiGenRankings" placeholder="Ex: meilleures affaires, achat-revente" value="meilleures affaires, achat-revente">
-              </div>
-              <div class="form-row">
-                <label>URL Ollama</label>
-                <input type="text" id="aiGenOllamaUrl" value="http://127.0.0.1:11434">
-              </div>
-              <div class="form-row">
-                <label>Modèle Ollama</label>
-                <input type="text" id="aiGenModel" placeholder="Ex: llama3, mistral">
-              </div>
-              <button type="submit" class="btn btn-primary">⚡ Générer le prompt</button>
-            </form>
-            <div id="aiGenOutput" class="ai-gen-output hidden"></div>
-            <button id="aiGenCopyBtn" class="btn btn-secondary hidden" style="margin-top:8px;">📋 Copier</button>
-            <p id="aiGenStatus" class="text-muted font-small" style="margin-top:8px;"></p>
-          </div>
-        </div>
-
-        <!-- Panel Session -->
-        <div id="aiPanelSession" class="ai-panel hidden">
-          <div class="card">
-            <h3>🔑 Session Google AI Studio</h3>
-            <div id="aiSessionStatus" class="ai-session-status">
-              <span class="status-dot status-offline"></span> Vérification…
-            </div>
-            <p class="text-muted mb-15 font-small">La session est persistée entre les lancements de l'application.</p>
-            <div class="ai-session-actions">
-              <button id="aistudioOpenJobsBtn" class="btn btn-primary">📂 Ouvrir le dossier des jobs</button>
-              <button id="aiClearSessionBtn" class="btn btn-secondary">🗑 Effacer la session</button>
-            </div>
-          </div>
-        </div>
-      </section>
-
-
       <!-- PAGE LOGS -->
       <section id="tab-logs" class="tab-content">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Logs</h1>
+            <p class="page-subtitle">Journaux d'exécution en direct</p>
+          </div>
+        </div>
         <div class="card logs-card">
           <div class="logs-header">
             <h2>Journaux d'exécution en direct</h2>
@@ -353,10 +260,16 @@
 
       <!-- PAGE HISTORIQUE -->
       <section id="tab-history" class="tab-content">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Historique</h1>
+            <p class="page-subtitle">Historique complet de tous les Scrapings</p>
+          </div>
+          <button id="openMainFolderBtn" class="btn btn-secondary btn-small">📂 Dossier output/</button>
+        </div>
         <div class="card">
           <div class="history-header">
             <h2>Historique complet de tous les Scrapings</h2>
-            <button id="openMainFolderBtn" class="btn btn-secondary btn-small">📂 Dossier output/</button>
           </div>
 
           <div class="history-table-container">
@@ -381,41 +294,21 @@
 
       <!-- PAGE EXPLORATEUR -->
       <section id="tab-explorer" class="tab-content">
-        <div class="card">
-          <div class="history-header">
-            <h2>Explorateur d'Annonces & Estimation IA</h2>
-            <div style="display:flex; gap:10px;">
-              <button id="openCompareModalBtn" class="btn btn-secondary btn-small">🆚 Comparer (<span id="compareCount">0</span>)</button>
-              <div class="view-toggle">
-                <button id="viewTableBtn" class="btn btn-secondary btn-small active">📊 Tableau</button>
-                <button id="viewGridBtn" class="btn btn-secondary btn-small">🖼️ Galerie</button>
-              </div>
-              <button id="triggerMarketBtn" class="btn btn-primary btn-small">🌐 IA Marché (valeur réelle)</button>
-              <div id="marketProgressContainer" class="market-progress-container hidden">
-                <div class="market-progress-bar"><div id="marketProgressBar" class="market-progress-fill" style="width:0%"></div></div>
-                <span id="marketProgressText" class="market-progress-text">0%</span>
-              </div>
-            </div>
-            <div id="structureWarning" class="structure-warning hidden">
-              <span class="structure-warning-icon">⚠️</span>
-              <span id="structureWarningText" class="structure-warning-text"></span>
-              <button id="structureWarningClose" class="structure-warning-close" type="button">✕</button>
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Explorateur</h1>
+            <p class="page-subtitle">Explorez et comparez les annonces scrapées</p>
+          </div>
+          <div style="display:flex; gap:10px;">
+            <button id="openCompareModalBtn" class="btn btn-secondary btn-small">🆚 Comparer (<span id="compareCount">0</span>)</button>
+            <div class="view-toggle">
+              <button id="viewTableBtn" class="btn btn-secondary btn-small active">📊 Tableau</button>
+              <button id="viewGridBtn" class="btn btn-secondary btn-small">🖼️ Galerie</button>
             </div>
           </div>
+        </div>
 
-          <div class="filter-row">
-            <div class="form-group">
-              <label for="searchProvider">Moteur de recherche (IA Marché) :</label>
-              <select id="searchProvider">
-                <option value="duckduckgo">DuckDuckGo (sans clé)</option>
-              </select>
-            </div>
-            <div class="form-group hidden">
-              <label for="searchApiKey">Clé API moteur (si requis) :</label>
-              <input type="password" id="searchApiKey" placeholder="Clé API Tavily (https://tavily.com) — vide si DuckDuckGo">
-            </div>
-          </div>
-          
+        <div class="card">
           <div class="filter-row">
             <div class="form-group flex-2">
               <label>Session à analyser :</label>
@@ -445,9 +338,6 @@
               <select id="filterTagSelect" class="filter-select">
                 <option value="ALL">Toutes les annonces</option>
                 <option value="FAV">⭐ Mes Favoris uniquement</option>
-                <option value="SUPER">🟢🟢 Très bonnes affaires uniquement</option>
-                <option value="GOOD">🟢 Bonnes affaires uniquement</option>
-                <option value="HIGH">🔴 Trop cher uniquement</option>
               </select>
             </div>
 
@@ -466,22 +356,17 @@
             </div>
           </div>
 
-          <!-- FILTRES : livraison / main propre / type vendeur / likes min / note min / catégorie / ville -->
+          <!-- FILTRES : type de remise / type vendeur / likes min / note min / catégorie / ville -->
           <div class="filter-row" style="margin-top:8px;">
             <div class="form-group flex-1">
-              <label>Livraison :</label>
-              <select id="filterLivraison" class="filter-select">
-                <option value="ALL">Toutes</option>
-                <option value="OUI">📦 OUI uniquement</option>
-                <option value="NON">NON uniquement</option>
-              </select>
-            </div>
-            <div class="form-group flex-1">
-              <label>Main propre :</label>
-              <select id="filterMainPropre" class="filter-select">
-                <option value="ALL">Toutes</option>
-                <option value="OUI">🤝 OUI uniquement</option>
-                <option value="NON">NON uniquement</option>
+              <label for="filterDeliveryType">Type de remise :</label>
+              <select id="filterDeliveryType" class="filter-select">
+                <option value="tous">Tous</option>
+                <option value="livraison">Livraison uniquement</option>
+                <option value="main_propre">Main propre uniquement</option>
+                <option value="les_deux">Les deux</option>
+                <option value="aucun">Aucun</option>
+                <option value="inconnu">Inconnu</option>
               </select>
             </div>
             <div class="form-group flex-1">
@@ -518,20 +403,17 @@
                 <tr>
                   <th style="width:3%;">☑️</th>
                   <th style="width:3%;">⭐</th>
-                  <th style="width:18%;">Produit Identifié</th>
-                  <th style="width:7%;">Prix</th>
-                  <th style="width:10%;">Valeur Marché</th>
-                  <th style="width:8%;">Bénéfice/Perte</th>
-                  <th style="width:10%;">Verdict</th>
-                  <th style="width:18%;">Vendeur</th>
-                  <th style="width:6%;">Remise</th>
-                  <th style="width:15%;">Résumé IA</th>
+                  <th style="width:25%;">Titre</th>
+                  <th style="width:10%;">Prix</th>
+                  <th style="width:25%;">Vendeur</th>
+                  <th style="width:10%;">Ville</th>
+                  <th style="width:10%;">Date</th>
                   <th style="width:5%;">Actions</th>
                 </tr>
               </thead>
               <tbody id="adsTableBody">
                 <tr>
-                  <td colspan="11" class="text-center">Sélectionnez un job ou lancez une recherche</td>
+                  <td colspan="8" class="text-center">Sélectionnez un job ou lancez une recherche</td>
                 </tr>
               </tbody>
             </table>
@@ -544,12 +426,19 @@
 
       <!-- PAGE STATISTIQUES & MAP -->
       <section id="tab-stats" class="tab-content">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Statistiques</h1>
+            <p class="page-subtitle">Indicateurs & Graphiques Décisionnels</p>
+          </div>
+          <select id="statsSessionSelect" class="filter-select" style="max-width: 300px;">
+            <option value="ALL">🌐 Tous les scrapings combinés</option>
+          </select>
+        </div>
+
         <div class="card">
           <div class="history-header">
             <h2>Indicateurs & Graphiques Décisionnels</h2>
-            <select id="statsSessionSelect" class="filter-select" style="max-width: 300px;">
-              <option value="ALL">🌐 Tous les scrapings combinés</option>
-            </select>
           </div>
 
           <div class="stats-grid">
@@ -570,6 +459,12 @@
               <span class="stat-title">Livraison</span>
               <span id="statLivraison" class="stat-value">-</span>
               <span id="statLivraisonSub" class="stat-sub">livraison disponible</span>
+            </div>
+            <div class="stat-card stat-card-accent stat-card-amber">
+              <span class="stat-icon">🚚</span>
+              <span class="stat-title">Répartition remise</span>
+              <span id="statDeliveryTypeDist" class="stat-value" style="font-size:0.9rem;">-</span>
+              <span class="stat-sub">livr. / main / 2 / aucun / inconnu</span>
             </div>
             <div class="stat-card stat-card-accent stat-card-amber">
               <span class="stat-icon">⬇️</span>
@@ -612,7 +507,7 @@
                 🤝 Remise en main propre uniquement
               </label>
             </div>
-            <div id="leafletMap" style="height: 350px; border-radius: 8px; border: 1px solid var(--border-color);"></div>
+            <div id="leafletMap" class="leaflet-map" style="height: 350px;"></div>
           </div>
 
           <div class="charts-grid" style="margin-top:15px;">
@@ -698,14 +593,6 @@
         <small style="color:var(--text-muted); display:block; margin-top:4px; font-size:0.72rem;">Les données vendeur (nom, ID, note, avis, URL profil, ancienneté) peuvent contenir des informations permettant d'identifier une personne. Désactivez cette option lorsqu'elles ne sont pas nécessaires à votre analyse.</small>
       </div>
 
-      <!-- SECTION : ANALYSE IA -->
-      <h4 style="margin-top:20px; margin-bottom:10px; font-size:0.95rem; color:var(--primary-color);">🧠 Analyse IA Locale</h4>
-      <div class="form-group text-left">
-        <label for="cfgAiConcurrency" style="font-size:0.8rem; color:var(--text-muted); display:block; margin-bottom:5px;">Analyses simultanées (parallélisme IA) :</label>
-        <input type="number" id="cfgAiConcurrency" value="5" min="1" max="20" style="width:100%;">
-        <small style="color:var(--text-muted);">Nombre d'annonces analysées en parallèle par l'IA. Plus élevé = plus rapide, mais demande plus de RAM/VRAM. Recommandé : 3-5 pour CPU, 5-10 pour GPU.</small>
-      </div>
-
       <!-- SECTION : MAINTENANCE -->
       <h4 style="margin-top:20px; margin-bottom:10px; font-size:0.95rem; color:var(--primary-color);">🧹 Maintenance</h4>
       <div class="form-group text-left">
@@ -783,32 +670,19 @@
           </div>
           <div class="price-box">
             <div class="price-big"><span id="modalPrice"></span> €</div>
-            <div class="market-range-info">Valeur marché estimée : <strong id="modalMarketRange"></strong> (Valeur centrale : <span id="modalMarketAvg"></span> €)</div>
-            <div style="font-size:0.85rem; color:var(--green-deal); font-weight:bold; margin-top:5px;">
-              💰 Bénéfice / Perte : <span id="modalResellMargin"></span>
-            </div>
           </div>
           <div class="seller-info-banner">
             📍 <span id="modalCity"></span> | 👤 <span id="modalSeller"></span> | 📅 <span id="modalDate"></span>
           </div>
           <div class="seller-info-banner" id="modalExtraInfoBanner" style="margin-top:6px; flex-wrap:wrap; gap:10px;">
             <span id="modalSellerRating">⭐ <strong>Note vendeur :</strong> <span class="modal-extra-val">-</span></span>
-            <span id="modalLivraison">📦 <strong>Livraison :</strong> <span class="modal-extra-val">-</span></span>
-            <span id="modalMainPropre">🤝 <strong>Main propre :</strong> <span class="modal-extra-val">-</span></span>
+            <span id="modalDeliveryType">📦 <strong>Type de remise :</strong> <span class="modal-extra-val">-</span></span>
           </div>
           <div class="seller-info-banner" id="modalExtraInfoBanner2" style="margin-top:6px; flex-wrap:wrap; gap:10px;">
             <span id="modalLikes">❤️ <strong>Likes :</strong> <span class="modal-extra-val">-</span></span>
             <span id="modalDateScraping">🕒 <strong>Date scraping :</strong> <span class="modal-extra-val">-</span></span>
             <span id="modalTypeVendeur">👤 <strong>Type vendeur :</strong> <span class="modal-extra-val">-</span></span>
             <span id="modalEtat">🏷️ <strong>État déclaré :</strong> <span class="modal-extra-val">-</span></span>
-          </div>
-          <div class="card subcard" style="margin-top:10px;">
-            <h4>Résumé & Explication IA</h4>
-            <p id="modalSummary" class="text-muted" style="font-size:0.85rem; line-height:1.4;"></p>
-          </div>
-          <div id="modalVisionCard" class="card subcard hidden" style="margin-top:10px; border-left:3px solid var(--accent);">
-            <h4>🖼️ Analyse Visuelle IA</h4>
-            <div id="modalVisionContent" style="font-size:0.85rem; line-height:1.5;"></div>
           </div>
           <div class="card subcard">
             <h4>Description Complète</h4>
@@ -894,7 +768,6 @@
   </div>
 
   <script src="helpModule.js"></script>
-  <script src="aiStudioModule.js"></script>
   <script src="appState.js"></script>
   <script src="utils.js"></script>
   <script src="logsModule.js"></script>

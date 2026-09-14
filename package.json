@@ -3,15 +3,60 @@
   "version": "1.0.0",
   "description": "Application de scraping Leboncoin semi-automatisée",
   "main": "src/main/main.js",
+  "productName": "Leboncoin Scraper Pro",
+  "appId": "com.leboncoin.scraper.pro",
   "scripts": {
     "start": "electron --max-old-space-size=8192 .",
-    "test": "node test/regression.test.js"
+    "test": "node test/regression.test.js",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --win",
+    "build": "electron-builder --win"
   },
   "dependencies": {
-    "exceljs": "^4.4.0",
     "playwright": "1.41.2"
   },
   "devDependencies": {
-    "electron": "^28.0.0"
+    "electron": "^28.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.leboncoin.scraper.pro",
+    "productName": "Leboncoin Scraper Pro",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "package.json",
+      "node_modules/playwright/**/*",
+      "node_modules/playwright-core/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "node_modules/playwright-core/.local-browsers",
+        "to": "browsers",
+        "filter": ["**/*"]
+      }
+    ],
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Leboncoin Scraper Pro",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico"
+    },
+    "portable": {
+      "artifactName": "Leboncoin-Scraper-Pro-Portable-${version}.exe"
+    }
   }
 }

@@ -39,12 +39,6 @@ const modalConfirmBtn = document.getElementById('modalConfirmBtn');
 const adDetailModal = document.getElementById('adDetailModal');
 const compareModal = document.getElementById('compareModal');
 const settingsModal = document.getElementById('settingsModal');
-const searchProviderSelect = document.getElementById('searchProvider');
-const aiProvider = document.getElementById('aiProvider');
-const aiModelName = document.getElementById('aiModelName');
-const ollamaUrlEl = document.getElementById('ollamaUrl');
-const aiApiKeyEl = document.getElementById('aiApiKey');
-const autoAiMarket = document.getElementById('autoAiMarket');
 const proxyUrl = document.getElementById('proxyUrl');
 
 // ─── Favoris : chargement initial depuis localStorage ───────────────────────

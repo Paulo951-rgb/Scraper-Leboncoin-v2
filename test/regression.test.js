@@ -2,7 +2,7 @@
 
 /**
  * Suite de tests de non-régression — Leboncoin Scraper Pro
- * Couvre : diagnostics.js, pipeline, modules principaux, et corrections PR #3.
+ * Couvre : diagnostics.js, pipeline, modules principaux, exportFields, sécurité.
  * Exécuter : node test/regression.test.js
  */
 
@@ -19,12 +19,10 @@ const electronStub = {
   BrowserWindow: function () { this.webContents = { send: () => {} }; },
 };
 const playwrightStub = { chromium: { launch: async () => { throw new Error('playwright stub'); } } };
-const exceljsStub = { Workbook: function () { this.addWorksheet = () => ({}); this.xlsx = { writeFile: async () => {} }; } };
 const originalLoad = Module._load;
 Module._load = function (request, parent, isMain) {
   if (request === 'electron') return electronStub;
   if (request === 'playwright') return playwrightStub;
-  if (request === 'exceljs') return exceljsStub;
   return originalLoad.apply(this, arguments);
 };
 
@@ -37,7 +35,7 @@ function assert(cond, msg) {
 async function main() {
 
 // --- 1. diagnostics.js ---
-console.log('\n[1/4] diagnostics.js');
+console.log('\n[1] diagnostics.js');
 const diag = require('../src/main/utils/diagnostics');
 assert(typeof diag.redact === 'function', 'redact exists');
 assert(typeof diag.truncate === 'function', 'truncate exists');
@@ -68,32 +66,17 @@ assert(diag.describeError(new Error('boom')).includes('boom'), 'describeError me
 assert(diag.describeError({ code: 'ENOENT', message: 'x' }).includes('code=ENOENT'), 'describeError code');
 
 // --- 2. Modules principaux ---
-console.log('\n[2/4] Modules principaux');
-const { AdAnalyzer } = require('../src/main/services/ai/adAnalyzer');
-const { MarketValueAnalyzer } = require('../src/main/services/ai/marketValueAnalyzer');
+console.log('\n[2] Modules principaux');
 const { AdStats } = require('../src/main/services/analysis/adStats');
 const { StorageCleaner } = require('../src/main/services/maintenance/storageCleaner');
 const { FileManager } = require('../src/main/infrastructure/fileManager');
 const { Notifier } = require('../src/main/infrastructure/notifications');
 const { loadSettings, saveSettings } = require('../src/main/core/settings');
-const { getAIProvider } = require('../src/main/services/ai/providers/aiProviderRegistry');
-const { getSearchProvider, listSearchProviders } = require('../src/main/services/ai/search/searchProviderRegistry');
 
-assert(typeof AdAnalyzer.analyzeAds === 'function', 'AdAnalyzer.analyzeAds (IA 1)');
-assert(typeof MarketValueAnalyzer.analyzeMarketBatch === 'function', 'MarketValueAnalyzer.analyzeMarketBatch (IA 2)');
 assert(typeof AdStats.analyze === 'function', 'AdStats.analyze (remplace DealFinder)');
 assert(typeof StorageCleaner.cleanOldHars === 'function', 'StorageCleaner.cleanOldHars');
 assert(typeof FileManager.openFile === 'function', 'FileManager.openFile');
 assert(typeof FileManager.openFolder === 'function', 'FileManager.openFolder');
-assert(typeof getAIProvider === 'function', 'getAIProvider (registry IA)');
-assert(typeof getSearchProvider === 'function', 'getSearchProvider (registry recherche)');
-assert(Array.isArray(listSearchProviders()) && listSearchProviders().length > 0, 'listSearchProviders retourne au moins DuckDuckGo');
-(function () {
-  const providers = listSearchProviders();
-  const ddg = providers.find((p) => p && p.id === 'duckduckgo');
-  assert(ddg && typeof ddg.label === 'string' && typeof ddg.keyless === 'boolean', 'listSearchProviders retourne {id,label,keyless} (format UI)');
-  assert(ddg.keyless === true, 'DuckDuckGo déclaré keyless (sans clé API)');
-})();
 
 // JobHistory.deleteJob : validation anti path-traversal (rejette les IDs malformés)
 (function () {
@@ -124,83 +107,34 @@ assert(AdStats.analyze([{ id: '1', price: 0 }, { id: '2', price: -5 }]).stats ==
 const mixedPrices = AdStats.analyze([{ id: '1', price: 100 }, { id: '2', prix: '200' }, { id: '3', price: null }]);
 assert(mixedPrices.stats.pricedAds === 2, 'AdStats: prix string parsés, null ignorés (pricedAds=2)');
 assert(mixedPrices.stats.minPrice === 100 && mixedPrices.stats.maxPrice === 200, 'AdStats: min/max après tri des prix valides');
-// AdStats : livraison / main propre
+// AdStats : deliveryType (modèle unifié)
 const txStats = AdStats.analyze([
+  { id: '1', prix: 100, livraison: true, mainPropre: false, deliveryType: 'livraison' },
+  { id: '2', prix: 200, livraison: false, mainPropre: true, deliveryType: 'main_propre' },
+  { id: '3', prix: 150, livraison: true, mainPropre: true, deliveryType: 'les_deux' },
+  { id: '4', prix: 50, livraison: null, mainPropre: null, deliveryType: 'inconnu' },
+  { id: '5', prix: 70, livraison: false, mainPropre: false, deliveryType: 'aucun' },
+]);
+assert(txStats.stats.livraisonCount === 1, 'AdStats: livraisonCount correct (livraison uniquement)');
+assert(txStats.stats.mainPropreCount === 1, 'AdStats: mainPropreCount correct (main_propre uniquement)');
+assert(txStats.stats.lesDeuxCount === 1, 'AdStats: lesDeuxCount correct');
+assert(txStats.stats.aucunCount === 1, 'AdStats: aucunCount correct');
+assert(txStats.stats.inconnuCount === 1, 'AdStats: inconnuCount correct');
+assert(txStats.stats.nonRenseigneCount === 1, 'AdStats: nonRenseigneCount (alias inconnu) correct');
+// Rétro-compat : ads sans deliveryType mais avec livraison/mainPropre
+const txStatsRetro = AdStats.analyze([
   { id: '1', prix: 100, livraison: true, mainPropre: false },
   { id: '2', prix: 200, livraison: false, mainPropre: true },
   { id: '3', prix: 150, livraison: true, mainPropre: true },
   { id: '4', prix: 50, livraison: null, mainPropre: null },
 ]);
-assert(txStats.stats.livraisonCount === 1, 'AdStats: livraisonCount correct');
-assert(txStats.stats.mainPropreCount === 1, 'AdStats: mainPropreCount correct');
-assert(txStats.stats.lesDeuxCount === 1, 'AdStats: lesDeuxCount correct');
-assert(txStats.stats.nonRenseigneCount === 1, 'AdStats: nonRenseigneCount correct');
-
-// iaCache : get() renvoie la valeur mise en cache (pas le wrapper {specs,cachedAt})
-// Bug critique : avant correction, le cache renvoyait {specs,cachedAt} → les champs
-// identifiedProduct/realValue/_fallback étaient absents et cassaient l'affichage IA +
-// la détection des fallbacks (un fallback caché était retourné comme valide).
-const _aiCacheUnderTest = require('../src/main/services/ai/aiCache');
-_aiCacheUnderTest.clear();
-assert(_aiCacheUnderTest.get('nope', 'analyse') === null, 'aiCache: get sur clé absente → null');
-assert(_aiCacheUnderTest.get('', 'analyse') === null, 'aiCache: get sur id vide → null');
-_aiCacheUnderTest.set('ad-1', { identifiedProduct: 'iPhone 12', _fallback: false }, 'analyse');
-const cachedOk = _aiCacheUnderTest.get('ad-1', 'analyse');
-assert(cachedOk && cachedOk.identifiedProduct === 'iPhone 12', 'aiCache: get renvoie la valeur interne (identifiedProduct présent)');
-assert(cachedOk && cachedOk._fallback === false, 'aiCache: get préserve _fallback (détection fallback)');
-// Les fallbacks ne doivent PAS être cachés : si l'IA a échoué, on re-tente
-// au lieu de renvoyer un résultat d'échec périmé.
-_aiCacheUnderTest.set('ad-2', { summary: ' HS', _fallback: true, _error: 'IA down' }, 'analyse');
-const cachedFb = _aiCacheUnderTest.get('ad-2', 'analyse');
-assert(cachedFb === null, 'aiCache: get exclut les fallbacks (_fallback=true non caché)');
-// Préfixe distinct : analyse vs market ne collisionnent pas
-_aiCacheUnderTest.set('ad-1', { realValue: 500 }, 'market');
-const mkt = _aiCacheUnderTest.get('ad-1', 'market');
-assert(mkt && mkt.realValue === 500, 'aiCache: préfixe market isolé du préfixe analyse');
-assert(_aiCacheUnderTest.get('ad-1', 'analyse').realValue === undefined, 'aiCache: analyse non pollué par market');
-_aiCacheUnderTest.clear();
-
-// excelExporter : noms de champs cohérents avec l'IA (identifiedProduct, valueRangeLow/High)
-// Bug : avant correction, l'Excel lisait identifiedName/marketMin/marketMax (champs
-// jamais produits par adAnalyzer/marketValueAnalyzer) → colonnes vides même après IA.
-const excelSrc = fs.readFileSync(path.join(__dirname, '..', 'src/main/infrastructure/excelExporter.js'), 'utf8');
-assert(/adAnalysis\.identifiedProduct/.test(excelSrc), 'excelExporter: lit adAnalysis.identifiedProduct (champ produit par l\'IA 1)');
-assert(!/adAnalysis\.identifiedName/.test(excelSrc), 'excelExporter: ne lit plus identifiedName (champ inexistant)');
-assert(/ma\.valueRangeLow/.test(excelSrc) && /ma\.valueRangeHigh/.test(excelSrc), 'excelExporter: lit valueRangeLow/High (champs produits par l\'IA 2)');
-assert(!/ma\.marketMin/.test(excelSrc) && !/ma\.marketMax/.test(excelSrc), 'excelExporter: ne lit plus marketMin/marketMax (champs inexistants)');
-
-// MarketValueAnalyzer.computeVerdict : verdict € + coercition numérique des prix.
-// Bug évité : un LLM peut renvoyer realValue en string ("300 €") et le prix
-// d'annonce peut arriver en string depuis le scraping — sans coercition, le
-// verdict tombait silencieusement sur "Non déterminable" alors que l'IA avait
-// bien estimé une valeur.
-const { _computeVerdict } = require('../src/main/services/ai/marketValueAnalyzer');
-const vGood = _computeVerdict(100, 200);
-assert(vGood.verdictLabel === 'Très bonne affaire' && vGood.deltaEur === 100, 'computeVerdict: +100% → Très bonne affaire (delta 100)');
-const vCorrect = _computeVerdict(100, 110);
-assert(vCorrect.verdictLabel === 'Prix correct' && vCorrect.deltaEur === 10, 'computeVerdict: +10% → Prix correct');
-const vOverpriced = _computeVerdict(200, 100);
-assert(vCorrect.verdictLabel === 'Prix correct' || vOverpriced.verdictLabel === 'Trop cher', 'computeVerdict: -50% → Trop cher');
-assert(vOverpriced.deltaEur === -100, 'computeVerdict: delta négatif = -100');
-// Coercition de prix string (ex: "300 €")
-const vCoerced = _computeVerdict('150', 300);
-assert(vCoerced.verdictLabel === 'Très bonne affaire' && vCoerced.deltaEur === 150, 'computeVerdict: prix string "150" coerced → verdict calculé');
-// realValue string "300 €" → via toNum dans analyzeMarket ; computeVerdict test direct:
-const vRealStr = _computeVerdict(150, '300');
-assert(vRealStr.deltaEur === 150, 'computeVerdict: realValue string "300" coerced');
-// Cas non déterminable : valeurs invalides
-const vNaN1 = _computeVerdict('abc', 200);
-assert(vNaN1.verdictLabel === 'Non déterminable' && vNaN1.deltaEur === null, 'computeVerdict: prix "abc" → Non déterminable');
-const vNaN2 = _computeVerdict(100, null);
-assert(vNaN2.verdictLabel === 'Non déterminable' && vNaN2.deltaEur === null, 'computeVerdict: realValue null → Non déterminable');
-const vNaN3 = _computeVerdict(undefined, undefined);
-assert(vNaN3.verdictLabel === 'Non déterminable', 'computeVerdict: undefined → Non déterminable (verdictLabel défini, pas undefined)');
-// Prix nul : deltaPct null mais verdict quand même calculé
-const vZero = _computeVerdict(0, 100);
-assert(vZero.deltaEur === 100 && vZero.deltaPct === null, 'computeVerdict: prix 0 → delta calculé, deltaPct null (div par zéro évitée)');
+assert(txStatsRetro.stats.livraisonCount === 1, 'AdStats rétro-compat: livraisonCount calculé depuis livraison/mainPropre');
+assert(txStatsRetro.stats.mainPropreCount === 1, 'AdStats rétro-compat: mainPropreCount calculé depuis livraison/mainPropre');
+assert(txStatsRetro.stats.lesDeuxCount === 1, 'AdStats rétro-compat: lesDeuxCount calculé depuis livraison/mainPropre');
+assert(txStatsRetro.stats.inconnuCount === 1, 'AdStats rétro-compat: inconnuCount calculé depuis livraison/mainPropre');
 
 // --- 3. Pipeline (fork) ---
-console.log('\n[3/4] Pipeline (leboncoin-pipeline.js)');
+console.log('\n[3] Pipeline (leboncoin-pipeline.js)');
 const os = require('os');
 const { fork } = require('child_process');
 const tmpOut = fs.mkdtempSync(path.join(os.tmpdir(), 'lbc-'));
@@ -227,7 +161,7 @@ const har = {
 fs.writeFileSync(harPath, JSON.stringify(har));
 
 await new Promise((resolve) => {
-  const child = fork(path.join(__dirname, '..', 'src/main/services/scraping/leboncoin-pipeline.js'), [harPath, '--out', tmpOut, '--headless', '--no-desc'], { stdio: ['pipe', 'pipe', 'pipe', 'ipc'] });
+  const child = fork(path.join(__dirname, '..', 'src/main/services/scraping/leboncoin-pipeline.js'), [harPath, '--out', tmpOut, '--headless', '--no-desc', '--profile-id', 'maximum'], { stdio: ['pipe', 'pipe', 'pipe', 'ipc'] });
   let stdout = '';
   child.stdout.on('data', (d) => { stdout += d.toString(); });
   child.on('close', (code) => {
@@ -235,11 +169,12 @@ await new Promise((resolve) => {
     assert(stdout.includes('[DEBUG]'), 'pipeline DEBUG logs present');
     assert(stdout.includes('annonces extraites'), 'pipeline reports ads extracted');
     const ads = JSON.parse(fs.readFileSync(path.join(tmpOut, 'annonces.json'), 'utf8'));
-    assert(ads[0].livraison === false, 'pipeline extracts livraison as boolean');
+    assert(ads[0].livraison === false, 'pipeline extracts livraison as boolean (backward compat)');
     assert(ads[0].city === 'Lyon', 'pipeline extracts city');
     assert(ads[0].vendeurType === 'particulier', 'pipeline extracts vendeurType');
     assert(ads[0].vendeurNote === 4.8, 'pipeline extracts vendeurNote from owner.rating');
-    assert(ads[0].mainPropre === null, 'pipeline does NOT infer mainPropre from livraison');
+    assert(ads[0].mainPropre === null, 'pipeline does NOT infer mainPropre from livraison (backward compat)');
+    assert(ads[0].deliveryType === 'aucun', 'pipeline extracts deliveryType (livraison=false, mainPropre=null → aucun)');
     assert(ads[0].prix === 150, 'pipeline extracts prix');
     assert(ads[0].vendeurNom === 'Jean', 'pipeline extracts vendeurNom');
     assert(ads[0].dateScraping != null, 'pipeline injects dateScraping');
@@ -248,8 +183,8 @@ await new Promise((resolve) => {
   });
 });
 
-// --- 4. Corrections PR #3 (renderer + main) ---
-console.log('\n[4/4] Corrections PR #3');
+// --- 4. Corrections renderer + main ---
+console.log('\n[4] Corrections renderer + main');
 const rendererDir = path.join(__dirname, '..', 'src/renderer');
 const rendererFiles = ['appState.js', 'utils.js', 'logsModule.js', 'scraperModule.js', 'explorerModule.js', 'statsModule.js', 'historyModule.js', 'app.js'];
 const appCode = rendererFiles.map((f) => fs.readFileSync(path.join(rendererDir, f), 'utf8')).join('\n');
@@ -260,11 +195,12 @@ assert(/(let|const)\s+mapInstance\b/.test(appCode), 'app.js: mapInstance declare
 assert(/(let|const)\s+priceDistChartInstance\b/.test(appCode), 'app.js: priceDistChartInstance declared');
 assert(/(let|const)\s+topCitiesChartInstance\b/.test(appCode), 'app.js: topCitiesChartInstance declared');
 assert(/statAvgPrice/.test(appCode), 'app.js: statAvgPrice (prix moyen)');
-assert(/statLivraison/.test(appCode), 'app.js: statLivraison (livraison)');
-assert(/statHandDelivery/.test(appCode), 'app.js: statHandDelivery (main propre)');
+assert(/statLivraison/.test(appCode), 'app.js: statLivraison (livraison — carte conservée)');
+assert(/statHandDelivery/.test(appCode), 'app.js: statHandDelivery (main propre — carte conservée)');
+assert(/statDeliveryTypeDist/.test(appCode), 'app.js: statDeliveryTypeDist (répartition modes remise unifiée)');
 assert(!/statGoodDeals/.test(appCode), 'app.js: statGoodDeals supprimé (stats bonnes affaires retirées)');
 assert(!/Répartition des Opportunités/.test(appCode), 'app.js: graphique Répartition des Opportunités supprimé');
-assert(/429|quota/i.test(appCode), 'app.js: gestion erreur 429 (quota IA / scraping)');
+assert(/429|quota/i.test(appCode), 'app.js: gestion erreur 429 (quota / scraping)');
 assert(!/let\s+priceChartInstance\b/.test(appCode), 'app.js: priceChartInstance dead var removed');
 assert(/if \(viewMode === 'table'\) viewGridBtn\.click\(\);\s*else viewTableBtn\.click\(\);/.test(appCode), 'app.js: Spacebar toggles table<->grid');
 assert(/replace\(\/&\/g, '&amp;'\)/.test(appCode) && /replace\(\/"\/g, '&quot;'\)/.test(appCode), 'app.js: escapeHtml escapes & " < >');
@@ -280,11 +216,10 @@ assert(!/openAdDetail\('\$\{a\.id\}'\)/.test(appCode), 'app.js: a.id échappé d
 assert(!/toggleStar\('\$\{a\.id\}'\)/.test(appCode), 'app.js: a.id échappé dans toggleStar onclick');
 // Le bouton "Ouvrir le dossier" utilise maintenant openJobsFolder (ouvre results/)
 assert(/openJobsFolder\(\)/.test(appCode), 'app.js: output button uses openJobsFolder');
-// « main propre » = mainPropre === true (champ structuré v3).
-// mainPropre=null (info non extraite) ne doit PAS être compté comme main propre.
-// Le code utilise mainPropreOf(a) = a.mainPropre ?? a.handDelivery (legacy).
-assert(/mainPropreOf\s*=\s*\(a\)\s*=>\s*a\.mainPropre\s*\?\?\s*a\.handDelivery/.test(appCode), 'app.js: filtre main-propre utilise mainPropre ?? handDelivery (fallback legacy)');
-assert(/matchesMainPropre\s*=\s*mainPropreOf\(a\)\s*===\s*true/.test(appCode), 'app.js: filtre main-propre OUI utilise === true (pas !a.shipping)');
+// « Type de remise » unifié : deliveryType remplace les filtres livraison/mainPropre séparés.
+assert(/deliveryTypeOf\s*=\s*\(a\)\s*=>/.test(appCode), 'app.js: deliveryTypeOf helper présent (modèle unifié)');
+assert(/filterDeliveryType/.test(appCode), 'app.js: filterDeliveryType dropdown (remplace filterLivraison + filterMainPropre)');
+assert(/matchesDeliveryType\s*=\s*deliveryTypeFilter\s*===\s*'tous'\s*\|\|\s*deliveryTypeOf\(a\)\s*===\s*deliveryTypeFilter/.test(appCode), 'app.js: filtre deliveryType unifié (tous || match exact)');
 assert(/MAX_LOG_LINES\s*=\s*1000/.test(appCode), 'app.js: log line cap (1000)');
 // Modules supprimés : Analyse Globale IA + Planificateur (scheduler)
 assert(!/loadSchedulerPage/.test(appCode), 'app.js: loadSchedulerPage supprimé (module Planificateur retiré)');
@@ -295,18 +230,8 @@ assert(/openExternal:\s*\(urlStr\)\s*=>\s*ipcRenderer\.invoke\('shell:openExtern
 assert(/folderPath \|\| BASE_OUT_DIR/.test(ipcCode), 'ipcHandlers.js: openFolder defaults to BASE_OUT_DIR');
 assert(/shell:openExternal/.test(ipcCode), 'ipcHandlers.js: shell:openExternal handler present');
 
-// Nouvelle architecture IA : plus d'ancien marketAnalyzer/dealFinder, mais les
-// nouveaux modules IA 1/2/3 et les registres sont présents et câblés.
-assert(/AdAnalyzer/.test(ipcCode), 'ipcHandlers.js: importe AdAnalyzer (IA 1)');
-assert(/MarketValueAnalyzer/.test(ipcCode), 'ipcHandlers.js: importe MarketValueAnalyzer (IA 2)');
-assert(/PromptGenerator/.test(ipcCode), 'ipcHandlers.js: importe PromptGenerator (IA 3)');
-assert(/AdAnalyzer\.analyzeAds/.test(ipcCode), 'ipcHandlers.js: appelle AdAnalyzer.analyzeAds pendant le scraping');
-assert(/MarketValueAnalyzer\.analyzeMarketBatch/.test(ipcCode), 'ipcHandlers.js: appelle MarketValueAnalyzer.analyzeMarketBatch (IA Marché)');
-assert(/search:providers/.test(ipcCode), 'ipcHandlers.js: handler search:providers (liste moteurs recherche)');
-assert(/listSearchProviders/.test(preloadCode), 'preload.js: expose listSearchProviders');
-
-// --- 5. Nouvelle architecture (refactor structure) ---
-console.log('\n[5/5] Architecture restructurée');
+// --- 5. Architecture restructurée ---
+console.log('\n[5] Architecture restructurée');
 const { existsSync } = fs;
 const base = path.join(__dirname, '..', 'src/main');
 
@@ -314,27 +239,13 @@ const base = path.join(__dirname, '..', 'src/main');
 assert(existsSync(path.join(base, 'core/ipcHandlers.js')), 'core/ipcHandlers.js present');
 assert(existsSync(path.join(base, 'core/settings.js')), 'core/settings.js (extrait) present');
 assert(existsSync(path.join(base, 'config/constants.js')), 'config/constants.js present');
-assert(!existsSync(path.join(base, 'config/risk-keywords.js')), 'config/risk-keywords.js supprimé (code mort — IA remplace les mots-clés)');
+assert(!existsSync(path.join(base, 'config/risk-keywords.js')), 'config/risk-keywords.js supprimé (code mort)');
 assert(existsSync(path.join(base, 'services/scraping/harCapturer.js')), 'services/scraping/harCapturer.js present');
 assert(existsSync(path.join(base, 'services/scraping/pipelineRunner.js')), 'services/scraping/pipelineRunner.js present');
-assert(existsSync(path.join(base, 'services/scraping/leboncoin-pipeline.js')), 'services/scraping/leboncoin-pipeline.js (déplacé du vendor/) present');
-// Nouvelle architecture IA : anciens modules supprimés, nouveaux présents
-assert(!existsSync(path.join(base, 'services/ai/marketAnalyzer.js')), 'services/ai/marketAnalyzer.js supprimé (ancien scoring)');
-assert(!existsSync(path.join(base, 'services/analysis/dealFinder.js')), 'services/analysis/dealFinder.js supprimé (ancien scoring)');
-assert(!existsSync(path.join(base, 'services/ai/imageAnalyzer.js')), 'services/ai/imageAnalyzer.js supprimé (intégré à adAnalyzer)');
-assert(existsSync(path.join(base, 'services/ai/adAnalyzer.js')), 'services/ai/adAnalyzer.js present (IA 1)');
-assert(existsSync(path.join(base, 'services/ai/marketValueAnalyzer.js')), 'services/ai/marketValueAnalyzer.js present (IA 2)');
-assert(existsSync(path.join(base, 'services/ai/promptGenerator.js')), 'services/ai/promptGenerator.js present (IA 3)');
-assert(existsSync(path.join(base, 'services/ai/providers/aiProvider.js')), 'services/ai/providers/aiProvider.js (interface)');
-assert(existsSync(path.join(base, 'services/ai/providers/ollamaProvider.js')), 'services/ai/providers/ollamaProvider.js (implémentation)');
-assert(existsSync(path.join(base, 'services/ai/providers/aiProviderRegistry.js')), 'services/ai/providers/aiProviderRegistry.js (factory)');
-assert(existsSync(path.join(base, 'services/ai/search/searchProvider.js')), 'services/ai/search/searchProvider.js (interface)');
-assert(existsSync(path.join(base, 'services/ai/search/duckDuckGoSearchProvider.js')), 'services/ai/search/duckDuckGoSearchProvider.js (keyless)');
-assert(existsSync(path.join(base, 'services/ai/search/searchProviderRegistry.js')), 'services/ai/search/searchProviderRegistry.js (factory)');
+assert(existsSync(path.join(base, 'services/scraping/leboncoin-pipeline.js')), 'services/scraping/leboncoin-pipeline.js present');
 assert(existsSync(path.join(base, 'services/analysis/adStats.js')), 'services/analysis/adStats.js (remplace dealFinder)');
 assert(existsSync(path.join(base, 'services/jobs/jobHistory.js')), 'services/jobs/jobHistory.js present');
 assert(existsSync(path.join(base, 'services/maintenance/storageCleaner.js')), 'services/maintenance/storageCleaner.js present');
-assert(existsSync(path.join(base, 'infrastructure/excelExporter.js')), 'infrastructure/excelExporter.js present');
 assert(existsSync(path.join(base, 'infrastructure/fileManager.js')), 'infrastructure/fileManager.js present');
 assert(existsSync(path.join(base, 'infrastructure/notifications.js')), 'infrastructure/notifications.js (extrait) present');
 
@@ -343,7 +254,7 @@ assert(!existsSync(path.join(base, 'modules')), 'old modules/ folder removed');
 assert(!existsSync(path.join(base, 'vendor')), 'old vendor/ folder removed');
 assert(!existsSync(path.join(base, 'ipcHandlers.js')), 'ipcHandlers.js moved out of main/ root');
 
-// Notifier : responsable de la notification OS des bonnes affaires
+// Notifier : responsable de la notification OS
 assert(typeof Notifier.notifyGoodDeal === 'function', 'Notifier.notifyGoodDeal present');
 assert(typeof Notifier.isSupported === 'function', 'Notifier.isSupported present');
 
@@ -351,15 +262,14 @@ assert(typeof Notifier.isSupported === 'function', 'Notifier.isSupported present
 assert(typeof loadSettings === 'function', 'loadSettings extracted to core/settings');
 assert(typeof saveSettings === 'function', 'saveSettings extracted to core/settings');
 
-// risk-keywords supprimé (code mort : jamais importé, l'IA Analyse remplace
-// la correspondance de mots-clés). constants.js ne doit plus le référencer.
+// risk-keywords supprimé (code mort). constants.js ne doit plus le référencer.
 assert(!/RISK_KEYWORDS/.test(fs.readFileSync(path.join(base, 'config/constants.js'), 'utf8')), 'RISK_KEYWORDS removed from constants.js');
 
 // ipcHandlers ne contient plus loadSettings/saveSettings inline
 assert(!/function loadSettings\b/.test(ipcCode), 'ipcHandlers no longer defines loadSettings inline');
 assert(!/function saveSettings\b/.test(ipcCode), 'ipcHandlers no longer defines saveSettings inline');
 assert(/require\(.\.\/settings.\)/.test(ipcCode), 'ipcHandlers imports settings from ./settings');
-assert(/Notifier\.notifyGoodDeal/.test(ipcCode), 'ipcHandlers uses Notifier.notifyGoodDeal');
+assert(/Notifier/.test(ipcCode), 'ipcHandlers: importe Notifier (notifications OS)');
 
 // main.js pointe vers core/ipcHandlers
 const mainCode = fs.readFileSync(path.join(base, 'main.js'), 'utf8');
@@ -371,27 +281,24 @@ assert(/path\.join\(__dirname, .leboncoin-pipeline\.js.\)/.test(prCode), 'pipeli
 
 // Widget flottant (fenêtre always-on-top avec progression)
 assert(existsSync(path.join(__dirname, '..', 'src/renderer/widget.html')), 'widget.html present');
-const mainCode2 = fs.readFileSync(path.join(base, 'main.js'), 'utf8');
-assert(/createWidgetWindow/.test(mainCode2), 'main.js: createWidgetWindow function present');
-assert(/alwaysOnTop:\s*true/.test(mainCode2), 'main.js: widget window always-on-top');
-assert(/ipcMain\.on\('widget:toggle'/.test(mainCode2), 'main.js: widget:toggle IPC handler');
-assert(/ipcMain\.on\('widget:close'/.test(mainCode2), 'main.js: widget:close IPC handler');
-assert(/ipcMain\.on\('widget:progress'/.test(mainCode2), 'main.js: widget:progress relay handler');
-assert(/ipcMain\.on\('widget:status'/.test(mainCode2), 'main.js: widget:status relay handler');
+assert(/createWidgetWindow/.test(mainCode), 'main.js: createWidgetWindow function present');
+assert(/alwaysOnTop:\s*true/.test(mainCode), 'main.js: widget window always-on-top');
+assert(/ipcMain\.on\('widget:toggle'/.test(mainCode), 'main.js: widget:toggle IPC handler');
+assert(/ipcMain\.on\('widget:close'/.test(mainCode), 'main.js: widget:close IPC handler');
+assert(/ipcMain\.on\('widget:progress'/.test(mainCode), 'main.js: widget:progress relay handler');
+assert(/ipcMain\.on\('widget:status'/.test(mainCode), 'main.js: widget:status relay handler');
 assert(/toggleWidget/.test(preloadCode), 'preload.js: toggleWidget exposed');
 assert(/sendWidgetProgress/.test(preloadCode), 'preload.js: sendWidgetProgress exposed');
 assert(/sendWidgetStatus/.test(preloadCode), 'preload.js: sendWidgetStatus exposed');
-const appCode2 = appCode;
-assert(!/Le Widget Flottant n'est pas encore disponible/.test(appCode2), 'app.js: stale "not available" alert removed');
-assert(/sendWidgetProgress\(\{ percent, status \}\)/.test(appCode2), 'app.js: relays progress to widget');
-assert(/sendWidgetStatus\(\{ state, message \}\)/.test(appCode2), 'app.js: relays status to widget');
+assert(!/Le Widget Flottant n'est pas encore disponible/.test(appCode), 'app.js: stale "not available" alert removed');
+assert(/sendWidgetProgress\(\{ percent, status \}\)/.test(appCode), 'app.js: relays progress to widget');
+assert(/sendWidgetStatus\(\{ state, message \}\)/.test(appCode), 'app.js: relays status to widget');
 
-// --- 6. Nouvelles features (v1.2) ---
-console.log('\n[6/6] Nouvelles features : intégrité, rate-limiter, logs, Ollama, secrets, jobs-auto, sandbox');
+// --- 6. Nouvelles features : intégrité, rate-limiter, logs, secrets, jobs-auto, sandbox ---
+console.log('\n[6] Nouvelles features : intégrité, rate-limiter, logs, secrets, jobs-auto, sandbox');
 const { writeWithChecksum, readWithChecksum, verify, computeHash, checksumPath } = require('../src/main/utils/integrity');
 const { AdaptiveRateLimiter } = require('../src/main/utils/rateLimiter');
 const { logger } = require('../src/main/utils/logger');
-const { checkOllamaHealth, checkModelAvailable } = require('../src/main/services/ai/ollamaHealth');
 const { SecretStore } = require('../src/main/utils/secretStore');
 
 // F2 : integrity
@@ -405,14 +312,9 @@ fs.writeFileSync(ij, '{"x":99}');
 assert(readWithChecksum(ij).valid === false, 'integrity: détecte la corruption');
 assert(computeHash('abc') === computeHash('abc'), 'integrity: computeHash déterministe');
 
-// F1 : rate limiter (tests async après le bloc sync ci-dessous)
-
 // F6 : logger
 assert(typeof logger.info === 'function' && typeof logger.setRetention === 'function', 'logger: API présente');
 logger.setRetention(3);
-
-// F7 : ollamaHealth (fonctions présentes)
-assert(typeof checkOllamaHealth === 'function' && typeof checkModelAvailable === 'function', 'ollamaHealth: fonctions exportées');
 
 // F4 : secretStore round-trip
 SecretStore.set('lbc-test-secret', 'val123');
@@ -426,15 +328,6 @@ assert(typeof SecretStore.isUsingOsKeychain() === 'boolean', 'secretStore: isUsi
 assert(typeof StorageCleaner.cleanOldJobs === 'function', 'StorageCleaner.cleanOldJobs présent');
 assert(StorageCleaner.cleanOldJobs(0) === 0, 'cleanOldJobs(0) désactivé → 0');
 
-// === AUDIT GLOBAL : 5 correctifs fiabilité ===
-console.log('\n[AUDIT] Correctifs de fiabilité');
-
-// FIX #1 : pas de référence à aiApiKey.value / openAiKeyGroup dans app.js
-// (causait un crash TypeError au chargement après le retrait d'OpenAI).
-assert(!/aiApiKey\.value/.test(appCode), 'app.js: plus de aiApiKey.value (accesseur sûr getAiApiKey)');
-assert(!/openAiKeyGroup/.test(appCode), 'app.js: openAiKeyGroup supprimé (champ OpenAI retiré)');
-assert(/getAiApiKey/.test(appCode), 'app.js: accesseur getAiApiKey() null-tolerant');
-
 // FIX #3 : cleanOldJobs basé sur le timestamp du nom du dossier, pas le mtime
 const cleanerCode = fs.readFileSync(path.join(base, 'services/maintenance/storageCleaner.js'), 'utf8');
 assert(cleanerCode.includes('tsMatch = entry.name.match'), 'storageCleaner: parse le timestamp du nom de dossier');
@@ -444,48 +337,32 @@ assert(cleanerCode.includes('Fallback mtime'), 'storageCleaner: fallback mtime s
 // FIX #4 : geocodeCityGov a un timeout (AbortController)
 assert(/const controller = new AbortController\(\);[\s\S]{0,80}controller\.abort\(\), 10000/.test(appCode), 'app.js: geocodeCityGov timeout 10s (AbortController)');
 
-// FIX #5 : aiCache plafond + éviction
-const aiCacheCode = fs.readFileSync(path.join(base, 'services/ai/aiCache.js'), 'utf8');
-assert(/MAX_ENTRIES\s*=\s*5000/.test(aiCacheCode), 'aiCache: plafond MAX_ENTRIES=5000');
-assert(/_evictIfNeeded/.test(aiCacheCode), 'aiCache: éviction des plus anciennes (_evictIfNeeded)');
-// Test fonctionnel de l'éviction
-const aiCache = require(path.join(base, 'services/ai/aiCache'));
-aiCache.clear();
-for (let i = 0; i < 10; i++) aiCache.set(`evict-${i}`, { v: i });
-assert(aiCache.stats().entries === 10, 'aiCache: 10 entrées < plafond conservées');
-aiCache.clear();
-assert(aiCache.stats().entries === 0, 'aiCache: clear() vide le cache');
-
 // F5 : sandbox renderer durcie
-const mainCode3 = fs.readFileSync(path.join(base, 'main.js'), 'utf8');
-assert(/sandbox:\s*true/.test(mainCode3), 'main.js: sandbox:true activé sur mainWindow');
-assert(/widgetPreload\.js/.test(mainCode3), 'main.js: widget utilise widgetPreload.js');
+assert(/sandbox:\s*true/.test(mainCode), 'main.js: sandbox:true activé sur mainWindow');
+assert(/widgetPreload\.js/.test(mainCode), 'main.js: widget utilise widgetPreload.js');
 assert(existsSync(path.join(base, 'widgetPreload.js')), 'widgetPreload.js present');
 const widgetHtml = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/widget.html'), 'utf8');
 assert(/window\.widgetApi/.test(widgetHtml), 'widget.html: utilise window.widgetApi (pas require)');
 assert(!/require\('electron'\)/.test(widgetHtml), 'widget.html: plus de require(electron) direct');
-const preloadCode2 = fs.readFileSync(path.join(base, 'preload.js'), 'utf8');
-assert(/checkOllamaHealth/.test(preloadCode2), 'preload.js: expose checkOllamaHealth');
-assert(/checkNetwork/.test(preloadCode2), 'preload.js: expose checkNetwork');
-assert(/getSecret|setSecret|hasSecret|removeSecret/.test(preloadCode2), 'preload.js: expose secret IPC');
+assert(/checkNetwork/.test(preloadCode), 'preload.js: expose checkNetwork');
+assert(/getSecret|setSecret|hasSecret|removeSecret/.test(preloadCode), 'preload.js: expose secret IPC');
 
 // F3 : mode hors-ligne
-assert(/offlineBadge/.test(appCode2), 'app.js: offlineBadge référencé');
-assert(/isOffline/.test(appCode2), 'app.js: isOffline state tracked');
-assert(/checkNetwork/.test(appCode2), 'app.js: appelle checkNetwork');
+assert(/offlineBadge/.test(appCode), 'app.js: offlineBadge référencé');
+assert(/isOffline/.test(appCode), 'app.js: isOffline state tracked');
+assert(/checkNetwork/.test(appCode), 'app.js: appelle checkNetwork');
 assert(existsSync(path.join(base, 'utils/integrity.js')), 'utils/integrity.js present');
 assert(existsSync(path.join(base, 'utils/rateLimiter.js')), 'utils/rateLimiter.js present');
 assert(existsSync(path.join(base, 'utils/logger.js')), 'utils/logger.js present');
 assert(existsSync(path.join(base, 'utils/secretStore.js')), 'utils/secretStore.js present');
-assert(existsSync(path.join(base, 'services/ai/ollamaHealth.js')), 'services/ai/ollamaHealth.js present');
 
 // Settings nouveaux champs
 const settingsCode = fs.readFileSync(path.join(base, 'core/settings.js'), 'utf8');
 assert(/logRetentionDays/.test(settingsCode), 'settings: logRetentionDays');
 assert(/autoCleanJobsDays/.test(settingsCode), 'settings: autoCleanJobsDays');
+assert(/includeSellerData/.test(settingsCode), 'settings: includeSellerData default true');
 
 // IPC nouveaux handlers
-assert(/ollama:health/.test(ipcCode), 'ipcHandlers: ollama:health handler');
 assert(/network:check/.test(ipcCode), 'ipcHandlers: network:check handler');
 assert(/secret:get|secret:set/.test(ipcCode), 'ipcHandlers: secret handlers');
 
@@ -495,20 +372,13 @@ assert(/cfgAutoCleanJobs/.test(htmlCode), 'index.html: cfgAutoCleanJobs checkbox
 assert(/cfgAutoCleanJobsDays/.test(htmlCode), 'index.html: cfgAutoCleanJobsDays input');
 assert(/cfgLogRetention/.test(htmlCode), 'index.html: cfgLogRetention input');
 assert(/badge-offline/.test(htmlCode), 'index.html: badge-offline CSS class');
-// Onglet scraper : option OpenAI retirée, autoAiMarket coché par défaut (IA Analyse activée)
-assert(!/value="openai"/.test(htmlCode), 'index.html: option OpenAI ChatGPT retirée du scraper');
-assert(!/id="aiApiKey"/.test(htmlCode), 'index.html: champ clé API OpenAI retiré');
-assert(/<input type="checkbox" id="autoAiMarket" checked>/.test(htmlCode), 'index.html: autoAiMarket coché par défaut (IA Analyse activée)');
-// Nouveau champ modèle vision (l'IA Analyse combine texte + vision)
-assert(/id="aiVisionModel"/.test(htmlCode), 'index.html: champ modèle vision (aiVisionModel)');
-// Moteur de recherche pour l'IA Marché (sans-clé par défaut)
-assert(/id="searchProvider"/.test(htmlCode), 'index.html: select moteur de recherche (IA Marché)');
-assert(/id="searchApiKey"/.test(htmlCode), 'index.html: champ clé API moteur de recherche');
-assert(/value="ollama"/.test(htmlCode), 'index.html: option Ollama local conservée');
 // Stats : nouvelles cartes + retrait bonnes affaires
 assert(/statAvgPrice/.test(htmlCode), 'index.html: carte prix moyen');
-assert(/statLivraison/.test(htmlCode), 'index.html: carte livraison');
-assert(/statHandDelivery/.test(htmlCode), 'index.html: carte main propre');
+assert(/statLivraison/.test(htmlCode), 'index.html: carte livraison (conservée)');
+assert(/statHandDelivery/.test(htmlCode), 'index.html: carte main propre (conservée)');
+assert(/statDeliveryTypeDist/.test(htmlCode), 'index.html: carte répartition modes remise (deliveryType)');
+assert(/filterDeliveryType/.test(htmlCode), 'index.html: filtre deliveryType unifié (remplace filterLivraison + filterMainPropre)');
+assert(/modalDeliveryType/.test(htmlCode), 'index.html: modal deliveryType (remplace modalLivraison + modalMainPropre)');
 assert(/statPro/.test(htmlCode) && /statPart/.test(htmlCode), 'index.html: cartes pro/particulier');
 assert(!/statGoodDeals/.test(htmlCode), 'index.html: carte Bonnes Affaires supprimée');
 assert(!/statRisks/.test(htmlCode), 'index.html: carte Annonces Trop Chères supprimée');
@@ -517,131 +387,70 @@ assert(/id="priceDistChart"/.test(htmlCode), 'index.html: canvas priceDistChart 
 assert(/id="topCitiesChart"/.test(htmlCode), 'index.html: canvas topCitiesChart (top villes)');
 assert(/stat-card-accent/.test(htmlCode), 'index.html: stat-cards accentuées');
 
-// F4 : Module Navigateur IA Studio
-console.log('\n[7/7] Module Navigateur IA Studio');
-const mainCode4 = fs.readFileSync(path.join(base, 'main.js'), 'utf8');
-assert(/webviewTag:\s*true/.test(mainCode4), 'main.js: webviewTag activé pour le navigateur intégré');
-// Hardening webview : handler will-attach-webview verrouille les webpreferences
-assert(/will-attach-webview/.test(mainCode4), 'main.js: handler will-attach-webview (verrouille nodeIntegration sur webview dynamiques)');
-assert(/webPreferences\.nodeIntegration\s*=\s*false/.test(mainCode4), 'main.js: webview nodeIntegration forcé à false');
-assert(/delete\s+webPreferences\.preload/.test(mainCode4), 'main.js: webview preload injecté supprimé');
-
-// Générateur de prompt IA locale (Ollama, remplace les prompts statiques)
-assert(existsSync(path.join(base, 'services/ai/promptGenerator.js')), 'services/ai/promptGenerator.js present');
-const promptGenCode = fs.readFileSync(path.join(base, 'services/ai/promptGenerator.js'), 'utf8');
-assert(/class PromptGenerator/.test(promptGenCode), 'promptGenerator: classe PromptGenerator');
-assert(/getAIProvider/.test(promptGenCode), 'promptGenerator: utilise getAIProvider (délégation à AIProvider)');
-assert(/chatText/.test(promptGenCode), 'promptGenerator: appelle ai.chatText (au lieu d\'un fetch direct)');
-assert(/temperature:\s*0\.4/.test(promptGenCode), 'promptGenerator: temperature 0.4 (génération reproductible)');
-assert(/AbortController/.test(fs.readFileSync(path.join(base, 'services/ai/providers/ollamaProvider.js'), 'utf8')), 'ollamaProvider: AbortController (timeout fetch)');
-assert(!/generativelanguage\.googleapis\.com/.test(promptGenCode), 'promptGenerator: aucun appel vers Gemini (IA locale uniquement)');
-assert(!/require\('electron'\)/.test(promptGenCode), 'promptGenerator: pas de require(electron) (réutilisable hors app)');
-assert(/priceRange/.test(promptGenCode), 'promptGenerator: supporte priceRange (fourchette de prix)');
-assert(/rankings/.test(promptGenCode), 'promptGenerator: supporte rankings (classements demandés)');
-assert(/topN/.test(promptGenCode), 'promptGenerator: supporte topN (Top des résultats)');
-
-assert(/tab-ai-studio/.test(htmlCode), 'index.html: onglet tab-ai-studio présent');
-assert(/aistudioWebview/.test(htmlCode), 'index.html: webview navigateur intégré');
-assert(/aistudio\.google\.com/.test(htmlCode), 'index.html: URL AI Studio par défaut');
-assert(/aistudioOpenJobsBtn/.test(htmlCode), 'index.html: bouton ouvrir dossier des jobs');
-assert(/aistudioCardsContainer/.test(htmlCode), 'index.html: conteneur cartes de prompts (V3)');
-assert(/prompt-cards-grid/.test(htmlCode), 'index.html: grille cartes prompts (V3)');
-assert(!/aistudioTemplateSelect/.test(htmlCode), 'index.html: V3 — dropdown sélecteur supprimé (cartes directes)');
-assert(!/aistudioFieldsContainer/.test(htmlCode), 'index.html: V3 — conteneur champs unique supprimé (champs par carte)');
-assert(!/aistudioApplyBtn/.test(htmlCode), 'index.html: V3 — bouton « Assembler » supprimé (copier par carte)');
-assert(!/aistudioPromptOutput/.test(htmlCode), 'index.html: V3 — textarea de sortie supprimé (copier direct)');
-assert(!/aistudioOllamaUrl/.test(htmlCode), 'index.html: V3 — champ URL Ollama supprimé');
-assert(!/aistudioGenerateBtn/.test(htmlCode), 'index.html: V3 — bouton « Générer par IA » supprimé');
-assert(/Comment utiliser ce module|Navigateur IA Studio/.test(htmlCode), 'index.html: titre AI Studio');
-assert(existsSync(path.join(__dirname, '..', 'src/renderer/aiStudioModule.js')), 'renderer/aiStudioModule.js present');
-const aistudioModCode = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/aiStudioModule.js'), 'utf8');
-assert(/window\.aiStudioModule/.test(aistudioModCode), 'aiStudioModule: exposé sur window.aiStudioModule');
-assert(/renderPromptCards/.test(aistudioModCode), 'aiStudioModule: renderPromptCards (génère les cartes)');
-assert(/copyToClipboard/.test(aistudioModCode), 'aiStudioModule: copyToClipboard (copie prompts)');
-assert(/window\.api\.buildPrompt/.test(aistudioModCode), 'aiStudioModule: appel IPC buildPrompt (assemblage)');
-assert(/window\.api\.listPromptTemplates/.test(aistudioModCode), 'aiStudioModule: appel IPC listPromptTemplates');
-assert(/prompt-card/.test(aistudioModCode), 'aiStudioModule: classe CSS prompt-card utilisée');
-assert(/generatePrompt/.test(aistudioModCode), 'aiStudioModule: generatePrompt présent (générateur IA)');
-assert(!/testOllama/.test(aistudioModCode), 'aiStudioModule: testOllama supprimé');
-assert(!/DOMAINS/.test(aistudioModCode), 'aiStudioModule: DOMAINS supprimé');
-assert(!/MASTER_PROMPT/.test(aistudioModCode), 'aiStudioModule: prompts statiques supprimés');
-assert(/aistudioOpenJobsBtn/.test(aistudioModCode), 'aiStudioModule: bouton ouvrir jobs branché');
-assert(/openJobsFolder/.test(aistudioModCode), 'aiStudioModule: utilise openJobsFolder');
-assert(/aistudio\.google\.com/.test(aistudioModCode), 'aiStudioModule: URL AI Studio par défaut');
-assert(!/require\('electron'\)/.test(aistudioModCode), 'aiStudioModule: pas de require(electron) (renderer sandboxé)');
-assert(/aiStudioModule\.js/.test(htmlCode), 'index.html: inclut aiStudioModule.js');
-
-// promptTemplates.js : bibliothèque de prompts préfaits (V3)
-assert(existsSync(path.join(base, 'services/ai/promptTemplates.js')), 'promptTemplates.js: fichier présent (bibliothèque V3)');
-const promptTmplCode = fs.readFileSync(path.join(base, 'services/ai/promptTemplates.js'), 'utf8');
-assert(/listTemplates/.test(promptTmplCode), 'promptTemplates: listTemplates (expose les templates pour l\'UI)');
-assert(/getTemplate/.test(promptTmplCode), 'promptTemplates: getTemplate (récupère un template par id)');
-assert(/buildPrompt/.test(promptTmplCode), 'promptTemplates: buildPrompt (assemble prompt + valeurs)');
-assert(/TYPE_DE_PRODUIT/.test(promptTmplCode), 'promptTemplates: placeholder [TYPE_DE_PRODUIT] (générique)');
-assert(/NOMBRE_ANNONCES/.test(promptTmplCode), 'promptTemplates: placeholder [NOMBRE_ANNONCES]');
-assert(/BUDGET_MIN/.test(promptTmplCode), 'promptTemplates: placeholder [BUDGET_MIN]');
-assert(/BUDGET_MAX/.test(promptTmplCode), 'promptTemplates: placeholder [BUDGET_MAX]');
-assert(/CRITERES_CLASSEMENT/.test(promptTmplCode), 'promptTemplates: placeholder [CRITERES_CLASSEMENT]');
-// Vérifie qu'aucun template n'est spécifique à une catégorie (hardware, voiture, etc.)
-const promptBodies = promptTmplCode.split(/template:\s*`/).slice(1).map((s) => s.split('`')[0]);
-const hasHardcodedCategory = promptBodies.some((body) => /cartes? graphiques?|SSD|GPU|llava|hardware pc/i.test(body));
-assert(!hasHardcodedCategory, 'promptTemplates: corps des prompts génériques (pas de catégorie hardware/PC codée en dur)');
-// Compter les templates (au moins 6)
-const tmplCount = (promptTmplCode.match(/id:\s*'[^']+',\s*\n\s*title:/g) || []).length;
-assert(tmplCount >= 6, `promptTemplates: au moins 6 templates (trouvé: ${tmplCount})`);
-// listTemplates doit renvoyer le corps du template (pour copie brute V3)
-assert(/template:\s*t\.template/.test(promptTmplCode), 'promptTemplates: listTemplates renvoie le corps (template) pour copie brute V3');
-
-// IPC prompt:templates:list + prompt:templates:build (V3) + jobs:openFolder
-const ipcHandlersCode = fs.readFileSync(path.join(base, 'core/ipcHandlers.js'), 'utf8');
-assert(/prompt:templates:list/.test(ipcHandlersCode), 'ipcHandlers: handler prompt:templates:list (V3)');
-assert(/prompt:templates:build/.test(ipcHandlersCode), 'ipcHandlers: handler prompt:templates:build (V3)');
-assert(/listTemplates/.test(ipcHandlersCode), 'ipcHandlers: import listTemplates depuis promptTemplates');
-assert(/jobs:openFolder/.test(ipcHandlersCode), 'ipcHandlers: handler jobs:openFolder (V3, ouvre JOBS_DIR)');
-assert(/JOBS_DIR/.test(ipcHandlersCode), 'ipcHandlers: utilise JOBS_DIR pour openFolder');
-assert(/prompt:generate/.test(ipcHandlersCode), 'ipcHandlers: handler prompt:generate conservé (legacy)');
-assert(/ollama:models/.test(ipcHandlersCode), 'ipcHandlers: handler ollama:models (liste modèles installés)');
-
-// preload : nouvelles API exposées au renderer
-const preloadCodeV2 = fs.readFileSync(path.join(base, 'preload.js'), 'utf8');
-assert(/listPromptTemplates/.test(preloadCodeV2), 'preload: listPromptTemplates exposé');
-assert(/buildPrompt/.test(preloadCodeV2), 'preload: buildPrompt exposé');
-assert(/prompt:templates:list/.test(preloadCodeV2), 'preload: IPC prompt:templates:list');
-assert(/openJobsFolder/.test(preloadCodeV2), 'preload: openJobsFolder exposé (V3)');
-assert(/jobs:openFolder/.test(preloadCodeV2), 'preload: IPC jobs:openFolder (V3)');
-assert(/generatePrompt/.test(preloadCodeV2), 'preload.js: expose generatePrompt (legacy conservé)');
-assert(/listOllamaModels/.test(preloadCodeV2), 'preload.js: expose listOllamaModels (legacy conservé)');
-
-// FileManager : openFolder crée le dossier s'il n'existe pas (fix bouton jobs)
-const fileMgrCode = fs.readFileSync(path.join(base, 'infrastructure/fileManager.js'), 'utf8');
-assert(/mkdirSync/.test(fileMgrCode), 'fileManager: openFolder crée le dossier (mkdirSync recursive) — fix bouton jobs');
-// openFolder ne jette plus si le dossier n'existe pas — il le crée (mkdirSync recursive).
-// openFile jette toujours (normal, on ne crée pas un fichier inexistant).
-// openFolder est async (retourne le résultat de shell.openPath pour remonter les
-// erreurs silencieuses au renderer — fix bouton « Ouvrir les jobs »).
-const openFolderMatch = fileMgrCode.match(/static\s+async\s+openFolder\(folderPath\)\s*\{[\s\S]*?\n  \}/);
-assert(openFolderMatch, 'fileManager: méthode openFolder (async) trouvée');
-assert(!/fs\.existsSync\(folderPath\)/.test(openFolderMatch[0]), 'fileManager: openFolder n\'utilise plus fs.existsSync (crée le dossier au lieu de vérifier)');
-assert(/return\s+errStr/.test(openFolderMatch[0]), 'fileManager: openFolder retourne le résultat de shell.openPath (erreurs non silencieuses)');
-
-// F5 : fenêtre de connexion Google dédiée (le webview est bloqué par Google pour l'OAuth)
-assert(/aistudioLoginBtn/.test(htmlCode), 'index.html: bouton 🔑 Se connecter (ouverture fenêtre dédiée)');
-assert(/aistudio:openLogin/.test(mainCode4), 'main.js: handler IPC aistudio:openLogin');
-assert(/AI_STUDIO_PARTITION\s*=\s*['"]persist:aistudio['"]/.test(mainCode4), 'main.js: constante AI_STUDIO_PARTITION = persist:aistudio');
-assert(/setUserAgent/.test(mainCode4), 'main.js: setUserAgent Chrome réel sur la fenêtre de connexion (anti-blocage Google)');
-assert(/session\.fromPartition/.test(mainCode4), 'main.js: session.fromPartition pour configurer la partition IA Studio');
-assert(/sec-ch-ua/.test(mainCode4), 'main.js: réécriture sec-ch-ua (Client Hints) pour masquer la marque Electron');
-assert(/onBeforeSendHeaders/.test(mainCode4), 'main.js: onBeforeSendHeaders interception des en-têtes sortants');
-assert(/aistudioLoginPreload/.test(mainCode4), 'main.js: preload aistudioLoginPreload sur la fenêtre de connexion');
-assert(existsSync(path.join(base, 'aistudioLoginPreload.js')), 'aistudioLoginPreload.js present');
-const loginPreloadCode = fs.readFileSync(path.join(base, 'aistudioLoginPreload.js'), 'utf8');
-assert(/userAgentData/.test(loginPreloadCode), 'aistudioLoginPreload: override navigator.userAgentData (marque Electron en JS)');
-assert(/webdriver/.test(loginPreloadCode), 'aistudioLoginPreload: navigator.webdriver = false');
-assert(/window\.chrome/.test(loginPreloadCode), 'aistudioLoginPreload: window.chrome défini');
-// Le webview de l'onglet reçoit aussi le preload + contextIsolation désactivé
-assert(/aistudioLoginPreload\.js/.test(htmlCode), 'index.html: webview reçoit le preload anti-détection Google');
-assert(/contextIsolation=no/.test(htmlCode), 'index.html: webview contextIsolation=no (override navigator côté page)');
-assert(/openAiStudioLogin/.test(preloadCodeV2), 'preload.js: expose openAiStudioLogin');
+// F5 : fenêtre de connexion Google dédiée supprimée (plus de module IA Studio)
+assert(!/aistudio:openLogin/.test(mainCode), 'main.js: handler IPC aistudio:openLogin supprimé');
+assert(!/AI_STUDIO_PARTITION/.test(mainCode), 'main.js: constante AI_STUDIO_PARTITION supprimée');
+assert(!/aistudioLoginPreload/.test(mainCode), 'main.js: preload aistudioLoginPreload supprimé');
+assert(!existsSync(path.join(base, 'aistudioLoginPreload.js')), 'aistudioLoginPreload.js supprimé');
+assert(!/tab-ai-studio/.test(htmlCode), 'index.html: onglet tab-ai-studio supprimé');
+assert(!/aistudioWebview/.test(htmlCode), 'index.html: webview navigateur IA Studio supprimé');
+assert(!/aiStudioModule\.js/.test(htmlCode), 'index.html: script aiStudioModule.js supprimé');
+assert(!existsSync(path.join(__dirname, '..', 'src/renderer/aiStudioModule.js')), 'renderer/aiStudioModule.js supprimé');
+// Plus de module IA ni Excel
+assert(!existsSync(path.join(base, 'services/ai')), 'services/ai/ supprimé (module IA entier)');
+assert(!existsSync(path.join(base, 'infrastructure/excelExporter.js')), 'infrastructure/excelExporter.js supprimé (XLSX/CSV retirés)');
+assert(!/ExcelExporter/.test(ipcCode), 'ipcHandlers: plus d\'import ExcelExporter');
+assert(!/AdAnalyzer/.test(ipcCode), 'ipcHandlers: plus d\'import AdAnalyzer');
+assert(!/MarketValueAnalyzer/.test(ipcCode), 'ipcHandlers: plus d\'import MarketValueAnalyzer');
+assert(!/PromptGenerator/.test(ipcCode), 'ipcHandlers: plus d\'import PromptGenerator');
+assert(!/ollamaHealth/.test(ipcCode), 'ipcHandlers: plus d\'import ollamaHealth');
+assert(!/listSearchProviders/.test(ipcCode), 'ipcHandlers: plus d\'import listSearchProviders');
+assert(!/market:analyze/.test(ipcCode), 'ipcHandlers: handler market:analyze supprimé');
+assert(!/prompt:generate/.test(ipcCode), 'ipcHandlers: handler prompt:generate supprimé');
+assert(!/prompt:templates/.test(ipcCode), 'ipcHandlers: handler prompt:templates supprimé');
+assert(!/prompt:internal/.test(ipcCode), 'ipcHandlers: handler prompt:internal supprimé');
+assert(!/ollama:models/.test(ipcCode), 'ipcHandlers: handler ollama:models supprimé');
+assert(!/ollama:health/.test(ipcCode), 'ipcHandlers: handler ollama:health supprimé');
+assert(!/search:providers/.test(ipcCode), 'ipcHandlers: handler search:providers supprimé');
+assert(!/aiConcurrency/.test(settingsCode), 'settings: aiConcurrency supprimé');
+assert(!/aiConcurrency/.test(ipcCode), 'ipcHandlers: aiConcurrency supprimé');
+// preload : API IA supprimées
+assert(!/analyzeMarket/.test(preloadCode), 'preload: analyzeMarket supprimé');
+assert(!/generatePrompt/.test(preloadCode), 'preload: generatePrompt supprimé');
+assert(!/listPromptTemplates/.test(preloadCode), 'preload: listPromptTemplates supprimé');
+assert(!/buildPrompt/.test(preloadCode), 'preload: buildPrompt supprimé');
+assert(!/listInternalPrompts/.test(preloadCode), 'preload: listInternalPrompts supprimé');
+assert(!/listOllamaModels/.test(preloadCode), 'preload: listOllamaModels supprimé');
+assert(!/listSearchProviders/.test(preloadCode), 'preload: listSearchProviders supprimé');
+assert(!/checkOllamaHealth/.test(preloadCode), 'preload: checkOllamaHealth supprimé');
+assert(!/openAiStudioLogin/.test(preloadCode), 'preload: openAiStudioLogin supprimé');
+// index.html : champs IA supprimés
+assert(!/id="aiProvider"/.test(htmlCode), 'index.html: select aiProvider supprimé');
+assert(!/id="aiModelName"/.test(htmlCode), 'index.html: champ aiModelName supprimé');
+assert(!/id="aiVisionModel"/.test(htmlCode), 'index.html: champ aiVisionModel supprimé');
+assert(!/id="ollamaUrl"/.test(htmlCode), 'index.html: champ ollamaUrl supprimé');
+assert(!/id="autoAiMarket"/.test(htmlCode), 'index.html: checkbox autoAiMarket supprimée');
+assert(!/id="searchProvider"/.test(htmlCode), 'index.html: select searchProvider supprimé');
+assert(!/id="searchApiKey"/.test(htmlCode), 'index.html: champ searchApiKey supprimé');
+assert(!/id="triggerMarketBtn"/.test(htmlCode), 'index.html: bouton triggerMarketBtn supprimé');
+assert(!/id="marketProgressContainer"/.test(htmlCode), 'index.html: conteneur marketProgress supprimé');
+assert(!/id="structureWarning"/.test(htmlCode), 'index.html: avertissement structure supprimé');
+assert(!/id="cfgAiConcurrency"/.test(htmlCode), 'index.html: champ cfgAiConcurrency supprimé');
+assert(!/aistudio\.google\.com/.test(htmlCode), 'index.html: URL AI Studio supprimée');
+assert(!/127\.0\.0\.1:11434/.test(htmlCode), 'index.html: connect-src Ollama supprimé du CSP');
+assert(!/frame-src.*aistudio/.test(htmlCode), 'index.html: frame-src AI Studio supprimé du CSP');
+// renderer : références IA supprimées
+assert(!/autoAiMarket/.test(appCode), 'app.js: autoAiMarket supprimé');
+assert(!/aiProvider/.test(appCode), 'app.js: aiProvider supprimé');
+assert(!/aiModelName/.test(appCode), 'app.js: aiModelName supprimé');
+assert(!/ollamaUrl/.test(appCode), 'app.js: ollamaUrl supprimé');
+assert(!/searchProvider/.test(appCode), 'app.js: searchProvider supprimé');
+assert(!/triggerMarketBtn/.test(appCode), 'app.js: triggerMarketBtn supprimé');
+assert(!/analyzeMarket/.test(appCode), 'app.js: analyzeMarket supprimé');
+assert(!/aiConfig/.test(appCode), 'app.js: aiConfig supprimé');
+assert(!/analyzeImages/.test(appCode), 'app.js: analyzeImages supprimé');
+assert(!/getOllamaUrl/.test(appCode), 'app.js: getOllamaUrl supprimé');
+assert(!/getAiApiKey/.test(appCode), 'app.js: getAiApiKey supprimé');
 
 // === MODULE D'AIDE : FAQ / Help / Feedback ===
 assert(/openFaqBtn/.test(htmlCode), 'index.html: bouton FAQ présent');
@@ -657,29 +466,28 @@ assert(/FAQ_DATA/.test(helpModCode), 'helpModule: données FAQ présentes');
 assert(/HELP_SECTIONS/.test(helpModCode), 'helpModule: sections du guide présentes');
 assert(/submitFeedback/.test(helpModCode), 'helpModule: fonction submitFeedback (préparée pour future API)');
 assert(/window\.helpModule/.test(helpModCode), 'helpModule: exposé sur window.helpModule');
-// Les boutons d'aide sont discrets (classe help-btn), distincts des onglets principaux
 assert(/class="help-btn"/.test(htmlCode), 'index.html: boutons aide discrets (class help-btn)');
-// IPC diagnostic non sensible pour le feedback
-assert(/app:getDiagnostics/.test(ipcHandlersCode), 'ipcHandlers: handler app:getDiagnostics (diagnostic feedback)');
-assert(/getDiagnostics/.test(preloadCodeV2), 'preload.js: expose getDiagnostics');
-// Le feedback n'envoie rien sur le réseau tant que l'API n'est pas branchée (V2).
-// On vérifie l'absence de fetch ACTIF (hors commentaires) et la présence de
-// l'archive locale (comportement réel tant que le backend n'existe pas).
+assert(/app:getDiagnostics/.test(ipcCode), 'ipcHandlers: handler app:getDiagnostics (diagnostic feedback)');
+assert(/getDiagnostics/.test(preloadCode), 'preload.js: expose getDiagnostics');
 const helpNoComments = helpModCode.replace(/\/\/[^\n]*\n/g, '');
 assert(!/fetch\(\s*['"]https/.test(helpNoComments), 'helpModule: pas d\'envoi HTTP actif (API backend pas encore développé)');
 assert(/localStorage.*feedback-archive/.test(helpModCode), 'helpModule: rapport archivé localement (V2 en attendant le serveur)');
+// helpModule : FAQ ne mentionne plus Ollama/AI Studio/XLSX/CSV
+assert(!/Ollama/.test(helpModCode), 'helpModule: FAQ ne mentionne plus Ollama');
+assert(!/AI Studio/.test(helpModCode), 'helpModule: FAQ ne mentionne plus AI Studio');
+assert(!/IA Marché/.test(helpModCode), 'helpModule: FAQ ne mentionne plus IA Marché');
+assert(!/annonces\.xlsx/.test(helpModCode), 'helpModule: FAQ ne mentionne plus annonces.xlsx');
+assert(!/resumes-ia/.test(helpModCode), 'helpModule: FAQ ne mentionne plus resumes-ia.json');
 
 // --- 7. Architecture SCRAPING PUR (indépendant de l'IA) ---
 console.log('\n[7] Architecture scraping pur (sans dépendance IA)');
 const pipelineCode = fs.readFileSync(path.join(__dirname, '..', 'src/main/services/scraping/leboncoin-pipeline.js'), 'utf8');
-const excelCode = fs.readFileSync(path.join(__dirname, '..', 'src/main/infrastructure/excelExporter.js'), 'utf8');
 const appCodeFull = appCode;
 const htmlCodeFull = fs.readFileSync(path.join(__dirname, '..', 'src/renderer', 'index.html'), 'utf8');
 
 // adFields est un module de SCRAPING PUR : aucun appel IA, aucun prompt.
 assert(existsSync(path.join(base, 'services/scraping/adFields.js')), 'pipeline: module adFields.js présent (extracteurs centralisés)');
 const adFieldsCode = fs.readFileSync(path.join(base, 'services/scraping/adFields.js'), 'utf8');
-// On retire les commentaires pour vérifier qu'il n'y a pas d'appel IA dans le code réel.
 const adFieldsNoComments = adFieldsCode.replace(/\/\/[^\n]*\n/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
 assert(!/ollama|gemini|openai|chatgpt|anthropic|claude|mistral/.test(adFieldsNoComments),
   'adFields: AUCUN appel IA (ollama/gemini/openai/etc.) dans le code');
@@ -695,12 +503,11 @@ assert(/extractLikes/.test(adFieldsCode), 'adFields: extractLikes (likes uniquem
 assert(/extractPhotos/.test(adFieldsCode), 'adFields: extractPhotos');
 assert(/extractDescription/.test(adFieldsCode), 'adFields: extractDescription');
 // Champs supprimés — les fonctions associées ne doivent plus exister
-assert(!/extractAttributes/.test(adFieldsCode), 'adFields: extractAttributes SUPPRIMÉ (champs produit dynamiques retirés)');
-assert(!/detectInDescription/.test(adFieldsCode), 'adFields: detectInDescription SUPPRIMÉ (analyse textuelle retirée)');
-assert(!/inferCondition/.test(adFieldsCode), 'adFields: inferCondition SUPPRIMÉ (uniquement état déclaré)');
-assert(!/scraperQuality/.test(adFieldsCode), 'adFields: scraperQuality SUPPRIMÉ (section qualité retirée)');
-assert(!/zipcodeToDepartment/.test(adFieldsCode), 'adFields: zipcodeToDepartment SUPPRIMÉ (département retiré)');
-// Les noms de champs supprimés ne doivent plus apparaître dans le code réel
+assert(!/extractAttributes/.test(adFieldsCode), 'adFields: extractAttributes SUPPRIMÉ');
+assert(!/detectInDescription/.test(adFieldsCode), 'adFields: detectInDescription SUPPRIMÉ');
+assert(!/inferCondition/.test(adFieldsCode), 'adFields: inferCondition SUPPRIMÉ');
+assert(!/scraperQuality/.test(adFieldsCode), 'adFields: scraperQuality SUPPRIMÉ');
+assert(!/zipcodeToDepartment/.test(adFieldsCode), 'adFields: zipcodeToDepartment SUPPRIMÉ');
 const adFieldsCheck = adFieldsNoComments;
 assert(!/\bnegociable\b/.test(adFieldsCheck), 'adFields: aucun negociable (champ supprimé)');
 assert(!/\bfacture\b/.test(adFieldsCheck), 'adFields: aucun facture (champ supprimé)');
@@ -717,8 +524,6 @@ assert(!/\bdepartment\b/.test(adFieldsCheck), 'adFields: aucun department (champ
 assert(!/\bcategory\b/.test(adFieldsCheck), 'adFields: aucun category (champ supprimé)');
 
 // Pipeline : helpers wrappers (compatibilité interne) présents
-// Les wrappers extractDeliveryInfo/extractSellerRating ont été supprimés
-// car la structure plate expose directement les champs via normalizeAd().
 assert(!/function extractDeliveryInfo/.test(pipelineCode), 'pipeline: extractDeliveryInfo supprimé (structure plate)');
 assert(!/function extractSellerRating/.test(pipelineCode), 'pipeline: extractSellerRating supprimé (structure plate)');
 
@@ -733,7 +538,7 @@ assert(/dateScraping,/.test(pipelineCode), 'pipeline: normalizeAd produit dateSc
 assert(/etat,/.test(pipelineCode), 'pipeline: normalizeAd produit etat');
 assert(/photosCount:/.test(pipelineCode), 'pipeline: normalizeAd produit photosCount');
 assert(/description,/.test(pipelineCode), 'pipeline: normalizeAd produit description');
-// Ne doit PAS produire les anciens objets imbriquiques
+// Ne doit PAS produire les anciens objets imbriqués
 assert(!/vendeur:\s*\{/.test(pipelineCode), 'pipeline: normalizeAd ne produit PAS vendeur{}');
 assert(!/transaction:\s*\{/.test(pipelineCode), 'pipeline: normalizeAd ne produit PAS transaction{}');
 assert(!/statistiques:\s*\{/.test(pipelineCode), 'pipeline: normalizeAd ne produit PAS statistiques{}');
@@ -744,14 +549,10 @@ assert(!/ad\.scraping\s*=/.test(pipelineCode), 'pipeline: normalizeAd ne produit
 assert(/dateScraping:\s*scrapedAt/.test(pipelineCode), 'pipeline: normalizeAd injecte dateScraping ISO');
 assert(/scrapedAt\s*=\s*new Date\(\)\.toISOString\(\)/.test(pipelineCode), 'pipeline: scrapedAt = new Date().toISOString()');
 assert(/mergeKeepingNonNull/.test(pipelineCode), 'pipeline: mergeKeepingNonNull préserve les champs non-null');
-// Plus de detection{} (champs supprimés)
-assert(!/detection:\s*\{/.test(pipelineCode), 'pipeline: normalizeAd ne produit PAS detection{} (champs supprimés)');
-// Plus de vues dans statistiques
-assert(!/statistiques:\s*\{[\s\S]*?vues/.test(pipelineCode.replace(/\n/g, ' ')), 'pipeline: statistiques{} ne contient PAS vues (champ supprimé)');
-// Plus de negociable dans prix
+assert(!/detection:\s*\{/.test(pipelineCode), 'pipeline: normalizeAd ne produit PAS detection{}');
 assert(!/negociable/.test(pipelineCode), 'pipeline: aucun negociable (champ supprimé)');
 
-// ═════ Tests fonctionnels des extracteurs adFields (SCRAPING PUR) ═════
+// ═══ Tests fonctionnels des extracteurs adFields (SCRAPING PUR) ═══
 {
   const { extractTransaction, extractSeller, extractDates, extractCondition,
     extractLikes, extractPhotos, extractDescription, extractPrice } =
@@ -797,6 +598,18 @@ assert(!/negociable/.test(pipelineCode), 'pipeline: aucun negociable (champ supp
   assert(t.livraison === null && t.mainPropre === null,
     'adFields.extractTransaction: attributes présent sans shipping → livraison=null (pas inventé)');
 
+  // === computeDeliveryType (modèle unifié) ===
+  const { computeDeliveryType } = require(path.join(base, 'services/scraping/adFields'));
+  assert(computeDeliveryType(true, true) === 'les_deux', 'computeDeliveryType: true,true → les_deux');
+  assert(computeDeliveryType(true, false) === 'livraison', 'computeDeliveryType: true,false → livraison');
+  assert(computeDeliveryType(true, null) === 'livraison', 'computeDeliveryType: true,null → livraison');
+  assert(computeDeliveryType(false, true) === 'main_propre', 'computeDeliveryType: false,true → main_propre');
+  assert(computeDeliveryType(null, true) === 'main_propre', 'computeDeliveryType: null,true → main_propre');
+  assert(computeDeliveryType(false, false) === 'aucun', 'computeDeliveryType: false,false → aucun');
+  assert(computeDeliveryType(false, null) === 'aucun', 'computeDeliveryType: false,null → aucun');
+  assert(computeDeliveryType(null, false) === 'aucun', 'computeDeliveryType: null,false → aucun');
+  assert(computeDeliveryType(null, null) === 'inconnu', 'computeDeliveryType: null,null → inconnu');
+
   // === SELLER ===
   const s = extractSeller({ owner: { name: 'Jean', type: 'pro', rating: 4.8, nb_ratings: 27 } });
   assert(s.nom === 'Jean' && s.isPro === true && s.note === 4.8,
@@ -829,282 +642,55 @@ assert(!/negociable/.test(pipelineCode), 'pipeline: aucun negociable (champ supp
   assert(extractPrice({ price: [{ value: 300 }] }) === 300, 'adFields.extractPrice: [{value}] array format');
 }
 
-// === AUDIT STABILISATION : Lots A/B/C/D ===
-// Lot C — aiCache : sauvegarde debouncée (pas de writeFileSync synchrone à chaque set)
-assert(/SAVE_DEBOUNCE_MS\s*=\s*\d+/.test(aiCacheCode), 'aiCache: constante SAVE_DEBOUNCE_MS définie');
-assert(/_scheduleSave/.test(aiCacheCode), 'aiCache: _scheduleSave (debounce écriture)');
-assert(/_flushSave/.test(aiCacheCode), 'aiCache: _flushSave (écriture forcée)');
-assert(/function _saveNow/.test(aiCacheCode), 'aiCache: _saveNow séparé de _scheduleSave');
-// set() ne doit PLUS appeler _save() synchrone (anciennement) ; appelle _scheduleSave
-assert(/_scheduleSave\(\);/.test(aiCacheCode.replace(/\/\/[\s\S]*?\n/g, '')), 'aiCache: set() planifie la sauvegarde (debounce)');
-assert(!/\nfunction _save\(\)/.test(aiCacheCode), 'aiCache: ancienne fonction synchrone _save() retirée');
-assert(/_flushSave/.test(fs.readFileSync(path.join(base, 'services/ai/adAnalyzer.js'), 'utf8')), 'adAnalyzer: flush cache en fin de batch');
-assert(/_flushSave/.test(fs.readFileSync(path.join(base, 'services/ai/marketValueAnalyzer.js'), 'utf8')), 'marketValueAnalyzer: flush cache en fin de batch');
-// Test fonctionnel : set() ne persiste pas immédiatement (debounce), mais
-// _flushSave() force l'écriture disque. On le prouve en rechargeant un cache
-// neuf depuis le disque après flush.
-aiCache.clear();
-const _aiCache2 = require(path.join(base, 'services/ai/aiCache'));
-_aiCache2.set('persist-1', { v: 42 }, 'analyse');
-assert(_aiCache2.get('persist-1', 'analyse') && _aiCache2.get('persist-1', 'analyse').v === 42, 'aiCache: get voit la valeur en mémoire juste après set()');
-_aiCache2._flushSave(); // force l'écriture disque
-// Recharge un cache neuf depuis le disque pour prouver la persistance
-const aiCachePath = require.resolve(path.join(base, 'services/ai/aiCache'));
-delete require.cache[aiCachePath];
-const freshCache = require(aiCachePath);
-const persisted = freshCache.get('persist-1', 'analyse');
-assert(persisted && persisted.v === 42, 'aiCache: _flushSave persiste la valeur sur disque (recharge OK)');
-freshCache.clear();
-
-// Lot D — Carte Leaflet : anti race condition (compteur de génération)
-assert(/mapRenderGen\s*=\s*0/.test(appCodeFull), 'app.js: mapRenderGen (compteur génération carte)');
-assert(/const gen = \+\+mapRenderGen/.test(appCodeFull), 'app.js: renderMap incrémente la génération');
-assert(/isStale\(\)/.test(appCodeFull), 'app.js: renderMap vérifie isStale() avant d\'ajouter marqueurs');
-assert(/if \(isStale\(\)\) return/.test(appCodeFull), 'app.js: worker carte abandonne si stale');
-
-// Lot B — Rafraîchissement onglet actif après scraping terminé
-assert(/refreshActiveDataTab/.test(appCodeFull), 'app.js: refreshActiveDataTab défini');
-assert(/refreshActiveDataTab\(\)/.test(appCodeFull), 'app.js: onStatusChange appelle refreshActiveDataTab sur completed');
-
-// Lot A — Presets 1-clic complets : capture URL + pages + limit + noDesc + AI
-assert(/savePresetBtn/.test(appCodeFull), 'app.js: savePresetBtn référencé');
-assert(/loadPreset\b/.test(appCodeFull), 'app.js: loadPreset présent');
-assert(/collectSearchConfig/.test(appCodeFull), 'app.js: collectSearchConfig (capture config complète pour preset)');
-assert(/applySearchConfig/.test(appCodeFull), 'app.js: applySearchConfig (restaure config complète du preset)');
-assert(/noPhotoUrl/.test(appCodeFull), 'app.js: noPhotoUrl (placeholder local)');
-assert(/escapeHtml\b/.test(appCodeFull), 'app.js: escapeHtml (échappement HTML)');
-// plus de dépendance externe via.placeholder.com dans du code réel (hors commentaires)
-const appCodeNoComments = appCodeFull.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
-assert(!/via\.placeholder\.com/.test(appCodeNoComments), 'app.js: plus de dépendance externe via.placeholder.com (hors commentaires)');
-
-// Cohérence tri explorateur : défaut sauvegardé = 'DEFAULT' (option réelle)
-assert(/sort:\s*sortSelect\?\.value\s*\|\|\s*'DEFAULT'/.test(appCodeFull), 'app.js: défaut tri explorateur = DEFAULT (cohérent avec <select>');
-
-// === AUDIT SEARCH : Tavily provider + DDG anti-bot resilience ===
-const searchRegCode = fs.readFileSync(path.join(base, 'services/ai/search/searchProviderRegistry.js'), 'utf8');
-assert(/TavilySearchProvider/.test(searchRegCode), 'searchRegistry: importe TavilySearchProvider');
-assert(/registerSearchProvider\('tavily'/.test(searchRegCode), 'searchRegistry: enregistre le moteur tavily');
-const tavilyPath = path.join(base, 'services/ai/search/tavilySearchProvider.js');
-assert(existsSync(tavilyPath), 'tavilySearchProvider.js: fichier présent');
-const tavilyCode = fs.readFileSync(tavilyPath, 'utf8');
-assert(/api\.tavily\.com\/search/.test(tavilyCode), 'tavily: endpoint api.tavily.com/search');
-assert(/requiresApiKey\(\)\s*\{\s*return true/.test(tavilyCode), 'tavily: requiresApiKey() = true');
-assert(/Authorization.*Bearer/.test(tavilyCode), 'tavily: authentification Bearer');
-assert(/HTTP 401|HTTP 403|invalide/.test(tavilyCode), 'tavily: détecte clé invalide (401/403)');
-assert(/429|quota/.test(tavilyCode), 'tavily: détecte quota dépassé (429)');
-assert(/max_results/.test(tavilyCode), 'tavily: param max_results');
-assert(/r\.title[\s\S]*r\.content[\s\S]*r\.url/.test(tavilyCode.replace(/\/\/[^\n]*/g, '')), 'tavily: mappe title/content/url');
-// Tavily fonctionnel : clé manquante → ok:false clair
-const { TavilySearchProvider } = require(path.join(base, 'services/ai/search/tavilySearchProvider'));
-const _tNoKey = new TavilySearchProvider({});
-assert(_tNoKey.requiresApiKey() === true, 'tavily: requiresApiKey true');
-{
-  const h = await _tNoKey.checkHealth();
-  assert(h.ok === false, 'tavily: health false sans clé');
-  assert(/manquante/i.test(h.message), 'tavily: message clé manquante');
-}
-{
-  const s = await _tNoKey.search('test');
-  assert(s.ok === false, 'tavily: search false sans clé');
-  assert(/manquante/i.test(s.message), 'tavily: search message clé manquante');
-}
-// Tavily avec clé (fake) : health ok, pas de crash au constructeur
-const _tKey = new TavilySearchProvider({ apiKey: 'fake-key-xxx' });
-{
-  const h = await _tKey.checkHealth();
-  assert(h.ok === true, 'tavily: health ok avec clé');
-  assert(_tKey.name === 'Tavily (clé API)', 'tavily: name');
-}
-
-// DDG : détection page anti-bot (anomaly/captcha) + retry/backoff
-const ddgCode2 = fs.readFileSync(path.join(base, 'services/ai/search/duckDuckGoSearchProvider.js'), 'utf8');
-assert(/function isAnomalyPage/.test(ddgCode2), 'ddg: fonction isAnomalyPage');
-assert(/anomaly-modal/.test(ddgCode2), 'ddg: détecte anomaly-modal');
-assert(/status === 202/.test(ddgCode2), 'ddg: status 202 = anti-bot');
-assert(/isAnomalyPage\(html, res\.status\)/.test(ddgCode2), 'ddg: appelle isAnomalyPage après réception');
-assert(/MAX_ATTEMPTS/.test(ddgCode2), 'ddg: retry avec MAX_ATTEMPTS');
-assert(/_searchOnce/.test(ddgCode2), 'ddg: _searchOnce (requête unique isolée du retry)');
-assert(/_sleep/.test(ddgCode2), 'ddg: backoff (_sleep)');
-assert(/anti-bot|captcha|bloquée/i.test(ddgCode2), 'ddg: message clair anti-bot orientant vers Tavily');
-assert(/res\.status === 403 \|\| res\.status === 429/.test(ddgCode2), 'ddg: 403/429 retryable');
-// isAnomalyPage fonctionnel
-const { isAnomalyPage, parseDdgLite } = require(path.join(base, 'services/ai/search/duckDuckGoSearchProvider'));
-assert(isAnomalyPage('<div class="anomaly-modal__box">puzzle</div>', 200) === true, 'ddg: anomaly-modal détecté');
-assert(isAnomalyPage('', 202) === true, 'ddg: HTTP 202 = anomaly');
-assert(isAnomalyPage('<html>page normale</html>', 200) === false, 'ddg: page normale non anomaly');
-assert(isAnomalyPage('', 200) === false, 'ddg: vide+200 non anomaly');
-// parseDdgLite : structure réelle DDG Lite (result-link + result-snippet)
-const _parsed = parseDdgLite('<a class="result-link" href="https://ex.com/a">iPhone 12</a><td class="result-snippet">128 Go</td>');
-assert(_parsed.length === 1, 'ddg: parse 1 résultat');
-assert(_parsed[0].title === 'iPhone 12', 'ddg: titre parsé');
-assert(_parsed[0].url === 'https://ex.com/a', 'ddg: url parsée');
-assert(_parsed[0].source === 'ex.com', 'ddg: source host parsé');
-// listSearchProviders inclut tavily (le select du renderer sera peuplé)
-const _providers = listSearchProviders();
-assert(_providers.some((p) => p.id === 'tavily' && p.keyless === false), 'searchRegistry: tavily listé (keyless=false)');
-assert(_providers.some((p) => p.id === 'duckduckgo' && p.keyless === true), 'searchRegistry: duckduckgo listé (keyless=true)');
-
-// HTML : placeholder clé mentionne Tavily
-assert(/tavily/i.test(htmlCodeFull), 'index.html: placeholder clé mentionne Tavily');
-
-// === AUDIT CONTEXTE IA : num_ctx + réparation JSON tronqué ===
-// Cause racine des valeurs absurdes (8€, 120€, 500€) + « JSON invalide » :
-// Ollama utilise num_ctx=2048 par défaut. Le prompt IA Marché (système + annonce
-// + 10 sources + spec JSON ≈ 2000 tokens) ne laissait ~0 token de sortie → JSON
-// tronqué en plein milieu d'un nombre ("realValue": 8 au lieu de 8000).
-const mvaCode = fs.readFileSync(path.join(base, 'services/ai/marketValueAnalyzer.js'), 'utf8');
-assert(/AI_NUM_CTX\s*=\s*8192/.test(mvaCode), 'marketValueAnalyzer: AI_NUM_CTX=8192 (contexte monté)');
-assert(/numCtx:\s*AI_NUM_CTX/.test(mvaCode), 'marketValueAnalyzer: passe numCtx au provider IA');
-assert(/MAX_SNIPPETS\s*=\s*6/.test(mvaCode), 'marketValueAnalyzer: MAX_SNIPPETS réduit à 6 (prompt plus compact)');
-assert(/MAX_SNIPPET_CHARS\s*=\s*250/.test(mvaCode), 'marketValueAnalyzer: MAX_SNIPPET_CHARS réduit à 250');
-assert(/function _repairTruncatedJson/.test(mvaCode), 'marketValueAnalyzer: _repairTruncatedJson (réparation JSON tronqué)');
-assert(/parsed\._repaired/.test(mvaCode), 'marketValueAnalyzer: gère le flag _repaired (confiance baissée)');
-// ollamaProvider : num_ctx transmis à l'API Ollama
-const ollamaCode2 = fs.readFileSync(path.join(base, 'services/ai/providers/ollamaProvider.js'), 'utf8');
-assert(/opts\.numCtx/.test(ollamaCode2), 'ollamaProvider: lit opts.numCtx');
-assert(/options\.num_ctx\s*=\s*opts\.numCtx/.test(ollamaCode2), 'ollamaProvider: transmet num_ctx à options Ollama');
-assert(/options\.num_predict\s*=\s*opts\.numPredict/.test(ollamaCode2), 'ollamaProvider: transmet num_predict (extensibilité)');
-// promptGenerator : num_ctx monté aussi (meta-prompt long ~3000+ caractères)
-const pgCode = fs.readFileSync(path.join(base, 'services/ai/promptGenerator.js'), 'utf8');
-assert(/numCtx:\s*8192/.test(pgCode), 'promptGenerator: numCtx:8192 (anti-troncation prompt long)');
-
-// Test fonctionnel : parseMarket répare le JSON tronqué
-const { _parseMarket } = require(path.join(base, 'services/ai/marketValueAnalyzer'));
-// JSON complet → parse normal, pas de _repaired
-{
-  const ok = _parseMarket('{"realValue": 8000, "confidence": "haute", "rationale": "ok"}');
-  assert(ok && ok.realValue === 8000 && ok._repaired === undefined, 'parseMarket: JSON complet OK sans _repaired');
-}
-// JSON tronqué (seule l'accolade fermante manque) → réparé, valeur correcte conservée
-{
-  const rep = _parseMarket('{"realValue": 8000, "confidence": "haute"');
-  assert(rep && rep.realValue === 8000 && rep._repaired === true, 'parseMarket: répare JSON tronqué (accolade manquante), conserve realValue');
-}
-// JSON tronqué en plein nombre → réparé (valeur partielle flaguée)
-{
-  const rep2 = _parseMarket('{"realValue": 8');
-  assert(rep2 && rep2._repaired === true, 'parseMarket: répare JSON tronqué mid-number (flag _repaired)');
-}
-// JSON sans realValue → null (irrécupérable)
-{
-  assert(_parseMarket('{"foo": 1') === null, 'parseMarket: null si pas de realValue');
-}
-// JSON totalement invalide → null
-{
-  assert(_parseMarket('pas du tout du json') === null, 'parseMarket: null si pas de JSON');
-}
-// Markdown autour → extrait le JSON
-{
-  const md = _parseMarket('```json\n{"realValue": 5000}\n```');
-  assert(md && md.realValue === 5000, 'parseMarket: extrait JSON entouré de markdown');
-}
-
-// --- 6. Audit fiabilité v2 : guards, robustesse fichiers, edge cases ---
-console.log('\n[6/6] Audit fiabilité (guards & robustesse)');
-
-// market:analyze : verrou dédié (isMarketAnalyzing) contre les lancements
-// concurrents. Sans lui, un double-clic sur « IA Marché » lançait deux batches
-// IA + deux writeWithChecksum en parallèle sur le même job (race sur le JSON).
-assert(/isMarketAnalyzing\s*=\s*false/.test(ipcCode), 'ipcHandlers: isMarketAnalyzing déclaré (verrou market)');
-assert(/if \(isMarketAnalyzing\) throw/.test(ipcCode), 'ipcHandlers: market:analyze rejette une 2e analyse concurrente');
-assert(/isMarketAnalyzing\s*=\s*false;\s*$|isMarketAnalyzing\s*=\s*false;\s*\/\/|finally\s*{[^}]*isMarketAnalyzing\s*=\s*false/s.test(ipcCode), 'ipcHandlers: isMarketAnalyzing libéré dans finally (même en cas d\'erreur)');
-// Le handler market:analyze lit annonces.json via readWithChecksum (intégrité)
-assert(/readWithChecksum\(targetJob\.files\.json\)/.test(ipcCode), 'ipcHandlers: market:analyze valide le checksum d\'annonces.json');
-// job:start lit aussi annonces.json via readWithChecksum (message clair si corrompu)
-assert(/readWithChecksum\(jsonPath\)/.test(ipcCode), 'ipcHandlers: job:start valide le checksum d\'annonces.json');
-
-// writeSummaryFile : écriture atomique (atomicWriteFileSync) — pas de fs.writeFileSync
-// qui laissait resumes-ia.json tronqué en cas de crash.
-assert(/atomicWriteFileSync\(summaryPath/.test(ipcCode), 'ipcHandlers: writeSummaryFile atomique (atomicWriteFileSync)');
-assert(!/fs\.writeFileSync\(summaryPath/.test(ipcCode), 'ipcHandlers: writeSummaryFile n\'utilise plus fs.writeFileSync (non-atomique)');
-
-// adAnalyzer : filtre les images invalides (null/undefined/non-http) avant
-// le téléchargement — évite fetch(null) qui polluait les logs d'erreurs.
-const adAnalyzerCode = fs.readFileSync(path.join(base, 'services/ai/adAnalyzer.js'), 'utf8');
-assert(/typeof u === 'string'/.test(adAnalyzerCode), 'adAnalyzer: filtre images non-string');
-assert(/https\?:\\\//.test(adAnalyzerCode), 'adAnalyzer: filtre images non-URL (http/https)');
-
 // harCapturer : annulation pendant CAPTCHA ne persiste PAS une session bloquée
-// (sinon cookies anti-bot empoisonnaient tous les jobs suivants).
 const harCode = fs.readFileSync(path.join(base, 'services/scraping/harCapturer.js'), 'utf8');
 assert(/NE PAS persister la session/.test(harCode), 'harCapturer: annulation warmup ne persiste pas la session bloquée');
 
 // harCapturer : détection CAPTCHA multi-vecteurs (iframe, URL, Cloudflare)
-// L'ancienne version ne vérifiait que body.innerText → ratait les CAPTCHA en
-// iframe cross-origin (Arkose/FunCaptcha/Cloudflare) et les redirections URL.
 assert(/arkoselabs|funcaptcha/.test(harCode), 'harCapturer: détection iframe Arkose/FunCaptcha');
 assert(/challenges\.cloudflare|cf-turnstile|challenge-form/.test(harCode), 'harCapturer: détection challenge Cloudflare');
 assert(/captchaUrlMatch|URL suspecte/.test(harCode), 'harCapturer: détection CAPTCHA via URL (redirection)');
 
 // harCapturer : AUCUN reload pendant la résolution CAPTCHA
-// L'ancien code faisait vPage.reload() toutes les 2s → l'utilisateur ne pouvait
-// pas résoudre le CAPTCHA (page réinitialisée en continu).
-assert(!/vPage\.reload\(\{ waitUntil/.test(harCode), 'harCapturer: PAS de reload pendant résolution CAPTCHA (polling sans reload)');
+assert(!/vPage\.reload\(\{ waitUntil/.test(harCode), 'harCapturer: PAS de reload pendant résolution CAPTCHA');
 assert(/POLL SANS reload/.test(harCode) || /sans recharger/.test(harCode), 'harCapturer: polling sans reload documenté');
 
-// harCapturer : warmup utilise networkidle (pas domcontentloaded) pour laisser
-// le temps au JS de rendre le CAPTCHA (Arkose charge après domcontentloaded).
-assert(/waitUntil:\s*['"]networkidle['"]/.test(harCode), 'harCapturer: warmup utilise networkidle (CAPTCHA rendu après domcontentloaded)');
-// Le délai d'attente a été augmenté de 1.5s à 3s pour le rendu JS différé.
+// harCapturer : warmup utilise networkidle
+assert(/waitUntil:\s*['"]networkidle['"]/.test(harCode), 'harCapturer: warmup utilise networkidle');
 assert(/sleep\(3000\)/.test(harCode), 'harCapturer: délai warmup 3s (rendu CAPTCHA différé)');
 
 // harCapturer : post-CAPTCHA — attend networkidle + grace period avant save
-// L'ancienne version sauvegardait la session immédiatement → session incomplète
-// (cookie de validation pas encore posé) → erreur au prochain goto.
 assert(/stabilisation de la session/.test(harCode), 'harCapturer: post-CAPTCHA attend stabilisation session');
-assert(/2e CAPTCHA consécutif/.test(harCode), 'harCapturer: re-vérification post-CAPTCHA (2e CAPTCHA possible)');
-
-// harCapturer : CAPTCHA pendant la capture → résolution interactive + reprise
-// L'ancienne version abandonnait (break) avec "Relancez après résolution".
-assert(/résolution interactive/.test(harCode), 'harCapturer: CAPTCHA pendant capture → résolution interactive (pas abandon)');
+assert(/2e CAPTCHA consécutif/.test(harCode), 'harCapturer: re-vérification post-CAPTCHA');
+assert(/résolution interactive/.test(harCode), 'harCapturer: CAPTCHA pendant capture → résolution interactive');
 assert(/Reprise après résolution CAPTCHA/.test(harCode), 'harCapturer: reprise capture après résolution CAPTCHA');
 
-// harCapturer : UA FIXE pour toute la capture (cause racine du 403 au 1er scrape)
-// Avant, chaque _newStealthContext appelait getRandomUserAgent() → UA différent
-// entre warmup et capture → Leboncoin détectait l'incohérence (mêmes cookies +
-// UA différent) → HTTP 403. Fix : UA choisi une fois dans le constructeur, réutilisé.
+// harCapturer : UA FIXE pour toute la capture
 assert(/this\._userAgent\s*=\s*getRandomUserAgent\(\)/.test(harCode), 'harCapturer: UA fixe choisi une fois dans le constructeur');
 assert(/userAgent:\s*this\._userAgent/.test(harCode), 'harCapturer: _baseContextOptions réutilise this._userAgent (UA cohérent)');
 assert(!/userAgent:\s*getRandomUserAgent\(\)/.test(harCode), 'harCapturer: PAS de getRandomUserAgent() dans _baseContextOptions (UA fixe)');
-
-// harCapturer : délai entre warmup et capture (anti rate-limit Leboncoin)
-// Les logs montraient warmup (200) puis capture (403) dans la même seconde.
 assert(/rate-limit Leboncoin/i.test(harCode), 'harCapturer: délai 2s après warmup (anti rate-limit Leboncoin)');
 
-// ipcHandlers : PAS de réassignation de const ads (crash "Assignment to constant variable")
-// const { data: ads } = readWithChecksum(...) puis ads = await analyzeAds(ads) → TypeError.
-// Les logs du 2e scrape montraient : 40s d'IA, puis crash "Assignment to constant variable".
-const ipcCodeAds = fs.readFileSync(path.join(base, 'core/ipcHandlers.js'), 'utf8');
-assert(/let adsWithAi = ads/.test(ipcCodeAds), 'ipcHandlers: adsWithAi (let) au lieu de réassigner const ads');
-assert(/adsWithAi = await AdAnalyzer\.analyzeAds/.test(ipcCodeAds), 'ipcHandlers: analyzeAds assigne à adsWithAi (let, pas const)');
-assert(/writeWithChecksum\(jsonPath, adsWithAi/.test(ipcCodeAds), 'ipcHandlers: writeWithChecksum utilise adsWithAi');
-assert(/ExcelExporter\.exportToXlsx\(adsWithAi/.test(ipcCodeAds), 'ipcHandlers: ExcelExporter utilise adsWithAi');
-
 // pipeline : recyclage de contexte résilient (sauvegarde préventive + try/catch)
-const pipeCode = fs.readFileSync(path.join(base, 'services/scraping/leboncoin-pipeline.js'), 'utf8');
-assert(/Recyclage contexte échoué/.test(pipeCode), 'pipeline: recyclage contexte a un catch (ne crash pas le job)');
-assert(/Sauvegarde préventive AVANT le recyclage/.test(pipeCode), 'pipeline: writeOutputs avant recyclage (pas de perte)');
+assert(/Recyclage contexte échoué/.test(pipelineCode), 'pipeline: recyclage contexte a un catch (ne crash pas le job)');
+assert(/Sauvegarde préventive AVANT le recyclage/.test(pipelineCode), 'pipeline: writeOutputs avant recyclage (pas de perte)');
 
-// renderer : renderCharts garde contre les canvas absents (sinon crash → carte cassée)
+// renderer : renderCharts garde contre les canvas absents
 assert(/priceDistCanvas \|\| !sellerCanvas \|\| !citiesCanvas/.test(appCode), 'app.js: renderCharts garde contre canvas absents');
-// V3 : graphique vendeur en barres horizontales (remplace le doughnut/camembert)
-assert(/indexAxis:\s*'y'/.test(appCode), 'app.js: graphique vendeur en barres horizontales (V3, remplace doughnut)');
+// V3 : graphique vendeur en barres horizontales
+assert(/indexAxis:\s*'y'/.test(appCode), 'app.js: graphique vendeur en barres horizontales (V3)');
 assert(!/type:\s*'doughnut'/.test(appCode), 'app.js: V3 — plus de doughnut pour le graphique vendeur');
 assert(!/cutout:\s*'62%'/.test(appCode), 'app.js: V3 — cutout doughnut supprimé');
 // renderer : cache géocodage tolérant au JSON corrompu
 assert(/try \{ return JSON\.parse\(cached\); \} catch/.test(appCode), 'app.js: cache géocodage tolérant au JSON corrompu');
 // renderer : mapHandDeliveryOnly null-safe
 assert(/mapHandDeliveryEl && mapHandDeliveryEl\.checked/.test(appCode), 'app.js: mapHandDeliveryOnly null-safe');
-
-// excelExporter : date formatée lisible (pas d'ISO brute)
-const excelCode2 = fs.readFileSync(path.join(__dirname, '..', 'src/main/infrastructure/excelExporter.js'), 'utf8');
-assert(/Number\.isFinite\(d\.getTime\(\)\)/.test(excelCode2), 'excelExporter: date validée (Number.isFinite)');
-assert(/pad\(d\.getDate\(\)\)/.test(excelCode2), 'excelExporter: date formatée JJ/MM/AAAA HH:mm');
+// renderer : mapHandDeliveryOnly utilise deliveryType (main_propre + les_deux)
+assert(/deliveryType === 'main_propre' \|\| dt === 'les_deux'/.test(appCode) || /main_propre.*les_deux/.test(appCode), 'app.js: filtre carte utilise deliveryType main_propre/les_deux');
 
 // --- 8. Livraison / Main propre INDÉPENDANTS (extraction défensive) ---
 console.log('\n[8] Livraison / Main propre indépendants');
 const adFieldsDeliveryCode = fs.readFileSync(path.join(base, 'services/scraping/adFields.js'), 'utf8');
-// Vérifie les chemins d'extraction dans adFields
 assert(/raw\.attributes/.test(adFieldsDeliveryCode), 'adFields: extractTransaction vérifie raw.attributes[] (API récente)');
 assert(/shippable|is_shippable/.test(adFieldsDeliveryCode), 'adFields: extractTransaction cherche clé "shippable" dans attributes');
 assert(/is_shippable|shippable|is_shipping/.test(adFieldsDeliveryCode), 'adFields: extractTransaction vérifie is_shippable/shippable (variantes récentes)');
@@ -1115,19 +701,14 @@ assert(/pas.*envoi|retrait.*place|venir.*chercher/.test(adFieldsDeliveryCode), '
 assert(!/Array\.isArray\(raw\?\.attributes\) && raw\.attributes\.length > 0/.test(adFieldsDeliveryCode), 'adFields: extractTransaction ne force PAS livraison=false quand attributes présent sans shipping');
 assert(!/livraison\s*=\s*false/.test(adFieldsDeliveryCode.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '')), 'adFields: plus de fallback livraison=false par défaut');
 
-// ═════ Tests fonctionnels des extracteurs adFields (redondants — section 7) ═════
-// (les tests de la section 7 couvrent déjà le détail de extractTransaction etc.)
-
 // constants.js : DEFAULTS mort supprimé (valeurs conflictuelles avec settings)
 const constantsCode = fs.readFileSync(path.join(__dirname, '..', 'src/main/config/constants.js'), 'utf8');
 assert(!/DEFAULTS:\s*\{/.test(constantsCode), 'constants.js: DEFAULTS mort supprimé (valeurs conflictuelles)');
 
-console.log('\n[7/7] Audit fonctionnel A→Z (cohérence UI/logique/docs)');
+// --- 9. Audit fonctionnel A→Z (cohérence UI/logique/docs) ---
+console.log('\n[9] Audit fonctionnel A→Z');
 
-// jobHistory : format de date lisible (JJ/MM/AAAA au lieu de AAAA:MM:JJ avec
-// deux-points dans la date). L'ancien code remplaçait tous les '-' par ':' →
-// « 2026:08:12 à 02:21 » (illisible). Le nouveau utilise un regex pour extraire
-// les composants et formater en français.
+// jobHistory : format de date lisible
 const jobHistoryCode = fs.readFileSync(path.join(__dirname, '..', 'src/main/services/jobs/jobHistory.js'), 'utf8');
 assert(/tsMatch\s*=\s*entry\.name\.match/.test(jobHistoryCode), 'jobHistory: format date via regex (extraction composants)');
 assert(/\$\{tsMatch\[3\]\}\/\$\{tsMatch\[2\]\}\/\$\{tsMatch\[1\]\}/.test(jobHistoryCode), 'jobHistory: date au format JJ/MM/AAAA (slashes)');
@@ -1135,48 +716,11 @@ assert(jobHistoryCode.indexOf("replace(/-/g") === -1, 'jobHistory: ne remplace p
 // rapport.txt est mort (jamais créé par le pipeline) → retiré de jobHistory
 assert(!/rapportPath|rapport:/.test(jobHistoryCode), 'jobHistory: rapport.txt mort retiré (jamais généré par le pipeline)');
 
-// app.js : preset sauvegarde le moteur de recherche (DuckDuckGo/Tavily)
-// Avant : un preset sauvegardé avec Tavily se rechargeait en DuckDuckGo.
-assert(/searchProvider:.*searchProviderSelect/.test(appCode), 'app.js: collectSearchConfig capture searchProvider');
-assert(/cfg\.searchProvider && searchProviderSelect/.test(appCode), 'app.js: applySearchConfig restaure searchProvider');
-assert(/dispatchEvent\(new Event\('change'\)\)/.test(appCode), 'app.js: applySearchConfig déclenche change (masque/affiche clé API)');
-
-// app.js : triggerMarketBtn vérifie isOffline (l'IA Marché a besoin d'Internet
-// pour DuckDuckGo). Sans ce garde, un batch complet tombait en fallback inutile.
-assert(/isOffline[\s\S]*triggerMarketBtn|triggerMarketBtn[\s\S]*isOffline/.test(appCode), 'app.js: triggerMarketBtn vérifie isOffline avant lancement');
-assert(/Mode hors-ligne actif.*analyse de marché.*recherche Internet/.test(appCode), 'app.js: message offline clair pour IA Marché (tous providers)');
-
-// helpModule : FAQ ne mentionne plus la checkbox « Analyser les images » supprimée
-// (la vision est désormais automatique si modèle + photos présents).
-assert(!/Cochez.*Analyser les images par IA Vision/.test(helpModCode), 'helpModule: FAQ ne mentionne plus la checkbox vision supprimée');
-assert(!/Décochée par défaut/.test(helpModCode), 'helpModule: FAQ ne dit plus « Décochée par défaut » (autoAiMarket est coché)');
-// helpModule : FAQ ne mentionne plus la vitesse « Ultra » (non exposée dans l'UI)
-assert(!/Ultra.*20 annonces en parallèle/.test(helpModCode), 'helpModule: FAQ ne mentionne plus vitesse Ultra (non exposée dans l\'UI select)');
-assert(/Moyen \/ Rapide \/ Ultra-rapide/.test(helpModCode), 'helpModule: FAQ liste les 3 vitesses réellement exposées');
-
-// [7/7] suite — code mort & persistance
-// risk-keywords.js supprimé (code mort : jamais importé dans l'app, l'IA remplace)
-assert(!existsSync(path.join(base, 'config/risk-keywords.js')), 'config/risk-keywords.js supprimé (code mort)');
-
-// app.js : clé API moteur de recherche persistée via secretStore (chiffré)
-// Avant : la clé Tavily disparaissait à chaque redémarrage (non persistée).
-assert(/SEARCH_KEY_SECRET/.test(appCode), 'app.js: constante SEARCH_KEY_SECRET pour clé moteur');
-assert(/loadSearchApiKey/.test(appCode), 'app.js: fonction loadSearchApiKey (charge depuis secretStore)');
-assert(/saveSearchApiKey/.test(appCode), 'app.js: fonction saveSearchApiKey (persiste via secretStore)');
-assert(/getSecret\(SEARCH_KEY_SECRET\)/.test(appCode), 'app.js: charge clé via secretStore.get');
-assert(/setSecret\(SEARCH_KEY_SECRET/.test(appCode), 'app.js: sauve clé via secretStore.set');
-assert(/removeSecret\(SEARCH_KEY_SECRET\)/.test(appCode), 'app.js: supprime clé via secretStore.remove');
-// Le champ clé déclenche la persistance sur change
-assert(/searchApiKeyEl.addEventListener\('change'/.test(appCode), 'app.js: searchApiKeyEl persiste sur change');
-
 // app.js : suppression de job nettoie le comparateur (IDs fantômes)
-// Avant : compareCount affichait un nombre > aux colonnes réelles après suppression.
 assert(/compareSet = new Set\(\[\.\.\.compareSet\]\.filter/.test(appCode), 'app.js: compareSet nettoyé après suppression job (IDs fantômes)');
 assert(/refreshActiveDataTab\(\)/.test(appCode.replace(/\/\/[^\n]*\n/g, '')), 'app.js: suppression déclenche refreshActiveDataTab');
 
-// [7/7] suite — écritures atomiques (anti-corruption de fichiers critiques)
-// secretStore, settings et aiCache utilisaient fs.writeFileSync (non-atomique) :
-// un crash pendant l'écriture corrompait le fichier → secrets/réglages/cache perdus.
+// [suite] — écritures atomiques (anti-corruption de fichiers critiques)
 const secretStoreCode2 = fs.readFileSync(path.join(base, 'utils/secretStore.js'), 'utf8');
 assert(/atomicWriteFileSync\(p,/.test(secretStoreCode2), 'secretStore: _save atomique (atomicWriteFileSync)');
 assert(!/fs\.writeFileSync\(p,/.test(secretStoreCode2), 'secretStore: _save n\'utilise plus fs.writeFileSync');
@@ -1185,11 +729,7 @@ const settingsCode2 = fs.readFileSync(path.join(base, 'core/settings.js'), 'utf8
 assert(/atomicWriteFileSync\(getSettingsPath\(\)/.test(settingsCode2), 'settings: saveSettings atomique (atomicWriteFileSync)');
 assert(!/fs\.writeFileSync\(getSettingsPath\(\)/.test(settingsCode2), 'settings: saveSettings n\'utilise plus fs.writeFileSync');
 
-const aiCacheCode2 = fs.readFileSync(path.join(base, 'services/ai/aiCache.js'), 'utf8');
-assert(/atomicWriteFileSync\(getCachePath\(\)/.test(aiCacheCode2), 'aiCache: _saveNow atomique (atomicWriteFileSync)');
-assert(!/fs\.writeFileSync\(getCachePath\(\)/.test(aiCacheCode2), 'aiCache: _saveNow n\'utilise plus fs.writeFileSync');
-
-// [8/8] suite — Onglet Logs amélioré (auto-scroll, copie, mode debug, résumé, logs IA)
+// [suite] — Onglet Logs amélioré
 const htmlCode2 = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/index.html'), 'utf8');
 assert(/autoScrollToggleBtn/.test(htmlCode2), 'logs: bouton auto-scroll présent dans HTML');
 assert(/copyLogsBtn/.test(htmlCode2), 'logs: bouton copier présent dans HTML');
@@ -1204,8 +744,6 @@ assert(/_logLevelVisible/.test(appCode), 'app.js: fonction de filtrage par nivea
 assert(/_renderLogs/.test(appCode), 'app.js: fonction de re-render (_renderLogs) pour filtrage rétroactif');
 assert(/navigator\.clipboard\.writeText/.test(appCode), 'app.js: copie des logs via clipboard API');
 assert(/MAX_LOG_BUFFER/.test(appCode), 'app.js: plafond mémoire du buffer (MAX_LOG_BUFFER)');
-
-// Mode normal cache les debug, mode debug affiche tout
 assert(/level !== 'debug'/.test(appCode), 'app.js: mode normal filtre les logs debug');
 assert(/_logMode === 'debug'/.test(appCode), 'app.js: mode debug affiche tous les logs');
 
@@ -1215,30 +753,13 @@ assert(/sessionStats/.test(ipcCode2), 'ipcHandlers: sessionStats tracker présen
 assert(/sendSessionSummary/.test(ipcCode2), 'ipcHandlers: fonction sendSessionSummary présente');
 assert(/RÉSUMÉ DE SESSION/.test(ipcCode2), 'ipcHandlers: résumé de session formaté');
 assert(/pagesRequested/.test(ipcCode2) && /adsFound/.test(ipcCode2) && /adsKept/.test(ipcCode2), 'ipcHandlers: compteurs pages/annonces');
-assert(/aiAnalyzed/.test(ipcCode2) && /aiFallback/.test(ipcCode2), 'ipcHandlers: compteurs IA');
 assert(/errors/.test(ipcCode2) && /warnings/.test(ipcCode2) && /debugs/.test(ipcCode2), 'ipcHandlers: compteurs erreurs/warnings/debugs');
-
-// Logs IA détaillés (adAnalyzer + marketValueAnalyzer)
-const adAnalyzerCode2 = fs.readFileSync(path.join(__dirname, '..', 'src/main/services/ai/adAnalyzer.js'), 'utf8');
-assert(/\[IA1\]/.test(adAnalyzerCode2), 'adAnalyzer: logs IA1 préfixés');
-assert(/_onLog/.test(adAnalyzerCode2), 'adAnalyzer: callback _onLog injecté');
-assert(/onLog/.test(adAnalyzerCode2), 'adAnalyzer: paramètre onLog dans analyzeAds');
-assert(/début analyse/.test(adAnalyzerCode2), 'adAnalyzer: log début analyse');
-assert(/appel IA Vision/.test(adAnalyzerCode2), 'adAnalyzer: log appel vision');
-assert(/appel IA Texte/.test(adAnalyzerCode2), 'adAnalyzer: log appel texte');
-assert(/réponse IA reçue/.test(adAnalyzerCode2), 'adAnalyzer: log réponse reçue');
-assert(/JSON invalide/.test(adAnalyzerCode2), 'adAnalyzer: log JSON invalide (diagnostic échec)');
-assert(!/console\.warn\(\`\[AdAnalyzer\] IA échouée/.test(adAnalyzerCode2), 'adAnalyzer: ancien console.warn remplacé par onLog');
-
-const marketCode2 = fs.readFileSync(path.join(__dirname, '..', 'src/main/services/ai/marketValueAnalyzer.js'), 'utf8');
-assert(/\[IA2\]/.test(marketCode2), 'marketValueAnalyzer: logs IA2 préfixés');
-assert(/_onLog/.test(marketCode2), 'marketValueAnalyzer: callback _onLog injecté');
-assert(/onLog/.test(marketCode2), 'marketValueAnalyzer: paramètre onLog dans analyzeMarketBatch');
-assert(/recherche Internet/.test(marketCode2), 'marketValueAnalyzer: log recherche Internet');
-assert(/source\(s\) trouvée\(s\)/.test(marketCode2), 'marketValueAnalyzer: log sources trouvées');
-assert(/appel IA synthèse/.test(marketCode2), 'marketValueAnalyzer: log appel synthèse IA');
-assert(/marché estimé/.test(marketCode2), 'marketValueAnalyzer: log estimation finale');
-assert(!/console\.warn\(\`\[MarketValueAnalyzer\] moteur de recherche échoué/.test(marketCode2), 'marketValueAnalyzer: ancien console.warn remplacé par onLog');
+// Plus de compteurs IA dans le résumé
+assert(!/aiAnalyzed/.test(ipcCode2), 'ipcHandlers: compteur aiAnalyzed supprimé');
+assert(!/aiFallback/.test(ipcCode2), 'ipcHandlers: compteur aiFallback supprimé');
+assert(!/marketAnalyzed/.test(ipcCode2), 'ipcHandlers: compteur marketAnalyzed supprimé');
+assert(!/writeSummaryFile/.test(ipcCode2), 'ipcHandlers: writeSummaryFile supprimé');
+assert(!/resumes-ia/.test(ipcCode2), 'ipcHandlers: écriture resumes-ia.json supprimée');
 
 // CSS pour les logs
 const cssCode2 = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/styles.css'), 'utf8');
@@ -1247,11 +768,16 @@ assert(/\.log-debug/.test(cssCode2), 'styles.css: style log-debug (mode debug)')
 assert(/\.log-info/.test(cssCode2), 'styles.css: style log-info');
 assert(/\.log-warn/.test(cssCode2), 'styles.css: style log-warn');
 assert(/\.log-error/.test(cssCode2), 'styles.css: style log-error');
-
-// [9/9] suite — CAPTCHA + Prompts IA internes + bugs corrigés (audit complet)
+// Plus de styles AI Studio / market-progress / structure-warning
+assert(!/\.ai-studio/.test(cssCode2), 'styles.css: styles .ai-studio supprimés');
+assert(!/\.market-progress/.test(cssCode2), 'styles.css: styles .market-progress supprimés');
+assert(!/\.structure-warning/.test(cssCode2), 'styles.css: styles .structure-warning supprimés');
+assert(!/\.ai-tab/.test(cssCode2), 'styles.css: styles .ai-tab supprimés');
+assert(!/\.ai-panel/.test(cssCode2), 'styles.css: styles .ai-panel supprimés');
+assert(!/\.prompt-card/.test(cssCode2), 'styles.css: styles .prompt-card supprimés');
 
 // CAPTCHA : détection de résolution (bug critique du vStatus figé)
-const harCode2 = fs.readFileSync(path.join(__dirname, '..', 'src/main/services/scraping/harCapturer.js'), 'utf8');
+const harCode2 = fs.readFileSync(path.join(base, 'services/scraping/harCapturer.js'), 'utf8');
 assert(/latestHttpStatus/.test(harCode2), 'harCapturer: tracking dynamique latestHttpStatus (fix vStatus figé)');
 assert(/vPage\.on\('response'/.test(harCode2), 'harCapturer: écouteur response pour statut HTTP temps réel');
 assert(/resourceType\(\) === 'document'/.test(harCode2), 'harCapturer: filtre document sur resourceType (ignore sous-ressources)');
@@ -1259,23 +785,6 @@ assert(/checkVBlocked = async \(\) => \{[\s\S]*?return this\._checkCaptcha\(vPag
 assert(/confirmedClear/.test(harCode2), 'harCapturer: confirmation anti-faux-positif (confirmedClear)');
 assert(!/while \(isBlocked && !this\.isCancelled\)/.test(harCode2), 'harCapturer: ancienne boucle isBlocked remplacée par confirmedClear');
 assert(/POLL_INTERVAL_MS = 2000/.test(harCode2), 'harCapturer: polling 2s (detection rapide, plus 3s)');
-
-// Prompts IA internes (adAnalyzer + marketValueAnalyzer exposés)
-assert(/listInternalPrompts/.test(preloadCode), 'preload: listInternalPrompts exposé au renderer');
-assert(/prompt:internal:list/.test(ipcCode2), 'ipcHandlers: handler prompt:internal:list');
-assert(/ia-analyse/.test(ipcCode2), 'ipcHandlers: prompt IA Analyse (adAnalyzer) exposé');
-assert(/ia-marche/.test(ipcCode2), 'ipcHandlers: prompt IA Marché (marketValueAnalyzer) exposé');
-assert(/_getSystemPrompt/.test(adAnalyzerCode2), 'adAnalyzer: _getSystemPrompt exporté');
-assert(/_buildPrompt/.test(adAnalyzerCode2), 'adAnalyzer: _buildPrompt exporté');
-assert(/_getSystemPrompt/.test(marketCode2), 'marketValueAnalyzer: _getSystemPrompt exporté');
-assert(/_buildPrompt/.test(marketCode2), 'marketValueAnalyzer: _buildPrompt exporté');
-assert(/renderInternalPromptCards/.test(aistudioModCode), 'aiStudioModule: renderInternalPromptCards pour prompts IA internes');
-assert(/Prévisualiser/.test(aistudioModCode), 'aiStudioModule: bouton Prévisualiser présent');
-assert(/prompt-preview/.test(aistudioModCode), 'aiStudioModule: zone de prévisualisation du prompt');
-
-// Bugs corrigés (audit complet)
-assert(/img\.data \? img\.data\.length/.test(adAnalyzerCode2), 'adAnalyzer: fix img.data.length (était img.length → toujours 0 Ko)');
-assert(!/const res = await window\.api\.buildPrompt\(tmpl\.id, \{\}\)/.test(aistudioModCode), 'aiStudioModule: copyRawPrompt nettoyé (variable res morte supprimée)');
 
 // Pipeline : exit code 1 sur erreur CLI (était 0 → runner croyait succès)
 const pipelineCode2 = fs.readFileSync(path.join(__dirname, '..', 'src/main/services/scraping/leboncoin-pipeline.js'), 'utf8');
@@ -1285,48 +794,17 @@ assert(/Erreur CLI[^\n]*\n[\s\S]*?throw err/.test(pipelineCode2), 'pipeline: thr
 assert(/pagesScraped/.test(ipcCode2), 'ipcHandlers: pagesScraped tracker présent');
 assert(/currentPage > sessionStats\.pagesScraped/.test(ipcCode2), 'ipcHandlers: pagesScraped mis à jour depuis la progression HAR');
 
-// ─── P1 : Bouton « Arrêter » universel (scraping + IA Analyse + IA Marché) ───
-console.log('\n[7/7] Bouton Arrêter universel (IA + Marché)');
-// Token d'annulation partagé dans ipcHandlers
-assert(/activeCancel\s*=\s*\{\s*cancelled:\s*false\s*\}/.test(ipcCode2), 'ipcHandlers: token activeCancel créé pour job:start et market:analyze');
-// job:stop annule l'IA (pas seulement isRunning) — plus de return précoce sur !isRunning
-assert(!/if\s*\(\s*!isRunning\s*\)\s*return;/.test(ipcCode2), 'ipcHandlers: job:stop ne retourne plus prématurément si !isRunning (couvre l\'IA Marché)');
-assert(/activeCancel\.cancelled\s*=\s*true/.test(ipcCode2), 'ipcHandlers: job:stop positionne activeCancel.cancelled (arrêt IA)');
-// Signal propagé aux analyseurs
-assert(/signal:\s*activeCancel/.test(ipcCode2), 'ipcHandlers: signal activeCancel passé à analyzeAds ET analyzeMarketBatch');
-assert(/signal\s*=\s*opts\.signal/.test(adAnalyzerCode2), 'adAnalyzer: analyzeAds lit opts.signal (token d\'annulation)');
-assert(/signal\s*&&\s*signal\.cancelled/.test(adAnalyzerCode2), 'adAnalyzer: boucle worker vérifie signal.cancelled entre chaque annonce');
-const marketCode3 = fs.readFileSync(path.join(__dirname, '..', 'src/main/services/ai/marketValueAnalyzer.js'), 'utf8');
-assert(/signal\s*=\s*opts\.signal/.test(marketCode3), 'marketValueAnalyzer: analyzeMarketBatch lit opts.signal');
-assert(/signal\s*&&\s*signal\.cancelled/.test(marketCode3), 'marketValueAnalyzer: boucle worker vérifie signal.cancelled');
-// Statut terminal envoyé à la fin de market:analyze (pour réactiver le bouton Arrêter)
-assert(/state:\s*'completed'/.test(ipcCode2) && /Analyse de marché/.test(ipcCode2), 'ipcHandlers: market:analyze envoie un statut terminal (completed)');
+// ─── P1 : Bouton « Arrêter » universel (scraping) ───
+assert(/activeCancel\s*=\s*\{\s*cancelled:\s*false\s*\}/.test(ipcCode2), 'ipcHandlers: token activeCancel créé pour job:start');
+assert(/activeCancel\.cancelled\s*=\s*true/.test(ipcCode2), 'ipcHandlers: job:stop positionne activeCancel.cancelled (arrêt)');
 
-// ─── P2 : Robustesse affichage prompts préfaits ─────────────────────────────
-console.log('\n[7/7] Robustesse prompts préfaits');
-assert(/_buildPromptCard\(tmpl\)/.test(aistudioModCode), 'aiStudioModule: renderPromptCards délègue à _buildPromptCard');
-assert(/this\.loadTemplates\(\)/.test(aistudioModCode), 'aiStudioModule: loadTemplates appelé dans init');
-assert(/bindBrowser/.test(aistudioModCode), 'aiStudioModule: bindBrowser présent');
-// loadTemplates appelé dans init (prompts prioritaires sur le webview)
-
-// ─── P3 : webview AI Studio (allowlist preload de confiance) ────────────────
-console.log('\n[7/7] webview AI Studio (allowlist preload)');
-assert(/aistudioLoginPreload\.js/.test(mainCode4), 'main.js: allowlist preload aistudioLoginPreload.js dans will-attach-webview');
-assert(/isAiStudioPreload/.test(mainCode4), 'main.js: détection isAiStudioPreload (branche de confiance)');
-// Le preload de confiance conserve contextIsolation=false (nécessaire pour masquer Electron)
-assert(/isAiStudioPreload[\s\S]*?contextIsolation\s*=\s*false/.test(mainCode4), 'main.js: preload IA Studio autorisé avec contextIsolation=false');
-
-// ─── P4 : Bouton « Ouvrir les jobs » (erreurs non silencieuses) ─────────────
-console.log('\n[7/7] Bouton Ouvrir les jobs (erreurs non silencieuses)');
+// ─── P4 : Bouton « Ouvrir les jobs » (erreurs non silencieuses) ───
 assert(/errStr\s*=\s*await\s+FileManager\.openFolder\(JOBS_DIR\)/.test(ipcCode2), 'ipcHandlers: jobs:openFolder await FileManager.openFolder et capture l\'erreur');
 assert(/return\s+errStr/.test(fs.readFileSync(path.join(base, 'infrastructure/fileManager.js'), 'utf8')), 'fileManager: openFolder retourne errStr (shell.openPath)');
-assert(/await\s+window\.api\.openJobsFolder\(\)/.test(aistudioModCode), 'aiStudioModule: openJobsFolder await + gestion d\'erreur');
-assert(/res\?\.success\s*===\s*false/.test(aistudioModCode), 'aiStudioModule: affiche une alerte si openJobsFolder échoue');
 
 // D. Historique des annonces (changements prix/likes entre sessions)
 const { buildAdHistory } = require(path.join(base, 'services/jobs/jobHistory'));
 {
-  // Une annonce qui baisse de prix de 150 → 120 → 100
   const jobs = [
     { id: 'job-2026-08-01T10-00', date: '01/08/2026 à 10:00', ads: [
       { id: '1', title: 'iPhone', price: 150, statistiques: { likes: 10 } },
@@ -1347,9 +825,7 @@ const { buildAdHistory } = require(path.join(base, 'services/jobs/jobHistory'));
   assert(ad1 && ad1.prix && ad1.prix.initial === 150 && ad1.prix.actuel === 100, 'buildAdHistory: prix initial/actuel corrects');
   assert(ad1 && ad1.prix.delta === -50 && ad1.prix.baisse === 50 && ad1.prix.direction === 'baisse', 'buildAdHistory: baisse de 50€ détectée');
   assert(ad1 && ad1.likes && ad1.likes.delta === 14 && ad1.likes.direction === 'up', 'buildAdHistory: hausse de likes 10→24 détectée');
-  // Tri : la première (baisse + hausse likes) doit précéder l'autre
   assert(history[0].id === '1', 'buildAdHistory: tri par activité (baisse + likes up en premier)');
-  // Annonce 2 : prix stable, likes absents (pas de changement)
   const ad2 = history.find((h) => h.id === '2');
   assert(ad2 && ad2.prix === null, 'buildAdHistory: prix stable → null (pas de changement)');
   assert(ad2 && ad2.likes === null, 'buildAdHistory: pas de likes → null');
@@ -1357,8 +833,6 @@ const { buildAdHistory } = require(path.join(base, 'services/jobs/jobHistory'));
 assert(/getAdHistory/.test(fs.readFileSync(path.join(base, 'core/ipcHandlers.js'), 'utf8')), 'ipcHandlers: handler job:getAdHistory enregistré');
 assert(/job:getAdHistory/.test(fs.readFileSync(path.join(base, 'preload.js'), 'utf8')), 'preload: getAdHistory exposé au renderer');
 assert(/getAdHistory:\s*\(\)\s*=>\s*ipcRenderer\.invoke\('job:getAdHistory'\)/.test(fs.readFileSync(path.join(base, 'preload.js'), 'utf8')), 'preload: getAdHistory IPC correctement câblée');
-
-// C. Test fonctionnel de l'export CSV (échappement réel)
 
 // A. Vérification du binaire Chromium (scraping-critique)
 assert(/app:checkChromium/.test(ipcCode2), 'ipcHandlers: handler app:checkChromium enregistré');
@@ -1377,94 +851,50 @@ assert(/npx playwright install chromium/.test(indexHtmlG), 'index.html: commande
 const appJsCodeG = appCode;
 assert(/refreshChromiumCheck/.test(appJsCodeG), 'app.js: fonction refreshChromiumCheck définie');
 assert(/window\.api\.checkChromium\(\)/.test(appJsCodeG), 'app.js: appel à window.api.checkChromium() au démarrage');
-assert(/\/\/ vérification initiale/.test(appJsCodeG), 'app.js: refreshChromiumCheck() appelée à l\'init');
 assert(/res\.ok/.test(appJsCodeG) && /chromiumWarningEl/.test(appJsCodeG), 'app.js: masque/affiche le bandeau selon res.ok');
 
-// B. Export CSV (jumeau du XLSX)
-const excelCodeG = fs.readFileSync(path.join(base, 'infrastructure/excelExporter.js'), 'utf8');
-assert(/static async exportToCsv\(/.test(excelCodeG), 'excelExporter: méthode exportToCsv définie');
-assert(/_csvField/.test(excelCodeG), 'excelExporter: fonction _csvField (échappement RFC 4180)');
-assert(/replace\(\/\"\/g, '""'\)/.test(excelCodeG), 'excelExporter: _csvField double les guillemets internes');
-assert(/\\uFEFF/.test(excelCodeG), 'excelExporter: exportToCsv ajoute le BOM UTF-8 (accents Excel)');
-assert(/\\r\\n/.test(excelCodeG), 'excelExporter: exportToCsv utilise CRLF (compat Excel Windows)');
-
-assert(/exportToCsv\(adsWithAi,\s*csvPath/.test(ipcCode2), 'ipcHandlers: job:start génère le CSV après le XLSX');
-assert(/exportToCsv\(ads, path\.join\(path\.dirname\(targetJob\.files\.xlsx\)/.test(ipcCode2), 'ipcHandlers: market:analyze régénère le CSV après le XLSX');
-
+// jobHistory : plus de fichiers xlsx/csv/short/resumes
 const jobHistCodeG = fs.readFileSync(path.join(base, 'services/jobs/jobHistory.js'), 'utf8');
-assert(/csvPath\s*=\s*path\.join\(resultsDir,\s*'annonces\.csv'\)/.test(jobHistCodeG), 'jobHistory: chemin annonces.csv déclaré');
-assert(/csv:\s*fs\.existsSync\(csvPath\)/.test(jobHistCodeG), 'jobHistory: fichiers.csv liste le CSV');
-assert(/tag-csv/.test(appJsCodeG), 'app.js: tag CSV affiché dans la table d\'historique');
-assert(/\.tag-csv\s*\{/.test(fs.readFileSync(path.join(__dirname, '..', 'src/renderer/styles.css'), 'utf8')), 'styles.css: style .tag-csv défini');
+assert(!/xlsxPath|\.xlsx/.test(jobHistCodeG), 'jobHistory: chemin annonces.xlsx supprimé');
+assert(!/csvPath|\.csv/.test(jobHistCodeG), 'jobHistory: chemin annonces.csv supprimé');
+assert(!/shortTxtPath|\.short/.test(jobHistCodeG), 'jobHistory: chemin annonces.short.txt supprimé');
+assert(!/resumes|resumes-ia/.test(jobHistCodeG), 'jobHistory: chemin resumes-ia.json supprimé');
+assert(!/files\.xlsx/.test(appCode), 'app.js: tag xlsx supprimé de l\'historique');
+assert(!/files\.csv/.test(appCode), 'app.js: tag csv supprimé de l\'historique');
+assert(!/files\.short/.test(appCode), 'app.js: tag short supprimé de l\'historique');
+assert(!/files\.resumes/.test(appCode), 'app.js: tag resumes supprimé de l\'historique');
+assert(!/\.tag-csv/.test(cssCode2), 'styles.css: style .tag-csv supprimé');
+assert(!/\.tag-xlsx/.test(cssCode2), 'styles.css: style .tag-xlsx supprimé');
+assert(!/\.tag-short/.test(cssCode2), 'styles.css: style .tag-short supprimé');
 
-// C. Test fonctionnel de l'export CSV (échappement réel)
-{
-  const tmpCsv = require('path').join(require('os').tmpdir(), 'lbc-test-export.csv');
-  const testAds = [
-    { id: '1', title: 'RTX 3060 "gaming"', prix: 250.5, city: 'Paris', zipcode: '75001',
-      vendeurNom: 'Jean', vendeurType: 'pro', vendeurNote: 4.8,
-      livraison: true, mainPropre: false,
-      likes: 5,
-      datePublication: '2024-01-15T10:30:00+00:00', dateScraping: '2026-08-31T22:43:15Z',
-      etat: 'Très bon état',
-      photosCount: 3, photosUrls: ['a.jpg', 'b.jpg', 'c.jpg'],
-      description: 'Bon état,\nfonctionne.',
-      url: 'https://lbc.fr/1',
-      adAnalysis: { identifiedProduct: 'RTX 3060', summary: 'Bon état,\nfonctionne.' },
-      marketAnalysis: { verdictLabel: 'Bonne affaire', realValue: 300, valueRangeLow: 280, valueRangeHigh: 320, deltaEur: 50, rationale: 'OK' } },
-    { id: '2', title: 'Simple', marketAnalysis: {} },
-  ];
-  const ExcelExporter = require('../src/main/infrastructure/excelExporter').ExcelExporter;
-  const csvContent = (async () => {
-    await ExcelExporter.exportToCsv(testAds, tmpCsv);
-    return fs.readFileSync(tmpCsv, 'utf8');
-  })();
-  await csvContent.then((c) => {
-    assert(c.startsWith('\uFEFF'), 'CSV: BOM UTF-8 en tête de fichier');
-    assert(c.includes('Titre;Produit Identifié'), 'CSV: ligne d\'en-têtes présente');
-    assert(c.includes('Livraison;Main Propre'), 'CSV: colonnes Livraison + Main Propre séparées');
-    assert(/^'Likes;État;Nb Photos/.test('Likes;État;Nb Photos') || c.includes('Likes;') && c.includes('État'),
-      'CSV: colonnes Likes + État présentes');
-    assert(c.includes('Date Publication;Date Modification;Date Scraping'), 'CSV: colonnes Date Publication + Date Modification + Date Scraping');
-    assert(c.includes('"RTX 3060 ""gaming"""'), 'CSV: guillemet interne doublé et champ quoté');
-    assert(c.includes('"Bon état,\nfonctionne."'), 'CSV: champ avec virgule + saut de ligne quoté');
-    assert(c.includes('250,5'), 'CSV: prix décimal avec virgule (FR)');
-    assert(c.includes('4,8/5'), 'CSV: note vendeur formatée');
-    assert(c.includes('OUI'), 'CSV: livraison=OUI pour la première annonce');
-    assert(c.includes('5'), 'CSV: likes exportés');
-    assert(c.includes('Date Modification'), 'CSV: colonne Date Modification présente');
-    assert(!c.includes('Catégorie'), 'CSV: PAS de colonne Catégorie (supprimée)');
-    assert(!c.includes('Département'), 'CSV: PAS de colonne Département (supprimée)');
-    assert(!c.includes('Statut Scraping'), 'CSV: PAS de colonne Statut Scraping (supprimée)');
-    assert(c.includes('\r\n'), 'CSV: fins de ligne CRLF');
-    assert(c.split('\r\n').length >= 3, 'CSV: au moins 3 lignes (header + 2 ads)');
-    try { fs.unlinkSync(tmpCsv); } catch { /* ignore */ }
-  });
-}
-
-// ─── [10/10] Modes d'export (Défaut / Personnalisé) + Texte raccourci ───
-console.log('\n[10/10] Export modes + Short text');
+// ─── [10] Modes d'export (Défaut / Personnalisé) ───
+console.log('\n[10] Export modes');
 {
   const exporting = require('../src/main/services/exporting/exportFields');
   assert(typeof exporting.filterAdByFields === 'function', 'exportFields: filterAdByFields présent');
   assert(typeof exporting.toReadableBlock === 'function', 'exportFields: toReadableBlock présent');
-  assert(typeof exporting.toShortText === 'function', 'exportFields: toShortText présent');
-  assert(typeof exporting.fromShortText === 'function', 'exportFields: fromShortText (décodeur) présent');
   assert(Array.isArray(exporting.DEFAULT_FIELDS) && exporting.DEFAULT_FIELDS.length > 0, 'exportFields: DEFAULT_FIELDS non vide');
   assert(Array.isArray(exporting.FIELD_CATEGORIES) && exporting.FIELD_CATEGORIES.length > 0, 'exportFields: FIELD_CATEGORIES non vide');
   assert(Array.isArray(exporting.ALL_FIELD_KEYS) && exporting.ALL_FIELD_KEYS.length === exporting.DEFAULT_FIELDS.length, 'exportFields: ALL_FIELD_KEYS aligné sur DEFAULT_FIELDS');
+
+  // Plus de toShortText / fromShortText
+  assert(typeof exporting.toShortText === 'undefined', 'exportFields: toShortText supprimé');
+  assert(typeof exporting.fromShortText === 'undefined', 'exportFields: fromShortText supprimé');
+  // Plus de champs IA dans DEFAULT_FIELDS
+  assert(!exporting.DEFAULT_FIELDS.some((f) => ['produitIdentifie', 'resumeIA', 'verdict', 'valeurMarche', 'fourchette', 'benefice', 'justification'].includes(f.key)),
+    'exportFields: champs IA supprimés de DEFAULT_FIELDS');
+  // Plus de catégorie ia
+  assert(!exporting.FIELD_CATEGORIES.some((c) => c.id === 'ia'), 'exportFields: catégorie ia supprimée');
 
   // Mode Défaut : toReadableBlock renvoie un bloc avec tous les champs.
   const ad1 = {
     id: '1', title: 'Nintendo DS Lite', prix: 30, city: 'Dijon', zipcode: '21000',
     vendeurNom: 'Jean', vendeurNote: 4.5, likes: 10,
     description: 'Console en bon état',
-    livraison: true, mainPropre: false,
+    livraison: true, mainPropre: false, deliveryType: 'livraison',
     etat: 'Bon état',
     dateScraping: '2026-08-31T22:43:15Z',
     url: 'https://lbc.fr/1',
-    adAnalysis: { identifiedProduct: 'Nintendo DS Lite', summary: 'Console portable' },
-    marketAnalysis: { verdictLabel: 'Bonne affaire', realValue: 45, valueRangeLow: 40, valueRangeHigh: 50, deltaEur: 15, rationale: 'Bon prix' },
   };
   const blockDefaut = exporting.toReadableBlock(ad1, 0);
   assert(blockDefaut.includes('===== ANNONCE 1 ====='), 'TXT Défaut: en-tête annonce');
@@ -1472,9 +902,7 @@ console.log('\n[10/10] Export modes + Short text');
   assert(blockDefaut.includes('30 €'), 'TXT Défaut: prix formaté');
   assert(blockDefaut.includes('Console en bon état'), 'TXT Défaut: description');
   assert(blockDefaut.includes('Jean'), 'TXT Défaut: vendeur');
-  assert(blockDefaut.includes('OUI'), 'TXT Défaut: livraison OUI');
-  assert(blockDefaut.includes('Nintendo DS Lite'), 'TXT Défaut: produit identifié IA');
-  assert(blockDefaut.includes('Bonne affaire'), 'TXT Défaut: verdict IA Marché');
+  assert(blockDefaut.includes('livraison'), 'TXT Défaut: deliveryType=livraison présent');
 
   // Mode Personnalisé (1 champ : titre + prix) : le bloc ne contient que ça.
   const blockPerso = exporting.toReadableBlock(ad1, 0, ['title', 'prix']);
@@ -1486,13 +914,6 @@ console.log('\n[10/10] Export modes + Short text');
   assert(!blockPerso.includes('Ville'), 'TXT Perso: pas de section Ville');
   assert(!blockPerso.includes('Vendeur'), 'TXT Perso: pas de section Vendeur');
 
-  // Mode Personnalisé (presque tous les champs) : 1 seul champ exclu.
-  const almostAll = exporting.ALL_FIELD_KEYS.filter((k) => k !== 'description');
-  const blockAlmostAll = exporting.toReadableBlock(ad1, 0, almostAll);
-  assert(blockAlmostAll.includes('Titre'), 'TXT quasi-complet: Titre');
-  assert(blockAlmostAll.includes('Description') === false || blockAlmostAll.includes('Description :') === false,
-    'TXT quasi-complet: pas de Description (exclue)');
-
   // filterAdByFields : mode Défaut (= null) → objet tel quel.
   const filteredDefault = exporting.filterAdByFields(ad1);
   assert(filteredDefault.id === '1', 'filterAdByFields default: id conservé');
@@ -1503,173 +924,188 @@ console.log('\n[10/10] Export modes + Short text');
   assert(filteredCustom.id === '1' && filteredCustom.title === 'Nintendo DS Lite' && filteredCustom.prix === 30,
     'filterAdByFields custom: clés sélectionnées conservées');
   assert(filteredCustom.description === undefined, 'filterAdByFields custom: description retirée');
-  assert(filteredCustom.adAnalysis === undefined, 'filterAdByFields custom: adAnalysis retiré (pas de champ IA sélectionné)');
-  assert(filteredCustom.marketAnalysis === undefined, 'filterAdByFields custom: marketAnalysis retiré');
-
-  // filterAdByFields : custom avec uniquement des champs IA → garde slim adAnalysis
-  const filteredIA = exporting.filterAdByFields(ad1, ['produitIdentifie', 'verdict']);
-  assert(filteredIA.adAnalysis && filteredIA.adAnalysis.identifiedProduct === 'Nintendo DS Lite',
-    'filterAdByFields: adAnalysis slim (produitIdentifie seul)');
-  assert(!('summary' in (filteredIA.adAnalysis || {})), 'filterAdByFields: summary absent (non sélectionné)');
-  assert(filteredIA.marketAnalysis && filteredIA.marketAnalysis.verdictLabel === 'Bonne affaire',
-    'filterAdByFields: marketAnalysis slim (verdict seul)');
-  assert(!('realValue' in (filteredIA.marketAnalysis || {})), 'filterAdByFields: realValue absent (non sélectionné)');
-
-  // Texte raccourci : format et compression
-  const short = exporting.toShortText([ad1]);
-  assert(short.startsWith('##SC## 1 '), 'Short: en-tête ##SC## 1');
-  // 1 en-tête + 1 annonce séparés par 0x1D (Group Separator, non-imprimable)
-  assert(short.split('\x1D').length === 2, 'Short: 1 en-tête + 1 annonce = 2 sections (séparateur \\x1D)');
-  // Sérialisation : taille largement plus petite que le TXT normal.
-  const txtSize = Buffer.byteLength(blockDefaut, 'utf8');
-  const shortSize = Buffer.byteLength(short, 'utf8');
-  assert(shortSize < txtSize, `Short est plus compact que le TXT normal (short=${shortSize} < txt=${txtSize})`);
-
-  // Texte raccourci : décodeur restituant les valeurs
-  const decoded = exporting.fromShortText(short);
-  assert(decoded.items.length === 1, 'Short: 1 item décodé');
-  // Le décodeur renvoie les codes courts en clé. On doit retrouver l'identifiant (court) qui correspond au titre.
-  const decodedItem = decoded.items[0];
-  const titleField = exporting.DEFAULT_FIELDS.find((f) => f.key === 'title');
-  const titleShort = titleField.short;
-  assert(decodedItem[titleShort] === 'Nintendo DS Lite',
-    `Short: titre restitué via code court "${titleShort}"`);
-
-  // Texte raccourci : valeurs avec séparateurs / caractères spéciaux
-  const ad2 = {
-    id: '2', title: 'Titre|avec|pipe', prix: 100,
-    description: 'Ligne1\nLigne2\rLigne3|avec|pipe',
-    livraison: true, mainPropre: false,
-  };
-  const short2 = exporting.toShortText([ad2]);
-  const decoded2 = exporting.fromShortText(short2);
-  const titleField2 = exporting.DEFAULT_FIELDS.find((f) => f.key === 'title');
-  const descField2 = exporting.DEFAULT_FIELDS.find((f) => f.key === 'description');
-  assert(decoded2.items[0][titleField2.short] === 'Titre|avec|pipe',
-    'Short: titre avec | préservé (échappement length-prefixed)');
-  assert(decoded2.items[0][descField2.short] === 'Ligne1\nLigne2\rLigne3|avec|pipe',
-    'Short: description multi-ligne + pipe préservés (length-prefixed)');
-
-  // Texte raccourci : valeurs nulles / absentes
-  const ad3 = { id: '3', title: 'T3', prix: null, vendeurNom: null };
-  const short3 = exporting.toShortText([ad3]);
-  const decoded3 = exporting.fromShortText(short3);
-  const prixField = exporting.DEFAULT_FIELDS.find((f) => f.key === 'prix');
-  const vendeurField = exporting.DEFAULT_FIELDS.find((f) => f.key === 'vendeurNom');
-  assert(decoded3.items[0][prixField.short] === null, 'Short: prix null → null au décodage');
-  assert(decoded3.items[0][vendeurField.short] === null, 'Short: vendeur null → null au décodage');
-
-  // Texte raccourci : annonces multiples
-  const shortMany = exporting.toShortText([ad1, ad2, ad3]);
-  const decodedMany = exporting.fromShortText(shortMany);
-  assert(decodedMany.items.length === 3, 'Short: 3 items décodés depuis un fichier multi-annonces');
-
-  // Texte raccourci : un en-tête absent/invalide doit lever une erreur
-  try {
-    exporting.fromShortText('pas un fichier short');
-    assert(false, 'Short: doit lever une erreur sur en-tête invalide');
-  } catch (err) {
-    assert(/invalide/i.test(err.message), 'Short: erreur explicite sur en-tête invalide');
-  }
-
-  // Champ "URLs des photos" : par défaut les URLs sont conservées dans le short
-  // (elles sont sélectionnées), mais le user peut les exclure via le mode
-  // Personnalisé pour gagner de la place.
-  const adPhotos = {
-    id: '4', title: 'Avec photos', photosCount: 2,
-    photosUrls: ['https://a.com/1.jpg', 'https://a.com/2.jpg'],
-  };
-  const shortAll = exporting.toShortText([adPhotos]); // mode Défaut → tout inclus
-  const shortNoPhotos = exporting.toShortText([adPhotos], ['id', 'title', 'photosCount']);
-  assert(Buffer.byteLength(shortAll, 'utf8') > Buffer.byteLength(shortNoPhotos, 'utf8'),
-    'Short: exclure photosUrls réduit la taille');
 }
 
-// Intégration pipeline : writeOutputs respecte le mode (annonces.json filtré + short créé)
+// Intégration pipeline : writeOutputs respecte le profil
 {
   const pipelinePath = path.join(base, 'services/scraping/leboncoin-pipeline.js');
   const pipelineCode = fs.readFileSync(pipelinePath, 'utf8');
-  assert(/--export-mode/.test(pipelineCode), 'pipeline: option CLI --export-mode');
-  assert(/--export-fields/.test(pipelineCode), 'pipeline: option CLI --export-fields');
-  assert(/annonces\.short\.txt/.test(pipelineCode), 'pipeline: écrit annonces.short.txt');
-  assert(/export-meta\.json/.test(pipelineCode), 'pipeline: écrit export-meta.json (mode + champs)');
-  assert(/filterAdByFields/.test(pipelineCode), 'pipeline: utilise filterAdByFields pour mode Personnalisé');
+  assert(/--profile-id/.test(pipelineCode), 'pipeline: option CLI --profile-id');
+  assert(/--profile-fields/.test(pipelineCode), 'pipeline: option CLI --profile-fields');
+  assert(/filterAdByFields/.test(pipelineCode), 'pipeline: utilise filterAdByFields pour le profil');
+  // Plus de short.txt
+  assert(!/annonces\.short\.txt/.test(pipelineCode), 'pipeline: plus de annonces.short.txt');
+  // Plus d'anciennes options --export-mode / --export-fields
+  assert(!/--export-mode/.test(pipelineCode), 'pipeline: ancienne option --export-mode supprimée');
+  assert(!/--export-fields/.test(pipelineCode), 'pipeline: ancienne option --export-fields supprimée');
 }
 
 // Integration pipelineRunner → pipeline
 {
   const runnerCode = fs.readFileSync(path.join(base, 'services/scraping/pipelineRunner.js'), 'utf8');
-  assert(/exportMode/.test(runnerCode), 'pipelineRunner: déstructure exportMode');
-  assert(/--export-mode/.test(runnerCode), 'pipelineRunner: forward --export-mode au pipeline');
-  assert(/--export-fields/.test(runnerCode), 'pipelineRunner: forward --export-fields au pipeline');
+  assert(/profileId/.test(runnerCode), 'pipelineRunner: déstructure profileId');
+  assert(/profileFields/.test(runnerCode), 'pipelineRunner: déstructure profileFields');
+  assert(/--profile-id/.test(runnerCode), 'pipelineRunner: forward --profile-id au pipeline');
+  assert(/--profile-fields/.test(runnerCode), 'pipelineRunner: forward --profile-fields au pipeline');
+  // Plus d'anciennes options
+  assert(!/--export-mode/.test(runnerCode), 'pipelineRunner: ancienne option --export-mode supprimée');
+  assert(!/--export-fields/.test(runnerCode), 'pipelineRunner: ancienne option --export-fields supprimée');
 }
 
-// ipcHandlers : wiring complet du mode
+// ipcHandlers : wiring complet du profil
 {
   const ipcCodeNew = fs.readFileSync(path.join(base, 'core/ipcHandlers.js'), 'utf8');
-  assert(/exportMode/.test(ipcCodeNew), 'ipcHandlers: lit exportMode depuis la config renderer');
+  assert(/profileId/.test(ipcCodeNew), 'ipcHandlers: lit profileId depuis la config renderer');
   assert(/exportFields/.test(ipcCodeNew), 'ipcHandlers: lit exportFields depuis la config renderer');
-  assert(/ALL_EXPORT_KEYS/.test(ipcCodeNew) || /ALL_FIELD_KEYS/.test(ipcCodeNew),
-    'ipcHandlers: valide les clés contre ALL_FIELD_KEYS');
-  assert(/export-meta\.json/.test(ipcCodeNew), 'ipcHandlers: market:analyze lit export-meta.json pour régénérer XLSX/CSV en mode Personnalisé');
-  assert(/exportOptions/.test(ipcCodeNew), 'ipcHandlers: exportOptions transmis à ExcelExporter');
+  assert(/getProfileFields/.test(ipcCodeNew), 'ipcHandlers: utilise getProfileFields pour résoudre les champs');
+  assert(/profileFields/.test(ipcCodeNew), 'ipcHandlers: passe profileFields au pipeline');
+  // Plus de régénération XLSX/CSV
+  assert(!/export-meta\.json.*XLSX|XLSX.*export-meta/.test(ipcCodeNew), 'ipcHandlers: plus de régénération XLSX/CSV');
+  assert(!/ExcelExporter/.test(ipcCodeNew), 'ipcHandlers: plus d\'ExcelExporter');
 }
 
-// ExcelExporter : XLSX/CSV en mode Personnalisé
-{
-  const excelCode = fs.readFileSync(path.join(base, 'infrastructure/excelExporter.js'), 'utf8');
-  assert(/DEFAULT_COLUMNS/.test(excelCode), 'excelExporter: DEFAULT_COLUMNS centralisé');
-  assert(/_selectColumns/.test(excelCode), 'excelExporter: méthode _selectColumns présente');
-  assert(/options\.fields/.test(excelCode), 'excelExporter: accepte options.fields (mode Personnalisé)');
-}
-
-// jobHistory : export-meta + short file
+// jobHistory : plus de export-meta + short file
 {
   const jobHistCode = fs.readFileSync(path.join(base, 'services/jobs/jobHistory.js'), 'utf8');
-  assert(/shortTxtPath/.test(jobHistCode), 'jobHistory: déclare shortTxtPath');
-  assert(/short:/.test(jobHistCode), 'jobHistory: fichier short listé dans files');
-  assert(/exportMeta/.test(jobHistCode), 'jobHistory: exportMeta chargé depuis export-meta.json');
+  assert(!/shortTxtPath/.test(jobHistCode), 'jobHistory: plus de shortTxtPath');
+  assert(!/short:/.test(jobHistCode), 'jobHistory: plus de fichier short listé dans files');
 }
 
-// UI : mode + sélection des champs
+// UI : profil + sélection des champs
 {
   const indexCode = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/index.html'), 'utf8');
-  assert(/id="exportModeDefault"/.test(indexCode), 'index.html: radio mode Défaut');
-  assert(/id="exportModeCustom"/.test(indexCode), 'index.html: radio mode Personnalisé');
+  assert(/id="exportModeDefault"/.test(indexCode), 'index.html: radio profil Défaut');
+  assert(/id="exportModeMaximum"/.test(indexCode), 'index.html: radio profil Maximum');
+  assert(/id="exportModeCustom"/.test(indexCode), 'index.html: radio profil Personnalisé');
   assert(/id="exportFieldsPanel"/.test(indexCode), 'index.html: panneau sélection des champs');
   assert(/id="exportFieldsAll"/.test(indexCode), 'index.html: bouton Tout sélectionner');
   assert(/id="exportFieldsNone"/.test(indexCode), 'index.html: bouton Tout désélectionner');
   assert(/id="exportFieldsList"/.test(indexCode), 'index.html: liste des champs cochables');
+  assert(/id="exportProfileDescription"/.test(indexCode), 'index.html: description du profil affichée');
 
   const appCodeNew = appCode;
   assert(/EXPORT_FIELDS/.test(appCodeNew), 'app.js: liste EXPORT_FIELDS');
-  assert(/getSelectedExportMode/.test(appCodeNew), 'app.js: accesseur mode sélectionné');
+  assert(/getSelectedProfile/.test(appCodeNew), 'app.js: accesseur profil sélectionné (getSelectedProfile)');
   assert(/getSelectedExportFields/.test(appCodeNew), 'app.js: accesseur champs sélectionnés');
-  assert(/exportMode:\s*getSelectedExportMode\(\)/.test(appCodeNew),
-    'app.js: startScraping envoie exportMode');
-  assert(/exportFields:\s*getSelectedExportMode\(\)\s*===\s*.custom.\s*\?/.test(appCodeNew),
-    'app.js: startScraping envoie exportFields uniquement si mode=custom');
-  assert(/tag-short/.test(appCodeNew), 'app.js: tag "TXT court" dans la table d\'historique');
-  assert(/tag-export-custom/.test(appCodeNew), 'app.js: badge "Personnalisé" affiché en mode custom');
+  assert(/profileId:\s*getSelectedProfile\(\)/.test(appCodeNew),
+    'app.js: startScraping envoie profileId');
+  assert(/exportFields:\s*getSelectedProfile\(\)\s*===\s*.custom.\s*\?/.test(appCodeNew),
+    'app.js: startScraping envoie exportFields uniquement si profil=custom');
   assert(/tag-txt/.test(appCodeNew), 'app.js: tag "TXT" affiché dans la table');
+  assert(/tag-export-custom/.test(appCodeNew), 'app.js: badge "Personnalisé" affiché en mode custom');
 
   const stylesCode = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/styles.css'), 'utf8');
-  assert(/\.tag-short\s*\{/.test(stylesCode), 'styles.css: .tag-short');
   assert(/\.tag-txt\s*\{/.test(stylesCode), 'styles.css: .tag-txt');
   assert(/\.tag-export-custom\s*\{/.test(stylesCode), 'styles.css: .tag-export-custom');
 }
 
-// Carte Leaflet : fix du filtre main propre (utilise livraison OU shipping)
+// Carte Leaflet : filtre main propre utilise deliveryType
 {
   const appCodeMap = appCode;
-  assert(/a\.livraison\s*\?\?\s*a\.shipping/.test(appCodeMap),
-    'app.js: filtre carte utilise livraison ?? shipping (fallback legacy)');
+  assert(/deliveryType/.test(appCodeMap),
+    'app.js: filtre carte utilise deliveryType (modèle unifié)');
   assert(/Leaflet non (chargé|disponible)/.test(appCodeMap),
     'app.js: diagnostic Leaflet non chargé (L undefined)');
 }
 
+// ─── [10b] dataProfiles : 3 profils (Défaut / Maximum / Personnalisé) ───
+console.log('\n[10b] dataProfiles (3 profils)');
+(function () {
+  const dp = require('../src/main/services/exporting/dataProfiles');
+  const { ALL_FIELD_KEYS } = require('../src/main/services/exporting/exportFields');
+
+  assert(typeof dp.getProfileFields === 'function', 'dataProfiles: getProfileFields présent');
+  assert(typeof dp.getProfileLabel === 'function', 'dataProfiles: getProfileLabel présent');
+  assert(typeof dp.PROFILES === 'object', 'dataProfiles: PROFILES présent');
+  assert(dp.PROFILES.default.id === 'default', 'dataProfiles: profil default.id');
+  assert(dp.PROFILES.maximum.id === 'maximum', 'dataProfiles: profil maximum.id');
+  assert(dp.PROFILES.custom.id === 'custom', 'dataProfiles: profil custom.id');
+  assert(dp.PROFILES.default.label === 'Défaut', 'dataProfiles: label Défaut');
+  assert(dp.PROFILES.maximum.label === 'Maximum', 'dataProfiles: label Maximum');
+  assert(dp.PROFILES.custom.label === 'Personnalisé', 'dataProfiles: label Personnalisé');
+
+  // DEFAULT_PROFILE_FIELDS : sous-ensemble des champs essentiels
+  assert(Array.isArray(dp.DEFAULT_PROFILE_FIELDS) && dp.DEFAULT_PROFILE_FIELDS.length > 0,
+    'dataProfiles: DEFAULT_PROFILE_FIELDS non vide');
+  assert(dp.DEFAULT_PROFILE_FIELDS.includes('id'), 'dataProfiles: DEFAULT inclut id');
+  assert(dp.DEFAULT_PROFILE_FIELDS.includes('title'), 'dataProfiles: DEFAULT inclut title');
+  assert(dp.DEFAULT_PROFILE_FIELDS.includes('prix'), 'dataProfiles: DEFAULT inclut prix');
+  assert(dp.DEFAULT_PROFILE_FIELDS.includes('description'), 'dataProfiles: DEFAULT inclut description');
+  // DEFAULT est un sous-ensemble strict de ALL_FIELD_KEYS (pas toutes les clés)
+  assert(dp.DEFAULT_PROFILE_FIELDS.length < ALL_FIELD_KEYS.length,
+    'dataProfiles: DEFAULT_PROFILE_FIELDS est un sous-ensemble (< ALL_FIELD_KEYS)');
+
+  // MAXIMUM_PROFILE_FIELDS : toutes les clés disponibles
+  assert(Array.isArray(dp.MAXIMUM_PROFILE_FIELDS), 'dataProfiles: MAXIMUM_PROFILE_FIELDS est un tableau');
+  assert(dp.MAXIMUM_PROFILE_FIELDS.length === ALL_FIELD_KEYS.length,
+    'dataProfiles: MAXIMUM_PROFILE_FIELDS = ALL_FIELD_KEYS (toutes les clés)');
+
+  // getProfileFields : profil default → DEFAULT_PROFILE_FIELDS
+  const defaultFields = dp.getProfileFields('default');
+  assert(Array.isArray(defaultFields) && defaultFields.length === dp.DEFAULT_PROFILE_FIELDS.length,
+    'getProfileFields(default): renvoie DEFAULT_PROFILE_FIELDS');
+  assert(defaultFields.includes('id') && defaultFields.includes('title'),
+    'getProfileFields(default): contient les champs essentiels');
+
+  // getProfileFields : profil maximum → toutes les clés
+  const maxFields = dp.getProfileFields('maximum');
+  assert(maxFields.length === ALL_FIELD_KEYS.length,
+    'getProfileFields(maximum): renvoie toutes les clés');
+  assert(ALL_FIELD_KEYS.every((k) => maxFields.includes(k)),
+    'getProfileFields(maximum): contient toutes les clés');
+
+  // getProfileFields : profil custom avec champs valides
+  const customFields = dp.getProfileFields('custom', ['id', 'title', 'prix']);
+  assert(Array.isArray(customFields) && customFields.length === 3,
+    'getProfileFields(custom, [3 champs]): renvoie 3 champs');
+  assert(customFields.includes('id') && customFields.includes('title') && customFields.includes('prix'),
+    'getProfileFields(custom): champs personnalisés conservés');
+
+  // getProfileFields : profil custom sans champs → fallback sur DEFAULT
+  const customEmpty = dp.getProfileFields('custom', []);
+  assert(Array.isArray(customEmpty) && customEmpty.length === dp.DEFAULT_PROFILE_FIELDS.length,
+    'getProfileFields(custom, []): fallback sur DEFAULT_PROFILE_FIELDS');
+  assert(customEmpty.includes('id'),
+    'getProfileFields(custom, []): fallback contient id');
+
+  // getProfileFields : profil custom avec champs invalides → filtrés
+  const customInvalid = dp.getProfileFields('custom', ['id', 'fakeField', 'title']);
+  assert(customInvalid.length === 2 && customInvalid.includes('id') && customInvalid.includes('title'),
+    'getProfileFields(custom): champs invalides filtrés (seuls les valides sont conservés)');
+
+  // getProfileFields : profil inconnu → fallback sur DEFAULT
+  const unknownFields = dp.getProfileFields('unknown');
+  assert(Array.isArray(unknownFields) && unknownFields.length === dp.DEFAULT_PROFILE_FIELDS.length,
+    'getProfileFields(unknown): fallback sur DEFAULT_PROFILE_FIELDS');
+
+  // getProfileLabel : libellés des profils
+  assert(dp.getProfileLabel('default') === 'Défaut', 'getProfileLabel(default): "Défaut"');
+  assert(dp.getProfileLabel('maximum') === 'Maximum', 'getProfileLabel(maximum): "Maximum"');
+  assert(dp.getProfileLabel('custom') === 'Personnalisé', 'getProfileLabel(custom): "Personnalisé"');
+  assert(dp.getProfileLabel('unknown') === 'Défaut', 'getProfileLabel(unknown): fallback "Défaut"');
+
+  // filterAdByFields avec getProfileFields : cohérence du filtrage
+  const { filterAdByFields } = require('../src/main/services/exporting/exportFields');
+  const testAd = { id: '1', title: 'Test', prix: 100, ville: 'Lyon', description: 'desc', vendeurNom: 'Jean', likes: 42, vendeurNote: 4.8 };
+  const filteredDefault = filterAdByFields(testAd, dp.getProfileFields('default'));
+  assert(filteredDefault.id === '1' && filteredDefault.title === 'Test',
+    'filterAdByFields + getProfileFields(default): champs essentiels conservés');
+  assert(filteredDefault.vendeurNom === 'Jean',
+    'filterAdByFields + getProfileFields(default): vendeurNom present (dans le profil Defaut)');
+  assert(filteredDefault.likes === undefined,
+    'filterAdByFields + getProfileFields(default): likes absent (pas dans le profil Defaut)');
+  assert(filteredDefault.vendeurNote === undefined,
+    'filterAdByFields + getProfileFields(default): vendeurNote absent (pas dans le profil Defaut)');
+
+  const filteredMax = filterAdByFields(testAd, dp.getProfileFields('maximum'));
+  assert(filteredMax.id === '1' && filteredMax.title === 'Test' && filteredMax.vendeurNom === 'Jean',
+    'filterAdByFields + getProfileFields(maximum): tous les champs conserves');
+  assert(filteredMax.likes === 42,
+    'filterAdByFields + getProfileFields(maximum): likes present (toutes les cles)');
+})();
+
 // === 5. Données vendeur + minimisation ===
-console.log('\n[5/5] Données vendeur + minimisation');
+console.log('\n[11] Données vendeur + minimisation');
 const exporting = require('../src/main/services/exporting/exportFields');
 const runnerCode = fs.readFileSync(path.join(base, 'services/scraping/pipelineRunner.js'), 'utf8');
 const ipcCodeNew = fs.readFileSync(path.join(base, 'core/ipcHandlers.js'), 'utf8');
@@ -1696,14 +1132,6 @@ assert(filteredNoSeller.id === '1', 'filterAdByFields: garde les champs non-vend
 const blockNoSeller = exporting.toReadableBlock(testAd, 0, exporting.ALL_FIELD_KEYS, { excludeSellerData: true });
 assert(!blockNoSeller.includes('Vendeur'), 'toReadableBlock: excludeSellerData=true exclut section Vendeur');
 
-// toShortText exclut les champs vendeur
-const shortNoSeller = exporting.toShortText([testAd], exporting.ALL_FIELD_KEYS, { excludeSellerData: true });
-assert(!shortNoSeller.includes('Vn'), 'toShortText: excludeSellerData=true exclut code Vendeur (Vn)');
-
-// ExcelExporter _selectColumns exclut colonnes vendeur
-assert(/excludeSellerData/.test(excelCode), 'excelExporter: supporte excludeSellerData');
-assert(/startsWith\('vendeur'\)/.test(excelCode), 'excelExporter: filtre colonnes vendeur par prefixe');
-
 // Pipeline : --no-seller-data argument parsé
 assert(/--no-seller-data/.test(pipelineCode), 'pipeline: argument CLI --no-seller-data');
 assert(/includeSellerData/.test(pipelineCode), 'pipeline: includeSellerData dans writeOutputsFactory');
@@ -1712,9 +1140,8 @@ assert(/export-meta\.json/.test(pipelineCode) && /includeSellerData/.test(pipeli
 // pipelineRunner : forward --no-seller-data
 assert(/--no-seller-data/.test(runnerCode), 'pipelineRunner: forward --no-seller-data');
 
-// ipcHandlers : includeSellerData passé au pipeline et à ExcelExporter
+// ipcHandlers : includeSellerData passé au pipeline
 assert(/includeSellerData/.test(ipcCodeNew), 'ipcHandlers: passe includeSellerData au pipeline');
-assert(/excludeSellerData/.test(ipcCodeNew), 'ipcHandlers: passe excludeSellerData à ExcelExporter');
 
 // index.html : modal légal + checkbox données vendeur
 assert(/id="legalNoticeModal"/.test(indexCode), 'index.html: modal Utilisation autorisée uniquement');
@@ -1732,32 +1159,19 @@ assert(/seller-data-hidden/.test(appCodeNew) || /seller-data-hidden/.test(styles
 assert(fs.existsSync(path.join(__dirname, '..', 'LEGAL.md')), 'LEGAL.md existe à la racine');
 assert(fs.existsSync(path.join(__dirname, '..', 'docs', 'DATA_HANDLING.md')), 'docs/DATA_HANDLING.md existe');
 
-// --- 11. Tests de sécurité et de robustesse (PASS 2/3/4/5) ---
-console.log('\n[11] Sécurité + robustesse');
-
-// CSV injection : valeurs commençant par = + - @ doivent être préfixées
-const excelCodeCSV = fs.readFileSync(path.join(base, 'infrastructure/excelExporter.js'), 'utf8');
-assert(excelCodeCSV.includes('s.length > 0 && /^[=+\\-@\\t\\r]/.test(s)'), 'excelExporter: CSV injection neutralisée (préfixe quote)');
+// --- 12. Sécurité + robustesse ---
+console.log('\n[12] Sécurité + robustesse');
 
 // URL Security helper : validation SSRF présente
 const urlSecCode = fs.readFileSync(path.join(__dirname, '..', 'src/main/utils/urlSecurity.js'), 'utf8');
 assert(/validateRemoteUrl/.test(urlSecCode), 'urlSecurity: validateRemoteUrl présente');
 assert(/127\.0\.0\.0|10\.0\.0\.0|172\.16\.0\.0|192\.168\.0\.0/.test(urlSecCode), 'urlSecurity: plages IP privées bloquées');
 
-// Short-text : échappement des séparateurs internes
-const shortCode = fs.readFileSync(path.join(base, 'services/exporting/exportFields.js'), 'utf8');
-assert(/\x1E.*\x1F|\x1D/.test(shortCode) || /SHORT_SEP_FIELD/.test(shortCode) && /_shortDecodeValue/.test(shortCode), 'exportFields: échappement/déséchappement short-text présent');
-
 // Data nullability : livraison/mainPropre/type ne sont plus inventés
 const adFieldsCodeFinal = fs.readFileSync(path.join(base, 'services/scraping/adFields.js'), 'utf8');
 assert(!/Array\.isArray\(raw\?\.attributes\) && raw\.attributes\.length > 0/.test(adFieldsCodeFinal), 'adFields: plus de fallback livraison=false sur attributes');
 assert(!/mainPropre\s*=\s*true[^;]*livraison\s*===?\s*false/.test(adFieldsCodeFinal.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '')), 'adFields: plus de fallback mainPropre=true sur livraison=false');
 assert(!/type:\s*type\s*\|\|\s*\(isPro/.test(adFieldsCodeFinal), 'adFields: plus de default type=particulier');
-
-// Cache IA : fallbacks non cachés, fingerprint présent
-const aiCacheCodeFinal = fs.readFileSync(path.join(base, 'services/ai/aiCache.js'), 'utf8');
-assert(/computeFingerprint/.test(aiCacheCodeFinal), 'aiCache: computeFingerprint présente');
-assert(/_fallback/.test(aiCacheCodeFinal) && /if\s*\(\s*specs\._fallback\s*\)\s*return/.test(aiCacheCodeFinal), 'aiCache: fallbacks exclus du cache');
 
 // Pipeline : process.exit remplacé par return/throw
 const pipelineCodeFinal = fs.readFileSync(path.join(base, 'services/scraping/leboncoin-pipeline.js'), 'utf8');
@@ -1767,8 +1181,8 @@ assert(/process\.exitCode\s*=\s*1/.test(pipelineCodeFinal) || /throw\s+err/.test
 // export-meta.json : checksum
 assert(/writeWithChecksum.*export-meta/.test(pipelineCodeFinal), 'pipeline: export-meta.json écrit avec checksum');
 
-// --- 12. Tests comportementaux sécurité (PASS 2/3/4) ---
-console.log('\n[12] Tests comportementaux sécurité');
+// --- 13. Tests comportementaux sécurité ---
+console.log('\n[13] Tests comportementaux sécurité');
 
 // XSS: escapeHtml doit échapper les caractères dangereux
 const appCodeFinal = appCode;
@@ -1795,28 +1209,10 @@ assert(/try[\s\S]*?JSON\.parse[\s\S]*?catch/.test(pipelineCode3) || /catch \(err
 
 // localStorage: les données corrompues ne doivent pas crasher
 const localStorageSafePattern = /try\s*\{[\s\S]*?localStorage\.getItem\(['"]starred-ads['"]\)[\s\S]*?JSON\.parse[\s\S]*?new\s+Set\(/;
-assert(localStorageSafePattern.test(appCode2), 'app.js: localStorage starred-ads parsé avec try/catch');
+assert(localStorageSafePattern.test(appCode), 'app.js: localStorage starred-ads parsé avec try/catch');
 
-// CSV injection: test comportemental avec valeurs dangereuses
-const { ExcelExporter: excelExporter } = require('../src/main/infrastructure/excelExporter');
-const testAdsForCSV = [
-  { id: '1', title: '=HYPERLINK("http://evil","click")', prix: 100 },
-  { id: '2', title: '@SUM(A1:A10)', prix: 200 },
-  { id: '3', title: '+123', prix: 300 },
-  { id: '4', title: '-456', prix: 400 },
-  { id: '5', title: 'Normal title', prix: 500 },
-];
-const csvPath = path.join(tmpDirCorrupt, 'test.csv');
-await excelExporter.exportToCsv(testAdsForCSV, csvPath);
-const csvContent = fs.readFileSync(csvPath, 'utf8');
-assert(csvContent.includes("'=HYPERLINK"), 'CSV: =HYPERLINK neutralisé par quote');
-assert(csvContent.includes("'@SUM(A1:A10)"), 'CSV: @SUM neutralisé par quote');
-assert(csvContent.includes("'+123"), 'CSV: +123 neutralisé par quote');
-assert(csvContent.includes("'-456"), 'CSV: -456 neutralisé par quote');
-assert(csvContent.includes('Normal title'), 'CSV: titre normal préservé');
-
-// --- 13. Détection de changement de structure Leboncoin ---
-console.log('\n[13] Détection changement de structure');
+// --- 14. Détection de changement de structure Leboncoin ---
+console.log('\n[14] Détection changement de structure');
 (function () {
 const { detectStructureChanges } = require('../src/main/services/scraping/leboncoin-pipeline');
 assert(typeof detectStructureChanges === 'function', 'detectStructureChanges exportée depuis le pipeline');
@@ -1865,10 +1261,10 @@ assert(halfResult.warnings.length === 0, 'detectStructureChanges: 50% manquant �
 
 })();
 
-// --- 14. exportFields : round-trip toShortText / fromShortText ---
-console.log('\n[14] exportFields round-trip (toShortText/fromShortText)');
+// --- 15. exportFields : filterAdByFields + toReadableBlock ---
+console.log('\n[15] exportFields (filterAdByFields + toReadableBlock)');
 (function () {
-const { toShortText, fromShortText, filterAdByFields, toReadableBlock, ALL_FIELD_KEYS } = require('../src/main/services/exporting/exportFields');
+const { filterAdByFields, toReadableBlock, ALL_FIELD_KEYS } = require('../src/main/services/exporting/exportFields');
 
 const rtAd = {
   id: '12345', title: 'iPhone 12 | 128Go', url: 'https://www.leboncoin.fr/ad/12345.htm',
@@ -1876,7 +1272,7 @@ const rtAd = {
   vendeurNom: 'Jean', vendeurType: 'particulier', vendeurId: 'u1',
   vendeurNote: 4.8, nombreAvis: 27, vendeurUrlProfil: 'https://www.leboncoin.fr/u1',
   vendeurAncienneteJours: 365,
-  livraison: true, mainPropre: false,
+  livraison: true, mainPropre: false, deliveryType: 'livraison',
   likes: 12,
   datePublication: '2026-09-10T10:00:00Z',
   dateModification: null,
@@ -1885,42 +1281,6 @@ const rtAd = {
   photosCount: 5, photosUrls: ['https://img.lbc.fr/1.jpg', 'https://img.lbc.fr/2.jpg'],
   description: 'Vends iPhone 12\n128Go\nPas de rayures',
 };
-
-// Round-trip complet : toShortText → fromShortText → valeurs préservées
-const shortText = toShortText([rtAd]);
-const decoded = fromShortText(shortText);
-assert(decoded.items.length === 1, 'fromShortText: 1 annonce décodée');
-assert(decoded.items[0]['I'] === '12345', 'fromShortText: id préservé');
-assert(decoded.items[0]['T'] === 'iPhone 12 | 128Go', 'fromShortText: titre avec pipe préservé');
-assert(decoded.items[0]['P'] === '350', 'fromShortText: prix préservé');
-assert(decoded.items[0]['V'] === 'Lyon', 'fromShortText: ville préservée');
-assert(decoded.items[0]['D'] === 'Vends iPhone 12\n128Go\nPas de rayures', 'fromShortText: description multi-ligne préservée');
-
-// Round-trip avec valeur null (dateModification = null)
-assert(decoded.items[0]['Dm'] === null, 'fromShortText: valeur null décodée comme null (pas string "null")');
-
-// Round-trip avec champ excluant les données vendeur
-const shortNoSeller = toShortText([rtAd], null, { excludeSellerData: true });
-const decodedNoSeller = fromShortText(shortNoSeller);
-assert(!('Vn' in decodedNoSeller.items[0]), 'toShortText: excludeSellerData exclut vendeurNom');
-assert(!('Vr' in decodedNoSeller.items[0]), 'toShortText: excludeSellerData exclut vendeurNote');
-
-// Round-trip multi-annonces
-const rtAd2 = { ...rtAd, id: '67890', title: 'Samsung S21', prix: 200 };
-const multiShort = toShortText([rtAd, rtAd2]);
-const multiDecoded = fromShortText(multiShort);
-assert(multiDecoded.items.length === 2, 'fromShortText: 2 annonces décodées');
-assert(multiDecoded.items[0]['I'] === '12345', 'fromShortText: annonce 1 id correct');
-assert(multiDecoded.items[1]['I'] === '67890', 'fromShortText: annonce 2 id correct');
-
-// Round-trip mode Personnalisé (champs restreints)
-const customFields = ['id', 'title', 'prix', 'ville'];
-const customShort = toShortText([rtAd], customFields);
-const customDecoded = fromShortText(customShort);
-assert(customDecoded.items[0]['I'] === '12345', 'fromShortText custom: id présent');
-assert(customDecoded.items[0]['T'] === 'iPhone 12 | 128Go', 'fromShortText custom: titre présent');
-assert(!('Vn' in customDecoded.items[0]), 'fromShortText custom: vendeurNom absent (non sélectionné)');
-assert(!('D' in customDecoded.items[0]), 'fromShortText custom: description absente (non sélectionnée)');
 
 // filterAdByFields : mode Personnalisé ne garde que les champs sélectionnés
 const filtered = filterAdByFields(rtAd, ['id', 'title', 'prix']);
@@ -1954,8 +1314,8 @@ assert(!customBlock.includes('Lyon'), 'toReadableBlock custom: ville absente (no
 
 })();
 
-// --- 15. adFields : extracteurs défensifs sur fixtures variées ---
-console.log('\n[15] adFields extracteurs (fixtures)');
+// --- 16. adFields : extracteurs défensifs sur fixtures variées ---
+console.log('\n[16] adFields extracteurs (fixtures)');
 (function () {
 const adFields = require('../src/main/services/scraping/adFields');
 
@@ -2027,6 +1387,218 @@ assert(adFields.extractLikes({ favorites_count: 5 }) === 5, 'extractLikes: favor
 assert(adFields.extractLikes({ likes_count: '10' }) === 10, 'extractLikes: string parsée');
 assert(adFields.extractLikes({}) === null, 'extractLikes: absent → null');
 
+})();
+
+// --- 17. package.json : plus de exceljs ---
+console.log('\n[17] package.json');
+const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
+assert(!pkg.dependencies || !pkg.dependencies.exceljs, 'package.json: exceljs supprimé des dépendances');
+assert(pkg.dependencies && pkg.dependencies.playwright, 'package.json: playwright conservé');
+assert(pkg.devDependencies && pkg.devDependencies.electron, 'package.json: electron conservé');
+
+// --- 18. Error codes (errorCodes.js) ---
+console.log('\n[18] Error codes (errorCodes.js)');
+(function () {
+  const { ErrorCodes, createError, classifyError } = require('../src/main/services/scraping/errorCodes');
+
+  // ErrorCodes : codes principaux présents
+  assert(ErrorCodes.NET_TIMEOUT === 'NET_TIMEOUT', 'ErrorCodes: NET_TIMEOUT');
+  assert(ErrorCodes.HTTP_403 === 'HTTP_403', 'ErrorCodes: HTTP_403');
+  assert(ErrorCodes.HTTP_429 === 'HTTP_429', 'ErrorCodes: HTTP_429');
+  assert(ErrorCodes.CAPTCHA_DETECTED === 'CAPTCHA_DETECTED', 'ErrorCodes: CAPTCHA_DETECTED');
+  assert(ErrorCodes.CAPTCHA_TIMEOUT === 'CAPTCHA_TIMEOUT', 'ErrorCodes: CAPTCHA_TIMEOUT');
+  assert(ErrorCodes.CAPTCHA_UNRESOLVED === 'CAPTCHA_UNRESOLVED', 'ErrorCodes: CAPTCHA_UNRESOLVED');
+  assert(ErrorCodes.PARSE_HAR_INVALID === 'PARSE_HAR_INVALID', 'ErrorCodes: PARSE_HAR_INVALID');
+  assert(ErrorCodes.EXTRACTOR_SELLER_NAME_FAILED === 'EXTRACTOR_SELLER_NAME_FAILED', 'ErrorCodes: EXTRACTOR_SELLER_NAME_FAILED');
+  assert(ErrorCodes.STRUCTURE_CHANGED === 'STRUCTURE_CHANGED', 'ErrorCodes: STRUCTURE_CHANGED');
+  assert(ErrorCodes.STRUCTURE_FIELD_MISSING === 'STRUCTURE_FIELD_MISSING', 'ErrorCodes: STRUCTURE_FIELD_MISSING');
+  assert(ErrorCodes.AD_EMPTY === 'AD_EMPTY', 'ErrorCodes: AD_EMPTY');
+  assert(ErrorCodes.AD_DELETED === 'AD_DELETED', 'ErrorCodes: AD_DELETED');
+  assert(ErrorCodes.BROWSER_CRASHED === 'BROWSER_CRASHED', 'ErrorCodes: BROWSER_CRASHED');
+  assert(ErrorCodes.SESSION_EXPIRED === 'SESSION_EXPIRED', 'ErrorCodes: SESSION_EXPIRED');
+
+  // createError : structure correcte
+  const err = createError('HTTP_403', 'Accès interdit', { url: 'https://example.com' });
+  assert(err.code === 'HTTP_403', 'createError: code');
+  assert(err.message === 'Accès interdit', 'createError: message');
+  assert(err.context.url === 'https://example.com', 'createError: context');
+  assert(typeof err.timestamp === 'string' && err.timestamp.length > 0, 'createError: timestamp ISO string');
+
+  // createError : message par défaut = code si non fourni
+  const err2 = createError('NET_TIMEOUT');
+  assert(err2.message === 'NET_TIMEOUT', 'createError: message defaults to code');
+  assert(err2.context && typeof err2.context === 'object', 'createError: context defaults to {}');
+
+  // createError : sans contexte
+  const err3 = createError('AD_EMPTY', 'Annonce vide');
+  assert(err3.context !== undefined, 'createError: context is {} not undefined');
+
+  // classifyError : catégories correctes pour chaque préfixe
+  assert(classifyError('NET_TIMEOUT') === 'network_error', 'classifyError: NET_ → network_error');
+  assert(classifyError('NET_CONNECTION_FAILED') === 'network_error', 'classifyError: NET_ → network_error (2)');
+  assert(classifyError('HTTP_403') === 'network_error', 'classifyError: HTTP_4xx → network_error');
+  assert(classifyError('HTTP_429') === 'network_error', 'classifyError: HTTP_429 → network_error');
+  assert(classifyError('HTTP_404') === 'network_error', 'classifyError: HTTP_404 → network_error');
+  assert(classifyError('HTTP_500') === 'global_error', 'classifyError: HTTP_5xx → global_error');
+  assert(classifyError('HTTP_502') === 'global_error', 'classifyError: HTTP_502 → global_error');
+  assert(classifyError('CAPTCHA_DETECTED') === 'session_error', 'classifyError: CAPTCHA_ → session_error');
+  assert(classifyError('CAPTCHA_TIMEOUT') === 'session_error', 'classifyError: CAPTCHA_TIMEOUT → session_error');
+  assert(classifyError('CAPTCHA_UNRESOLVED') === 'session_error', 'classifyError: CAPTCHA_UNRESOLVED → session_error');
+  assert(classifyError('PARSE_HAR_INVALID') === 'global_error', 'classifyError: PARSE_ → global_error');
+  assert(classifyError('PARSE_NO_ADS') === 'global_error', 'classifyError: PARSE_NO_ADS → global_error');
+  assert(classifyError('EXTRACTOR_SELLER_NAME_FAILED') === 'ad_error', 'classifyError: EXTRACTOR_ → ad_error');
+  assert(classifyError('EXTRACTOR_PRICE_FAILED') === 'ad_error', 'classifyError: EXTRACTOR_PRICE → ad_error');
+  assert(classifyError('SESSION_EXPIRED') === 'session_error', 'classifyError: SESSION_ → session_error');
+  assert(classifyError('SESSION_INVALID') === 'session_error', 'classifyError: SESSION_INVALID → session_error');
+  assert(classifyError('BROWSER_CRASHED') === 'global_error', 'classifyError: BROWSER_ → global_error');
+  assert(classifyError('BROWSER_LAUNCH_FAILED') === 'global_error', 'classifyError: BROWSER_LAUNCH → global_error');
+  assert(classifyError('STRUCTURE_CHANGED') === 'global_error', 'classifyError: STRUCTURE_ → global_error');
+  assert(classifyError('STRUCTURE_FIELD_MISSING') === 'global_error', 'classifyError: STRUCTURE_FIELD → global_error');
+  assert(classifyError('AD_DELETED') === 'ad_error', 'classifyError: AD_ → ad_error');
+  assert(classifyError('AD_EMPTY') === 'ad_error', 'classifyError: AD_EMPTY → ad_error');
+  assert(classifyError('AD_MODIFIED') === 'ad_error', 'classifyError: AD_MODIFIED → ad_error');
+
+  // classifyError : cas limites
+  assert(classifyError(null) === 'unknown', 'classifyError: null → unknown');
+  assert(classifyError(undefined) === 'unknown', 'classifyError: undefined → unknown');
+  assert(classifyError('') === 'unknown', 'classifyError: empty string → unknown');
+  assert(classifyError('UNKNOWN_CODE') === 'unknown', 'classifyError: unknown code → unknown');
+})();
+
+// --- 18b. Extractor error callbacks ---
+console.log('\n[18b] Extractor error callbacks (adFields.js)');
+(function () {
+  const adFields = require('../src/main/services/scraping/adFields');
+
+  // extractSeller : callback appelée quand owner existe sans name
+  {
+    const errors = [];
+    const onError = (err) => errors.push(err);
+    // owner avec name → pas d'erreur EXTRACTOR_SELLER_NAME_FAILED
+    adFields.extractSeller({ owner: { name: 'Jean' } }, { onError });
+    assert(!errors.some((e) => e.code === 'EXTRACTOR_SELLER_NAME_FAILED'), "extractSeller: pas d'erreur EXTRACTOR_SELLER_NAME_FAILED quand owner.name présent");
+
+    // owner sans name → erreur EXTRACTOR_SELLER_NAME_FAILED
+    errors.length = 0;
+    adFields.extractSeller({ owner: { type: 'pro' } }, { onError });
+    assert(errors.length >= 1, 'extractSeller: erreur quand owner existe sans name');
+    assert(errors.some((e) => e.code === 'EXTRACTOR_SELLER_NAME_FAILED'), 'extractSeller: code EXTRACTOR_SELLER_NAME_FAILED');
+
+    // owner sans user_id ni id → erreur EXTRACTOR_SELLER_ID_FAILED
+    errors.length = 0;
+    adFields.extractSeller({ owner: { name: 'Jean' } }, { onError });
+    assert(errors.some((e) => e.code === 'EXTRACTOR_SELLER_ID_FAILED'), 'extractSeller: code EXTRACTOR_SELLER_ID_FAILED quand owner sans id');
+
+    // pas d'owner → pas d'erreur
+    errors.length = 0;
+    adFields.extractSeller({}, { onError });
+    assert(errors.length === 0, "extractSeller: pas d'erreur sans owner");
+  }
+
+  // extractPrice : callback appelée quand price présent mais non convertible
+  {
+    const errors = [];
+    const onError = (err) => errors.push(err);
+    // price valide → pas d'erreur
+    adFields.extractPrice({ price: 100 }, { onError });
+    assert(errors.length === 0, "extractPrice: pas d'erreur quand price valide");
+
+    // price string non numérique → erreur
+    errors.length = 0;
+    adFields.extractPrice({ price: 'abc' }, { onError });
+    assert(errors.some((e) => e.code === 'EXTRACTOR_PRICE_FAILED'), 'extractPrice: code EXTRACTOR_PRICE_FAILED quand non convertible');
+
+    // pas de price → pas d'erreur
+    errors.length = 0;
+    adFields.extractPrice({}, { onError });
+    assert(errors.length === 0, "extractPrice: pas d'erreur sans price");
+  }
+
+  // extractDescription : callback appelée quand body présent mais non exploitable
+  {
+    const errors = [];
+    const onError = (err) => errors.push(err);
+    // body string → pas d'erreur
+    adFields.extractDescription({ body: 'texte' }, { onError });
+    assert(errors.length === 0, "extractDescription: pas d'erreur quand body string");
+
+    // body objet sans text → erreur
+    errors.length = 0;
+    adFields.extractDescription({ body: { foo: 'bar' } }, { onError });
+    assert(errors.some((e) => e.code === 'EXTRACTOR_DESCRIPTION_FAILED'), 'extractDescription: code EXTRACTOR_DESCRIPTION_FAILED quand body non exploitable');
+
+    // body nombre → erreur
+    errors.length = 0;
+    adFields.extractDescription({ body: 42 }, { onError });
+    assert(errors.some((e) => e.code === 'EXTRACTOR_DESCRIPTION_FAILED'), 'extractDescription: erreur quand body nombre');
+
+    // pas de body → pas d'erreur
+    errors.length = 0;
+    adFields.extractDescription({}, { onError });
+    assert(errors.length === 0, "extractDescription: pas d'erreur sans body");
+  }
+
+  // extractDates : callback appelée quand aucune date reconnue
+  {
+    const errors = [];
+    const onError = (err) => errors.push(err);
+    // date présente → pas d'erreur
+    adFields.extractDates({ first_publication_date: '2026-01-15T10:00:00Z' }, { onError });
+    assert(errors.length === 0, "extractDates: pas d'erreur quand date présente");
+
+    // annonce avec données mais sans date → erreur
+    errors.length = 0;
+    adFields.extractDates({ list_id: 1, subject: 'Test', price: 100, body: 'desc' }, { onError });
+    assert(errors.some((e) => e.code === 'EXTRACTOR_DATES_FAILED'), 'extractDates: code EXTRACTOR_DATES_FAILED quand aucune date');
+
+    // objet vide → pas d'erreur (trop peu de clés)
+    errors.length = 0;
+    adFields.extractDates({}, { onError });
+    assert(errors.length === 0, "extractDates: pas d'erreur sur objet vide");
+  }
+
+  // extractPhotos : callback appelée quand images présent mais structure inattendue
+  {
+    const errors = [];
+    const onError = (err) => errors.push(err);
+    // images.urls array → pas d'erreur
+    adFields.extractPhotos({ images: { urls: ['https://a.jpg'] } }, { onError });
+    assert(errors.length === 0, "extractPhotos: pas d'erreur quand images.urls array");
+
+    // images array → pas d'erreur
+    adFields.extractPhotos({ images: ['https://a.jpg'] }, { onError });
+    assert(errors.length === 0, "extractPhotos: pas d'erreur quand images array");
+
+    // images objet sans urls → erreur
+    errors.length = 0;
+    adFields.extractPhotos({ images: { total: 5 } }, { onError });
+    assert(errors.some((e) => e.code === 'EXTRACTOR_PHOTOS_FAILED'), 'extractPhotos: code EXTRACTOR_PHOTOS_FAILED quand structure inattendue');
+
+    // pas d'images → pas d'erreur
+    errors.length = 0;
+    adFields.extractPhotos({}, { onError });
+    assert(errors.length === 0, "extractPhotos: pas d'erreur sans images");
+  }
+
+  // Sans callback → pas de crash
+  assert(adFields.extractSeller({ owner: { type: 'pro' } }) !== undefined, 'extractSeller: sans callback → pas de crash');
+  assert(adFields.extractPrice({ price: 'abc' }) === null, 'extractPrice: sans callback → pas de crash');
+  assert(adFields.extractDescription({ body: 42 }) === null, 'extractDescription: sans callback → pas de crash');
+})();
+
+// --- 18c. computeDeliveryType (existing tests still pass) ---
+console.log('\n[18c] computeDeliveryType (non-régression)');
+(function () {
+  const { computeDeliveryType } = require('../src/main/services/scraping/adFields');
+  assert(computeDeliveryType(true, true) === 'les_deux', 'computeDeliveryType: true,true → les_deux');
+  assert(computeDeliveryType(true, false) === 'livraison', 'computeDeliveryType: true,false → livraison');
+  assert(computeDeliveryType(true, null) === 'livraison', 'computeDeliveryType: true,null → livraison');
+  assert(computeDeliveryType(false, true) === 'main_propre', 'computeDeliveryType: false,true → main_propre');
+  assert(computeDeliveryType(null, true) === 'main_propre', 'computeDeliveryType: null,true → main_propre');
+  assert(computeDeliveryType(false, false) === 'aucun', 'computeDeliveryType: false,false → aucun');
+  assert(computeDeliveryType(false, null) === 'aucun', 'computeDeliveryType: false,null → aucun');
+  assert(computeDeliveryType(null, false) === 'aucun', 'computeDeliveryType: null,false → aucun');
+  assert(computeDeliveryType(null, null) === 'inconnu', 'computeDeliveryType: null,null → inconnu');
 })();
 
 console.log(`\n=== RÉSULTAT : ${pass} réussis, ${fail} échoués ===`);

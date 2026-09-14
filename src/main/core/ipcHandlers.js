@@ -8,66 +8,25 @@ const { PipelineRunner } = require('../services/scraping/pipelineRunner');
 const { FileManager } = require('../infrastructure/fileManager');
 const { JobHistoryManager } = require('../services/jobs/jobHistory');
 const { StorageCleaner } = require('../services/maintenance/storageCleaner');
-const { ExcelExporter } = require('../infrastructure/excelExporter');
-const { AdAnalyzer } = require('../services/ai/adAnalyzer');
-const { MarketValueAnalyzer } = require('../services/ai/marketValueAnalyzer');
-const { PromptGenerator } = require('../services/ai/promptGenerator');
-const { listTemplates, buildPrompt } = require('../services/ai/promptTemplates');
-const { checkOllamaHealth, checkModelAvailable } = require('../services/ai/ollamaHealth');
 const { Notifier } = require('../infrastructure/notifications');
 const { JOBS_DIR, BASE_OUT_DIR } = require('../config/constants');
 const { redact, summarizeAds, formatBytes, describeError } = require('../utils/diagnostics');
 const { writeWithChecksum, readWithChecksum } = require('../utils/integrity');
-const { atomicWriteFileSync } = require('../utils/helpers');
 const { loadSettings, saveSettings } = require('./settings');
-const { listSearchProviders } = require('../services/ai/search/searchProviderRegistry');
 const { filterAdByFields: filterAdsForExport, ALL_FIELD_KEYS: ALL_EXPORT_KEYS } = require('../services/exporting/exportFields');
-
-/**
- * Génère un fichier résumé compact (JSON) destiné à être transmis à une autre IA
- * pour analyse externe. Contient uniquement : numéro, titre, URL, prix, résumé IA.
- * Exclut volontairement la description complète, les photos, la date et les autres
- * infos inutiles — pour garder le fichier léger.
- *
- * Écriture atomique : un crash pendant l'écriture laissait un resumes-ia.json
- * tronvé/corrompu (fs.writeFileSync n'est pas atomique). On passe par
- * atomicWriteFileSync (tmp + rename) — cohérent avec les autres écritures JSON.
- */
-function writeSummaryFile(ads, summaryPath) {
-  try {
-    const summary = ads.map((a, i) => ({
-      numero: i + 1,
-      titre: a.title || null,
-      url: a.url || null,
-      prix: a.prix != null ? a.prix : (a.price != null ? a.price : null),
-      resume_ia: (a.adAnalysis && a.adAnalysis.summary) || null,
-    }));
-    atomicWriteFileSync(summaryPath, JSON.stringify(summary, null, 2));
-  } catch (err) {
-    console.warn('[writeSummaryFile] Écriture du résumé impossible :', err.message);
-  }
-}
+const { getProfileFields } = require('../services/exporting/dataProfiles');
 
 function setupIpcHandlers(getMainWindow) {
   let activeCapturer = null;
   let activeRunner = null;
   let isRunning = false;
-  // Verrou dédié à l'analyse de marché (market:analyze). isRunning ne couvre
-  // QUE le cycle job:start ; sans ce second verrou, deux invocations concurrentes
-  // de market:analyze (ex: double-clic sur « IA Marché » avant que le bouton ne
-  // se désactive) lançaient deux batches IA + deux writeWithChecksum en parallèle
-  // sur le MÊME job → race sur le fichier annonces.json et appels IA dupliqués.
-  let isMarketAnalyzing = false;
 
-  // Token d'annulation partagé pour TOUTES les tâches longues (scraping + IA
-  // Analyse + IA Marché). Le bouton « Arrêter » positionne activeCancel.cancelled
-  // = true ; les boucles de workers des analyseurs (AdAnalyzer / MarketValueAnalyzer)
-  // vérifient ce flag entre chaque annonce et s'arrêtent proprement, en
-  // conservant les résultats déjà produits. Permet d'arrêter l'IA (pas seulement
-  // le scraping) sans tuer l'application.
+  // Token d'annulation partagé pour les tâches longues (scraping). Le bouton
+  // « Arrêter » positionne activeCancel.cancelled = true ; la capture HAR et le
+  // pipeline forké s'arrêtent proprement.
   let activeCancel = null;
 
-  // Getter de fenêtre principale : renvoie null si détruite/fichermée,
+  // Getter de fenêtre principale : renvoie null si détruite/fermée,
   // évitant les crashes "Cannot read properties of null" sur webContents.send.
   const getWin = () => {
     const w = typeof getMainWindow === 'function' ? getMainWindow() : getMainWindow;
@@ -110,14 +69,12 @@ function setupIpcHandlers(getMainWindow) {
 
   // ─── Suivi de session pour le résumé de fin de scraping ────────────────────
   // Les compteurs sont incrémentés au fil du job (via l'écoute des logs du
-  // pipeline et des phases IA). À la fin, un résumé formaté est envoyé.
+  // pipeline). À la fin, un résumé formaté est envoyé.
   function newSessionStats() {
     return {
       t0: 0, pagesRequested: 0, pagesScraped: 0,
       adsFound: 0, adsKept: 0, adsDuplicates: 0,
       descriptionsExtracted: 0, descriptionsBlocked: 0,
-      aiAnalyzed: 0, aiFallback: 0, aiErrors: 0,
-      marketAnalyzed: 0, marketFallback: 0,
       errors: 0, warnings: 0, debugs: 0,
       stoppedEarly: false,
     };
@@ -154,11 +111,6 @@ function setupIpcHandlers(getMainWindow) {
       `  🔄 Doublons fusionnés   : ${sessionStats.adsDuplicates}`,
       `  📝 Descriptions extraites: ${sessionStats.descriptionsExtracted}`,
       `  🛑 Pages bloquées (403) : ${sessionStats.descriptionsBlocked}`,
-      `  🧠 IA Analyse — OK      : ${sessionStats.aiAnalyzed}`,
-      `  🧠 IA Analyse — fallback: ${sessionStats.aiFallback}`,
-      `  🧠 IA Analyse — erreurs: ${sessionStats.aiErrors}`,
-      `  📊 IA Marché — OK       : ${sessionStats.marketAnalyzed}`,
-      `  📊 IA Marché — fallback : ${sessionStats.marketFallback}`,
       `  ❌ Erreurs              : ${sessionStats.errors}`,
       `  ⚠️  Avertissements      : ${sessionStats.warnings}`,
       `  🐛 Logs debug           : ${sessionStats.debugs}`,
@@ -183,22 +135,18 @@ function setupIpcHandlers(getMainWindow) {
     sessionStats.t0 = Date.now();
     sessionStats.pagesRequested = parseInt(config.pages, 10) || 1;
 
-    const { searchUrl, pages = 1, noDesc = false, autoAiMarket = true, analyzeImages = false, limit, aiConfig, proxyUrl, exportMode, exportFields } = config;
-    // Normalisation des options d'export : le mode Défaut est implicite si rien
-    // n'est fourni. `exportFields` n'a de sens qu'avec exportMode === 'custom'.
-    const normalizedExportMode = (exportMode === 'custom') ? 'custom' : 'default';
-    const normalizedExportFields = (normalizedExportMode === 'custom' && Array.isArray(exportFields) && exportFields.length > 0)
-      ? exportFields.filter((k) => ALL_EXPORT_KEYS.includes(k))
-      : null;
-    if (normalizedExportMode === 'custom' && (!normalizedExportFields || normalizedExportFields.length === 0)) {
-      // Mode custom demandé mais aucun champ valide fourni : on conserve le mode
-      // (le pipeline appliquera un fallback sur les essentiels) mais on log un
+    const { searchUrl, pages = 1, noDesc = false, limit, proxyUrl, profileId, exportFields } = config;
+    // Résolution du profil de données (Défaut / Maximum / Personnalisé) en une
+    // liste concrète de clés de champs. Le pipeline reçoit `profileFields` qu'il
+    // applique aux exports JSON et TXT.
+    const resolvedProfileId = (profileId === 'maximum' || profileId === 'custom') ? profileId : 'default';
+    const profileFields = getProfileFields(resolvedProfileId, exportFields);
+    if (resolvedProfileId === 'custom' && (!profileFields || profileFields.length === 0)) {
+      // Mode custom demandé mais aucun champ valide fourni : getProfileFields a
+      // déjà appliqué un fallback sur les champs essentiels. On log un
       // avertissement pour aider l'utilisateur à comprendre ce qu'il a choisi.
-      sendLog({ level: 'warn', message: '[job:start] Mode Personnalisé actif mais aucun champ valide sélectionné — fallback sur les champs essentiels (id, title, url, prix, description).' });
+      sendLog({ level: 'warn', message: '[job:start] Profil Personnalisé actif mais aucun champ valide sélectionné — fallback sur les champs essentiels.' });
     }
-    // Note : analyzeImages est conservé pour rétro-compatibilité UI mais n'a plus
-    // d'effet séparé — l'IA Analyse (adAnalyzer) combine déjà texte + vision en
-    // un seul appel quand des photos sont disponibles et qu'un modèle vision est configuré.
     const userSettings = loadSettings();
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -206,7 +154,7 @@ function setupIpcHandlers(getMainWindow) {
     const harPath = path.join(jobDir, 'capture.har');
     const resultsDir = path.join(jobDir, 'results');
 
-    sendLog({ level: 'debug', message: `[job:start] Config reçue — searchUrl=${searchUrl} | pages=${pages} | noDesc=${noDesc}  autoAiMarket=${autoAiMarket} | analyzeImages=${analyzeImages} | limit=${limit ?? '(aucun)'} | proxy=${proxyUrl || 'aucun'} | aiConfig.provider=${aiConfig?.provider || '?'} | aiConfig.apiKey=${redact(aiConfig?.apiKey)}` });
+    sendLog({ level: 'debug', message: `[job:start] Config reçue — searchUrl=${searchUrl} | pages=${pages} | noDesc=${noDesc} | limit=${limit ?? '(aucun)'} | proxy=${proxyUrl || 'aucun'}` });
     sendLog({ level: 'debug', message: `[job:start] Dossiers — jobDir=${jobDir} | harPath=${harPath} | resultsDir=${resultsDir}` });
 
     let stoppedEarly = false;
@@ -292,9 +240,10 @@ function setupIpcHandlers(getMainWindow) {
         speed: userSettings.scrapeSpeed || 'fast',
         headless: userSettings.headless !== false,
         userAgent: activeCapturer ? activeCapturer._userAgent : undefined,
-        // Mode d'export : appliqué par le pipeline (annonces.json + txt + short.txt).
-        exportMode: normalizedExportMode,
-        exportFields: normalizedExportFields,
+        // Profil de données (Défaut / Maximum / Personnalisé) : liste concrète de
+        // clés de champs à exporter, appliquée par le pipeline (JSON + TXT).
+        profileId: resolvedProfileId,
+        profileFields,
         includeSellerData: userSettings.includeSellerData !== false,
       });
       sendLog({ level: 'debug', message: `[job:start] Phase pipeline terminée en ${Math.round((Date.now() - t0Pipeline) / 1000)}s.` });
@@ -302,7 +251,6 @@ function setupIpcHandlers(getMainWindow) {
       activeRunner = null;
 
       const jsonPath = path.join(resultsDir, 'annonces.json');
-      const xlsxPath = path.join(resultsDir, 'annonces.xlsx');
 
       if (fs.existsSync(jsonPath)) {
         // Lecture via checksum : le pipeline écrit annonces.json avec
@@ -312,96 +260,13 @@ function setupIpcHandlers(getMainWindow) {
         // silencieusement et fait tomber le job en erreur générique.
         const { data: ads, valid, reason } = readWithChecksum(jsonPath);
         if (!valid || !Array.isArray(ads)) {
-          sendLog({ level: 'warn', message: `[job:start] annonces.json illisible (${reason || 'format inattendu'}) — étapes suivantes (IA/Excel) ignorées pour ce job.` });
+          sendLog({ level: 'warn', message: `[job:start] annonces.json illisible (${reason || 'format inattendu'}) — étapes suivantes ignorées pour ce job.` });
           sessionStats.warnings++;
-          } else {
-            let adsWithAi = ads;
-            sessionStats.adsKept = ads.length;
-            if (sessionStats.adsFound === 0) sessionStats.adsFound = ads.length;
-            sendLog({ level: 'debug', message: `[job:start] annonces.json lu : ${summarizeAds(adsWithAi)}.` });
-
-            // 🧠 IA ANALYSE (Texte + Vision) — uniquement si « Analyse IA » cochée.
-            // L'IA Analyse reconstitue ce qu'est réellement l'objet vendu en croisant
-            // titre + description + données scraper + photos. Pas de score ni de
-            // scam score : juste un résumé précis + les attributs clés (modèle, état,
-            // défauts, accessoires…). Résultat stocké dans ad.adAnalysis.
-            if (autoAiMarket) {
-              // 🩺 Health-check Ollama avant l'analyse (si provider ollama)
-              if (aiConfig?.provider === 'ollama' || !aiConfig?.provider) {
-                const ollamaUrl = aiConfig.ollamaUrl || 'http://127.0.0.1:11434';
-                const modelName = aiConfig.visionModel || aiConfig.model || 'llava';
-                sendLog({ level: 'debug', message: `[IA] Health-check Ollama (${ollamaUrl}, modèle ${modelName})...` });
-                const health = await checkModelAvailable(ollamaUrl, modelName);
-                if (!health.ok) {
-                  sendLog({ level: 'warn', message: `🩺 ${health.message} — l'analyse IA va échouer pour chaque annonce (fallback automatique appliqué).` });
-                } else {
-                  sendLog({ level: 'debug', message: `🩺 ${health.message}` });
-                }
-              }
-
-              sendStatus({ state: 'processing', message: 'Analyse IA des annonces (texte + vision)...' });
-              const visionModel = aiConfig?.visionModel || 'llava';
-              sendLog({ level: 'info', message: `🧠 Lancement de l'IA Analyse (${ads.length} annonces, texte + ${analyzeImages ? 'vision activée' : 'vision si photos'}, parallèle x${userSettings.aiConcurrency || 4}, modèle ${visionModel})...` });
-
-              const t0Ai = Date.now();
-              const analysisConfig = {
-                provider: aiConfig?.provider || 'ollama',
-                ...(aiConfig?.ollamaUrl ? { ollamaUrl: aiConfig.ollamaUrl } : {}),
-                ...(aiConfig?.model ? { textModel: aiConfig.model } : {}),
-                ...(visionModel ? { visionModel } : {}),
-              };
-              adsWithAi = await AdAnalyzer.analyzeAds(adsWithAi, analysisConfig, {
-                concurrency: userSettings.aiConcurrency || 4,
-                signal: activeCancel,
-                onProgress: (prog) => sendProgress({
-                  percent: 75 + Math.round((prog.percent / 100) * 25),
-                  status: prog.status,
-                }),
-                onLog: (data) => { sendLog(data); if (data.level === 'error' || data.level === 'warn') sessionStats.aiErrors++; },
-              });
-              const aiElapsed = Math.round((Date.now() - t0Ai) / 1000);
-              const analyzedCount = adsWithAi.filter((a) => a.adAnalysis && !a.adAnalysis._fallback).length;
-              sessionStats.aiAnalyzed = analyzedCount;
-              sessionStats.aiFallback = adsWithAi.length - analyzedCount;
-              if (activeCancel && activeCancel.cancelled) {
-                stoppedEarly = true;
-                sessionStats.stoppedEarly = true;
-                sendLog({ level: 'warn', message: `⏹️ IA Analyse interrompue : ${analyzedCount}/${adsWithAi.length} annonce(s) analysée(s). Les résultats partiels sont sauvegardés.` });
-              } else {
-                sendLog({ level: 'info', message: `✅ IA Analyse terminée en ${aiElapsed}s (${analyzedCount}/${adsWithAi.length} annonces analysées, ${adsWithAi.length - analyzedCount} fallback).` });
-              }
-              sendLog({ level: 'debug', message: `[job:start] Phase IA Analyse terminée en ${aiElapsed}s.` });
-
-              writeWithChecksum(jsonPath, adsWithAi, null, 2);
-              writeSummaryFile(adsWithAi, path.join(path.dirname(jsonPath), 'resumes-ia.json'));
-            } else {
-              sendLog({ level: 'debug', message: '[job:start] IA Analyse ignorée (autoAiMarket=false).' });
-            }
-
-            // Mode Personnalisé : on restreint le XLSX/CSV aux colonnes
-            // sélectionnées. Le mode Défaut garde l'export exhaustif.
-            const xlsxOptions = (normalizedExportMode === 'custom' && normalizedExportFields) ? { fields: normalizedExportFields } : {};
-            if (userSettings.includeSellerData === false) xlsxOptions.excludeSellerData = true;
-            await ExcelExporter.exportToXlsx(adsWithAi, xlsxPath, xlsxOptions);
-            sendLog({ level: 'info', message: '📊 Export Excel (.xlsx) généré avec succès !' });
-            // Export CSV jumeau (compatible Excel FR, BOM UTF-8) : permet l'import
-            // dans un tableur alternatif ou un script sans dépendre d'Excel.
-            const csvPath = path.join(resultsDir, 'annonces.csv');
-            try {
-              await ExcelExporter.exportToCsv(adsWithAi, csvPath, xlsxOptions);
-              sendLog({ level: 'debug', message: `📄 Export CSV généré : ${csvPath}` });
-            } catch (csvErr) {
-              sendLog({ level: 'warn', message: `Export CSV impossible : ${csvErr.message}` });
-            }
-
-            // Note : la notification « Très bonne affaire » est déclenchée par le
-            // handler market:analyze (IA Marché, action manuelle) — pas ici. Pendant
-            // le job:start, l'IA Marché n'est pas lancée (seule l'IA Analyse l'est).
-            const analyzed = adsWithAi.filter((a) => a.adAnalysis && !a.adAnalysis._fallback).length;
-            if (analyzed > 0) {
-              sendLog({ level: 'debug', message: `[job:start] ${analyzed} annonce(s) analysée(s) par l'IA (résumés produits + attributs).` });
-            }
-          } // fin du else (annonces.json lisible)
+        } else {
+          sessionStats.adsKept = ads.length;
+          if (sessionStats.adsFound === 0) sessionStats.adsFound = ads.length;
+          sendLog({ level: 'debug', message: `[job:start] annonces.json lu : ${summarizeAds(ads)}.` });
+        }
       } else {
         sendLog({ level: 'warn', message: `[job:start] annonces.json introuvable après pipeline : ${jsonPath} — le scraping a peut-être échoué silencieusement.` });
       }
@@ -442,206 +307,17 @@ function setupIpcHandlers(getMainWindow) {
     }
   });
 
-  // ⏹️ Bouton « Arrêter » : arrêt propre de TOUTE tâche longue en cours, pas
-  // uniquement le scraping. Annule l'IA Analyse (job:start) et l'IA Marché
-  // (market:analyze) via le token partagé activeCancel, ET stoppe la capture
-  // HAR / le pipeline forké pour la phase de scraping. Les workers IA en cours
-  // terminent l'annonce courante puis s'arrêtent ; les résultats partiels sont
-  // sauvegardés. Aucun kill forcé : l'application reste stable.
+  // ⏹️ Bouton « Arrêter » : arrêt propre de la capture HAR et du pipeline forké.
   ipcMain.on('job:stop', () => {
-    // Arrêt de l'IA Marché (market:analyze) même si isRunning est false (le
-    // scraping est déjà fini mais l'IA Marché tourne encore).
     if (activeCancel) {
       activeCancel.cancelled = true;
-      sendLog({ level: 'warn', message: '⏹️ Demande d\'arrêt envoyée — arrêt en cours de la tâche (les annonces en traitement terminent, puis stop).' });
+      sendLog({ level: 'warn', message: '⏹️ Demande d\'arrêt envoyée — arrêt en cours de la tâche.' });
     }
-    // Arrêt de la phase scraping (capture HAR + pipeline forké).
     if (activeRunner) activeRunner.stop();
     if (activeCapturer) activeCapturer.stop(); // Arrêt immédiat de la capture HAR en cours
-    if (!isRunning && !isMarketAnalyzing && !activeCancel) {
+    if (!isRunning && !activeCancel) {
       sendLog({ level: 'debug', message: '[job:stop] Aucune tâche en cours.' });
     }
-  });
-
-  // 🌐 IA MARCHÉ — recherche Internet + estimation réelle de la valeur.
-  // Bouton « Analyse IA » dans l'Explorateur. Reçoit les annonces (avec
-  // adAnalysis déjà produit par l'IA 1) et estime la valeur réelle de chaque
-  // produit via recherche web (SearchProvider sans-clé par défaut) + synthèse IA.
-  // Résultat stocké dans ad.marketAnalysis : { realValue, verdict, deltaEur, sources[], rationale }.
-  ipcMain.handle('market:analyze', async (event, { jobId, aiConfig, searchConfig, adIds }) => {
-    if (isRunning) throw new Error('Un job de scraping est en cours — attendez la fin avant d\'analyser le marché.');
-    if (isMarketAnalyzing) throw new Error('Une analyse de marché est déjà en cours — attendez la fin avant d\'en lancer une autre.');
-    isMarketAnalyzing = true;
-    // Token d'annulation dédié à l'IA Marché (bouton « Arrêter »). Indépendant
-    // du token de job:start (les deux ne tournent jamais en même temps grâce
-    // au verrou isRunning, mais on isole pour la clarté).
-    activeCancel = { cancelled: false };
-    let wasCancelled = false;
-    try {
-    const jobs = JobHistoryManager.listAllJobs();
-    const targetJob = jobs.find((j) => j.id === jobId);
-
-    if (!targetJob) throw new Error(`Job introuvable (id: ${jobId}). Aucune analyse possible.`);
-    if (!targetJob.files.json) throw new Error('Aucun fichier de résultats trouvé pour ce job.');
-
-    // Lecture via checksum : valide l'intégrité (le fichier a pu être réécrit par
-    // un job:start ou une précédente analyse marché) et donne un message clair
-    // en cas de corruption au lieu d'un JSON.parse qui ferait échouer toute l'analyse.
-    const { data: adsRead, valid: adsValid, reason: adsReason } = readWithChecksum(targetJob.files.json);
-    if (!adsValid || !Array.isArray(adsRead)) {
-      throw new Error(`annonces.json illisible pour ce job (${adsReason || 'format inattendu'}).`);
-    }
-    let ads = adsRead;
-
-    // Filtrer aux annonces sélectionnées si adIds fourni (analyse ciblée).
-    let targetAds = ads;
-    if (Array.isArray(adIds) && adIds.length > 0) {
-      const idSet = new Set(adIds);
-      targetAds = ads.filter((a) => idSet.has(a.id));
-      sendLog({ level: 'info', message: `[IA Marché] Analyse ciblée sur ${targetAds.length}/${ads.length} annonce(s).` });
-    }
-
-    const missing = targetAds.filter((a) => !a.adAnalysis);
-    if (missing.length > 0) {
-      sendLog({ level: 'warn', message: `[IA Marché] ${missing.length} annonce(s) sans adAnalysis (IA 1 manquante) — elles seront ignorées.` });
-      targetAds = targetAds.filter((a) => a.adAnalysis);
-    }
-
-    const reanalyzeSettings = loadSettings();
-    const marketAiConfig = {
-      provider: aiConfig?.provider || 'ollama',
-      ...(aiConfig?.ollamaUrl ? { ollamaUrl: aiConfig.ollamaUrl } : {}),
-      ...(aiConfig?.model ? { textModel: aiConfig.model } : {}),
-    };
-    const sConfig = {
-      provider: (searchConfig && searchConfig.provider) || 'duckduckgo',
-      ...(searchConfig && searchConfig.apiKey ? { apiKey: searchConfig.apiKey } : {}),
-      ...(searchConfig && searchConfig.timeoutMs ? { timeoutMs: searchConfig.timeoutMs } : {}),
-    };
-
-    sendStatus({ state: 'processing', message: 'Analyse de marché (recherche Internet + estimation)...' });
-    sendLog({ level: 'info', message: `🌐 Lancement IA Marché (${targetAds.length} annonces, moteur ${sConfig.provider}, parallèle x${reanalyzeSettings.aiConcurrency || 3})...` });
-
-    // 🩺 Health-checks préalables : Ollama (IA synthèse) + moteur de recherche.
-    // Sans Ollama, toutes les annonces tombent en fallback instantané — on le
-    // détecte AVANT pour donner un message clair au lieu d'un "0/N réussi" muet.
-    if (marketAiConfig.provider === 'ollama' || !marketAiConfig.provider) {
-      const ollamaUrl = marketAiConfig.ollamaUrl || 'http://127.0.0.1:11434';
-      const modelName = marketAiConfig.textModel || 'llama3';
-      sendLog({ level: 'debug', message: `[IA Marché] Health-check Ollama (${ollamaUrl}, modèle ${modelName})...` });
-      const health = await checkModelAvailable(ollamaUrl, modelName);
-      if (!health.ok) {
-        sendLog({ level: 'warn', message: `🩺 ${health.message} — l'estimation de valeur va échouer pour chaque annonce.` });
-      } else {
-        sendLog({ level: 'debug', message: `🩺 ${health.message}` });
-      }
-    }
-    try {
-      const { getSearchProvider } = require('../services/ai/search/searchProviderRegistry');
-      const engine = getSearchProvider(sConfig);
-      const sh = await engine.checkHealth();
-      if (!sh.ok) sendLog({ level: 'warn', message: `🔍 Moteur de recherche : ${sh.message}` });
-      else sendLog({ level: 'debug', message: `🔍 Moteur de recherche : ${sh.message}` });
-    } catch (err) {
-      sendLog({ level: 'warn', message: `🔍 Moteur de recherche injoignable : ${err.message}` });
-    }
-
-    const t0 = Date.now();
-    let searchOk = 0;
-    let aiOk = 0;
-    targetAds = await MarketValueAnalyzer.analyzeMarketBatch(targetAds, marketAiConfig, sConfig, {
-      concurrency: reanalyzeSettings.aiConcurrency || 3,
-      signal: activeCancel,
-      onProgress: (prog) => {
-        sendProgress({ percent: prog.percent, status: prog.status });
-        if (prog.stageCounts) { searchOk = prog.stageCounts.searchOk || searchOk; aiOk = prog.stageCounts.aiOk || aiOk; }
-      },
-      onLog: (data) => { sendLog(data); if (data.level === 'warn' && /fallback/.test(data.message || '')) sessionStats.marketFallback++; },
-    });
-    wasCancelled = !!(activeCancel && activeCancel.cancelled);
-    sessionStats.marketAnalyzed = targetAds.filter((a) => a.marketAnalysis && !a.marketAnalysis._fallback).length;
-    const elapsed = Math.round((Date.now() - t0) / 1000);
-    const estimated = targetAds.filter((a) => a.marketAnalysis && !a.marketAnalysis._fallback).length;
-    // Diagnostic détaillé : répartition des causes d'échec.
-    const failReasons = {};
-    for (const a of targetAds) {
-      const ma = a.marketAnalysis;
-      if (!ma || ma._fallback) {
-        const reason = (ma && ma._error) || 'inconnu';
-        // Catégorisation grossière pour un message lisible
-        const cat = /moteur de recherche/i.test(reason) ? 'moteur de recherche (DDG)'
-          : /IA indisponible/i.test(reason) ? 'IA (Ollama down)'
-          : /JSON/i.test(reason) ? 'réponse IA non interprétable'
-          : reason;
-        failReasons[cat] = (failReasons[cat] || 0) + 1;
-      }
-    }
-    if (wasCancelled) {
-      sendLog({ level: 'warn', message: `⏹️ IA Marché interrompue en ${elapsed}s — ${estimated}/${targetAds.length} estimations réussies. Les résultats partiels sont sauvegardés.` });
-    } else if (estimated < targetAds.length) {
-      const breakdown = Object.entries(failReasons).map(([k, v]) => `${v}× ${k}`).join(', ');
-      sendLog({ level: 'warn', message: `⚠️ IA Marché terminée en ${elapsed}s — ${estimated}/${targetAds.length} réussies. Échecs : ${breakdown || 'inconnu'}.` });
-    } else {
-      sendLog({ level: 'info', message: `✅ IA Marché terminée en ${elapsed}s (${estimated}/${targetAds.length} estimations réussies).` });
-    }
-
-    writeWithChecksum(targetJob.files.json, ads, null, 2);
-    writeSummaryFile(ads, path.join(path.dirname(targetJob.files.json), 'resumes-ia.json'));
-
-    // Récupère les options d'export du job pour que le XLSX/CSV régénéré
-    // après l'IA Marché respecte le mode choisi au moment du scraping
-    // (Défaut / Personnalisé + liste de champs). Sans cela, un scrape
-    // en mode Personnalisé perdait sa sélection après l'IA Marché.
-    let exportOptions = {};
-    try {
-      const metaPath = path.join(path.dirname(targetJob.files.json), 'export-meta.json');
-      if (fs.existsSync(metaPath)) {
-        const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
-        if (meta && meta.exportMode === 'custom' && Array.isArray(meta.exportFields) && meta.exportFields.length > 0) {
-          exportOptions = { fields: meta.exportFields };
-        }
-        if (meta && meta.includeSellerData === false) {
-          exportOptions.excludeSellerData = true;
-        }
-      }
-    } catch (metaErr) {
-      sendLog({ level: 'debug', message: `[market:analyze] export-meta.json illisible (${metaErr.message}) — XLSX/CSV en mode Défaut.` });
-    }
-
-    if (targetJob.files.xlsx) {
-      await ExcelExporter.exportToXlsx(ads, targetJob.files.xlsx, exportOptions);
-      // Régénère aussi le CSV (jumeau du xlsx) avec les données marché mises à
-      // jour : sans cela, le CSV restait à l'état du dernier job:start.
-      try {
-        await ExcelExporter.exportToCsv(ads, path.join(path.dirname(targetJob.files.xlsx), 'annonces.csv'), exportOptions);
-      } catch (csvErr) {
-        sendLog({ level: 'warn', message: `Mise à jour CSV impossible : ${csvErr.message}` });
-      }
-    }
-
-    // Notification si une « Très bonne affaire » est détectée.
-    const greatDeals = targetAds.filter((a) => a.marketAnalysis && a.marketAnalysis.verdictLabel === 'Très bonne affaire');
-    if (greatDeals.length > 0) {
-      sendLog({ level: 'info', message: `[IA Marché] ${greatDeals.length} « Très bonne affaire » détectée(s).` });
-      Notifier.notifyGoodDeal(greatDeals[0]);
-    }
-
-    return JobHistoryManager.getLatestJob();
-    } finally {
-      // Toujours libérer le verrou, même en cas d'erreur fatale : sinon une
-      // analyse échouée bloquait définitivement toute analyse de marché future.
-      isMarketAnalyzing = false;
-      activeCancel = null;
-      // L'IA Marché est une action manuelle (invoke) qui n'envoie jamais
-      // d'état 'completed'/'error' par elle-même. On envoie un état terminal
-      // pour que le bouton « Arrêter » du renderer se réactive.
-      sendStatus({ state: 'completed', message: wasCancelled ? 'Analyse de marché interrompue.' : 'Analyse de marché terminée.' });
-    }
-  });
-
-  // 🔍 Liste les moteurs de recherche disponibles (pour l'UI de l'IA Marché).
-  ipcMain.handle('search:providers', async () => {
-    return { providers: listSearchProviders() };
   });
 
   ipcMain.handle('config:get', async () => {
@@ -695,135 +371,8 @@ function setupIpcHandlers(getMainWindow) {
     }
   });
 
-
-  // ─── Bibliothèque de prompts préfaits (IA Studio V2) ──────────────────
-  // Remplace l'ancien générateur IA par des templates statiques à trous.
-  // Aucune IA, aucun serveur : assemblage instantané.
-  ipcMain.handle('prompt:templates:list', async () => {
-    try {
-      return { templates: listTemplates() };
-    } catch (err) {
-      return { templates: [], error: err.message };
-    }
-  });
-
-  ipcMain.handle('prompt:templates:build', async (event, { templateId, values }) => {
-    try {
-      const result = buildPrompt(templateId, values || {});
-      if (result.error) return { prompt: '', error: result.error };
-      return { prompt: result.prompt };
-    } catch (err) {
-      return { prompt: '', error: err.message };
-    }
-  });
-
-  // ─── Prompts IA internes (adAnalyzer + marketValueAnalyzer) ──────────
-  // Expose les prompts réellement utilisés par les IA pendant le scraping,
-  // pour que l'utilisateur puisse les voir, les comprendre et les copier.
-  ipcMain.handle('prompt:internal:list', async () => {
-    try {
-      const { _getSystemPrompt: adSystem, _buildPrompt: adBuild } = require('../services/ai/adAnalyzer');
-      const { _getSystemPrompt: marketSystem, _buildPrompt: marketBuild } = require('../services/ai/marketValueAnalyzer');
-
-      // Prompt adAnalyzer avec une annonce fictive pour montrer le format
-      const sampleAd = {
-        id: 'EXEMPLE', title: 'Carte graphique RTX 3060', price: 250,
-        description: 'RTX 3060 12GB, très bon état, fonctionne parfaitement. Vendue avec boîte d\'origine.',
-        category: 'Informatique', seller: 'Jean', isPro: false, city: 'Paris', zipcode: '75001',
-        images: ['https://example.com/img1.jpg', 'https://example.com/img2.jpg'],
-      };
-      const adPrompt = adBuild(sampleAd);
-
-      // Prompt marketValueAnalyzer avec une annonce + sources fictives
-      const sampleMarketAd = {
-        id: 'EXEMPLE', price: 250, title: 'RTX 3060',
-        adAnalysis: { identifiedProduct: 'NVIDIA RTX 3060 12GB', attributes: { brand: 'NVIDIA', model: 'RTX 3060', condition: 'très bon état', defects: [], working: 'normal' } },
-      };
-      const sampleResults = [
-        { source: 'ebay', title: 'RTX 3060 12GB occasion', snippet: 'Prix moyen: 280-320€', url: 'https://ebay.fr/rtx3060' },
-        { source: 'amazon', title: 'RTX 3060 neuf', snippet: 'Neuf: 350€', url: 'https://amazon.fr/rtx3060' },
-      ];
-      const marketPrompt = marketBuild(sampleMarketAd, sampleResults);
-
-      return {
-        prompts: [
-          {
-            id: 'ia-analyse',
-            title: '🧠 IA Analyse (adAnalyzer)',
-            category: 'Prompts IA internes',
-            description: 'Prompt envoyé à l\'IA (Ollama) pendant le scraping pour analyser chaque annonce (texte + vision). Ce prompt est généré dynamiquement pour chaque annonce avec ses données réelles.',
-            template: `${adSystem()}\n\n--- EXEMPLE AVEC UNE ANNONCE FICTIVE ---\n${adPrompt}`,
-          },
-          {
-            id: 'ia-marche',
-            title: '📊 IA Marché (marketValueAnalyzer)',
-            category: 'Prompts IA internes',
-            description: 'Prompt envoyé à l\'IA (Ollama) pour estimer la valeur réelle d\'un produit à partir des sources Internet trouvées. Ce prompt est généré dynamiquement avec les résultats de recherche réels.',
-            template: `${marketSystem()}\n\n--- EXEMPLE AVEC UNE ANNONCE + SOURCES FICTIVES ---\n${marketPrompt}`,
-          },
-        ],
-      };
-    } catch (err) {
-      return { prompts: [], error: err.message };
-    }
-  });
-
-  // Génération de prompt personnalisé via Ollama LOCAL (module AI Studio).
-  // Aucune IA sur le web, aucune clé API : tout passe par le serveur Ollama
-  // local. L'utilisateur peut aussi vérifier qu'Ollama est démarré et lister
-  // les modèles installés.
-  ipcMain.handle('prompt:generate', async (event, { domain, objective, customHints, vars, ollamaUrl, ollamaModel, priceRange, topN, rankings }) => {
-    const url = ollamaUrl || 'http://127.0.0.1:11434';
-    const model = ollamaModel || 'llama3';
-    sendStatus({ state: 'processing', message: `Génération du prompt par l'IA (${model})…` });
-
-    // Health-check Ollama : vérifier serveur + modèle, éviter une attente de 180s.
-    const health = await checkModelAvailable(url, model);
-    if (!health.ok || health.available === false) {
-      const isModelMissing = health.ok === true || (health.models && health.models.length > 0 && health.available === false);
-      const msg = isModelMissing
-        ? `Ollama n'a pas le modèle « ${model} » installé. Modèles disponibles : ${health.models.join(', ') || '(aucun)'}. Lancez « ollama pull ${model} ».`
-        : `Ollama est injoignable sur ${url}. ${health.message} Démarrez Ollama (ollama serve).`;
-      sendLog({ level: 'warn', message: `⚠️ ${msg}` });
-      sendStatus({ state: 'error', message: msg });
-      return { prompt: null, error: msg };
-    }
-
-    try {
-      const prompt = await PromptGenerator.generate(
-        { domain, objective, customHints, vars, ollamaUrl: url, textModel: model, priceRange, topN, rankings },
-        (prog) => sendProgress({ percent: prog.percent, status: prog.status })
-      );
-      return { prompt };
-    } catch (err) {
-      const msg = `Échec génération prompt : ${err.message}`;
-      sendLog({ level: 'error', message: `❌ ${msg}` });
-      sendStatus({ state: 'error', message: msg });
-      return { prompt: null, error: msg };
-    }
-  });
-
-  // Liste les modèles Ollama installés localement (pour le select du module
-  // AI Studio). Réutilise le health-check existant.
-  ipcMain.handle('ollama:models', async (event, { ollamaUrl } = {}) => {
-    const url = ollamaUrl || 'http://127.0.0.1:11434';
-    try {
-      const health = await checkOllamaHealth(url, 5000);
-      return { ok: health.ok, message: health.message, models: health.models || [] };
-    } catch (err) {
-      return { ok: false, message: 'Ollama injoignable : ' + (err.message || err), models: [] };
-    }
-  });
-
   ipcMain.handle('config:save', async (event, patch) => {
     return saveSettings(patch);
-  });
-
-  // 🩺 Health-check Ollama (appelable depuis le renderer pour afficher le statut)
-  ipcMain.handle('ollama:health', async (event, { ollamaUrl, model } = {}) => {
-    const url = ollamaUrl || 'http://127.0.0.1:11434';
-    const modelName = model || 'llama3';
-    return await checkModelAvailable(url, modelName);
   });
 
   // 🔐 Secrets chiffrés (clés API stockées via safeStorage, pas en clair)
@@ -902,10 +451,7 @@ function setupIpcHandlers(getMainWindow) {
     }
   });
 
-  // Handler dédié pour ouvrir le dossier des jobs (JOBS_DIR). Le bouton
-  // "Ouvrir les jobs" de l'IA Studio passait null/'' → ouvrait BASE_OUT_DIR
-  // (le parent) au lieu de JOBS_DIR. Ce handler ouvre directement le bon
-  // dossier et le crée s'il n'existe pas.
+  // Handler dédié pour ouvrir le dossier des jobs (JOBS_DIR).
   ipcMain.handle('jobs:openFolder', async () => {
     try {
       const errStr = await FileManager.openFolder(JOBS_DIR);

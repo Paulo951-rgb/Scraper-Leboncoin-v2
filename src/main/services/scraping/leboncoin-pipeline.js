@@ -15,7 +15,9 @@ const { writeWithChecksum } = require('../../utils/integrity');
 const { AdaptiveRateLimiter } = require('../../utils/rateLimiter');
 const { validateRemoteUrl } = require('../../utils/urlSecurity');
 const adFields = require('./adFields');
-const { filterAdByFields, toReadableBlock, toShortText, ALL_FIELD_KEYS } = require('../exporting/exportFields');
+const { ErrorCodes, createError, classifyError } = require('./errorCodes');
+const { filterAdByFields, toReadableBlock, ALL_FIELD_KEYS } = require('../exporting/exportFields');
+const { DEFAULT_PROFILE_FIELDS } = require('../exporting/dataProfiles');
 
 const DEFAULTS = Object.freeze({
   // Valeurs par défaut pour les options du pipeline.
@@ -61,16 +63,16 @@ function parseArgs(argv) {
       case '--user-agent':
         opts.userAgent = argv[++i];
         break;
-      case '--export-mode':
-        // 'default' (tous les champs) ou 'custom' (Personnalisé)
-        opts.exportMode = argv[++i];
+      case '--profile-id':
+        // 'default' | 'maximum' | 'custom'
+        opts.profileId = argv[++i];
         break;
-        case '--export-fields':
-          // Liste de clés séparées par des virgules. Utilisée uniquement si
-          // exportMode === 'custom'. Si vide, retombe sur le mode Défaut.
+        case '--profile-fields':
+          // Liste de clés séparées par des virgules. Liste concrète de champs à
+          // exporter, déjà résolue par le main process selon le profil.
           {
             const raw = argv[++i];
-            opts.exportFields = raw ? String(raw).split(',').map((s) => s.trim()).filter(Boolean) : null;
+            opts.profileFields = raw ? String(raw).split(',').map((s) => s.trim()).filter(Boolean) : null;
           }
           break;
         case '--no-seller-data':
@@ -302,14 +304,20 @@ function detectStructureChanges(rawAds, logger) {
     // changement de structure probable (pas juste une annonce incomplète).
     if (missingRatio > 0.7) {
       const msg = `Champ "${field.key}" (${field.label}) absent sur ${missingCount}/${sampleSize} annonces (${Math.round(missingRatio * 100)}%) — Leboncoin a peut-être modifié sa structure JSON.`;
+      const err = createError('STRUCTURE_FIELD_MISSING', msg, { field: field.key, label: field.label, missingCount, sampleSize });
       result.warnings.push(msg);
       result.missingFields.push(field.key);
-      if (logger) logger.warn(`[detectStructureChanges] ${msg}`);
+      result.errors = result.errors || [];
+      result.errors.push(err);
+      if (logger) logger.warn(`[detectStructureChanges] [${err.code}] ${msg}`);
     }
   }
 
   if (result.warnings.length > 0 && logger) {
-    logger.warn(`[detectStructureChanges] ${result.warnings.length} champ(s) critique(s) potentiellement modifié(s) par Leboncoin. Le scraper continue mais certaines données peuvent être incomplètes. Vérifiez les extracteurs dans adFields.js si le problème persiste.`);
+    const structureErr = createError('STRUCTURE_CHANGED', `${result.warnings.length} champ(s) critique(s) potentiellement modifié(s) par Leboncoin. Le scraper continue mais certaines données peuvent être incomplètes. Vérifiez les extracteurs dans adFields.js si le problème persiste.`, { missingFields: result.missingFields });
+    result.errors = result.errors || [];
+    result.errors.push(structureErr);
+    logger.warn(`[detectStructureChanges] [${structureErr.code}] ${structureErr.message}`);
   }
 
   return result;
@@ -339,21 +347,37 @@ function detectStructureChanges(rawAds, logger) {
 function normalizeAd(raw) {
   const id = adFields.firstDefined(raw.list_id, raw.id, raw.ad_id);
   const title = adFields.firstDefined(raw.subject, raw.title, raw.name);
-  const description = adFields.extractDescription(raw);
+
+  // Collecte les erreurs d'extraction pour diagnostic par-annonce.
+  const extractionErrors = [];
+  const onError = (err) => {
+    extractionErrors.push({
+      code: err.code,
+      message: err.message,
+      timestamp: new Date().toISOString(),
+    });
+  };
+
+  const description = adFields.extractDescription(raw, { onError });
   const url = adFields.firstDefined(raw.url, id ? `https://www.leboncoin.fr/ad/${id}.htm` : null);
 
   const city = adFields.firstDefined(raw.location?.city, raw.location?.city_label, raw.city);
   const zipcode = adFields.firstDefined(raw.location?.zipcode, raw.location?.zip_code);
 
-  const seller = adFields.extractSeller(raw);
+  const seller = adFields.extractSeller(raw, { onError });
   const transaction = adFields.extractTransaction(raw);
-  const dates = adFields.extractDates(raw);
-  const prix = adFields.extractPrice(raw);
+  const dates = adFields.extractDates(raw, { onError });
+  const prix = adFields.extractPrice(raw, { onError });
   const likes = adFields.extractLikes(raw);
-  const photos = adFields.extractPhotos(raw);
+  const photos = adFields.extractPhotos(raw, { onError });
   const etat = adFields.extractCondition(raw);
 
   const scrapedAt = new Date().toISOString();
+
+  // Détecte les annonces vides (ni id ni titre) — code AD_EMPTY.
+  if (!id && !title) {
+    extractionErrors.push(createError('AD_EMPTY', 'Annonce vide : ni id ni titre trouvé'));
+  }
 
   return {
     id: id != null ? String(id) : null,
@@ -373,6 +397,7 @@ function normalizeAd(raw) {
 
     livraison: transaction.livraison,
     mainPropre: transaction.mainPropre,
+    deliveryType: adFields.computeDeliveryType(transaction.livraison, transaction.mainPropre),
 
     likes,
 
@@ -386,6 +411,9 @@ function normalizeAd(raw) {
     photosUrls: photos.urls,
 
     description,
+
+    // Erreurs d'extraction collectées pour diagnostic (par-annonce).
+    extractionErrors,
 
     // Champs legacy pour rétro-compatibilité interne (renderer)
     raw,
@@ -675,6 +703,8 @@ class DescriptionEnricher {
           let enriched = false;
           if (parsed.livraison != null && ad.livraison == null) { ad.livraison = parsed.livraison; enriched = true; }
           if (parsed.mainPropre != null && ad.mainPropre == null) { ad.mainPropre = parsed.mainPropre; enriched = true; }
+          // Recalcule deliveryType si livraison ou mainPropre ont été enrichis.
+          if (enriched) { ad.deliveryType = adFields.computeDeliveryType(ad.livraison, ad.mainPropre); }
           if (parsed.note != null && ad.vendeurNote == null) { ad.vendeurNote = parsed.note; enriched = true; }
           if (parsed.etat && !ad.etat) { ad.etat = parsed.etat; enriched = true; }
 
@@ -696,7 +726,9 @@ class DescriptionEnricher {
         } else if (res && res.error === 'BLOCKED_403') {
           blockedCount++;
           this.consecutiveBlocks++;
-          this.logger.warn(`🛑 [${done}/${targets.length}] Bloqué (HTTP 403/429) sur ${ad.id} — ${truncate(ad.url, 60)}`);
+          const blockCode = res.error === 'BLOCKED_403' ? ErrorCodes.HTTP_403 : ErrorCodes.HTTP_429;
+          const blockErr = createError(blockCode, `Bloqué (HTTP 403/429) sur ${ad.id} — ${truncate(ad.url, 60)}`, { adId: ad.id, url: ad.url });
+          this.logger.warn(`🛑 [${done}/${targets.length}] [${blockErr.code}] Bloqué (HTTP 403/429) sur ${ad.id} — ${truncate(ad.url, 60)}`);
           if (this.consecutiveBlocks >= 3) {
             this.shouldStopAll = true;
             this.logger.warn('\n🛑 Blocage détecté. Arrêt préventif.');
@@ -705,10 +737,14 @@ class DescriptionEnricher {
           }
         } else if (res && res.error && res.error.startsWith('HTTP_')) {
           httpErrorCount++;
-          this.logger.warn(`⚠️ [${done}/${targets.length}] HTTP ${res.error.replace('HTTP_', '')} sur ${ad.id}`);
+          const httpStatus = parseInt(res.error.replace('HTTP_', ''), 10);
+          const httpCode = httpStatus === 404 ? ErrorCodes.HTTP_404 : httpStatus >= 500 ? ErrorCodes.HTTP_500 : ErrorCodes.HTTP_UNKNOWN;
+          const httpErr = createError(httpCode, `HTTP ${httpStatus} sur ${ad.id}`, { adId: ad.id, httpStatus });
+          this.logger.warn(`⚠️ [${done}/${targets.length}] [${httpErr.code}] HTTP ${httpStatus} sur ${ad.id}`);
         } else if (res && res.error) {
           httpErrorCount++;
-          this.logger.warn(`⚠️ [${done}/${targets.length}] Erreur fetch sur ${ad.id} : ${res.error}`);
+          const fetchErr = createError(ErrorCodes.NET_CONNECTION_FAILED, `Erreur fetch sur ${ad.id} : ${res.error}`, { adId: ad.id, error: res.error });
+          this.logger.warn(`⚠️ [${done}/${targets.length}] [${fetchErr.code}] Erreur fetch sur ${ad.id} : ${res.error}`);
         } else {
           httpErrorCount++;
           this.logger.warn(`⚠️ [${done}/${targets.length}] Aucune réponse reçue pour ${ad.id}`);
@@ -793,22 +829,26 @@ function _fmtDate(iso) {
 function writeOutputsFactory(outDir, opts) {
   const jsonPath = path.join(outDir, 'annonces.json');
   const txtPath = path.join(outDir, 'annonces.txt');
-  const shortPath = path.join(outDir, 'annonces.short.txt');
 
-  // Détermine la liste effective de champs à exporter selon le mode.
-  // - exportMode='default' (ou vide) → toutes les clés (DEFAULT_FIELDS).
-  // - exportMode='custom'            → uniquement opts.exportFields.
-  // - opts.exportFields=null/[]      → retombe sur le mode Défaut (sécurité).
+  // Détermine la liste effective de champs à exporter selon le profil.
+  // - profileId='default'  → DEFAULT_PROFILE_FIELDS (champs essentiels).
+  // - profileId='maximum'  → toutes les clés (ALL_FIELD_KEYS).
+  // - profileId='custom'   → uniquement opts.profileFields (validés).
+  // - opts.profileFields=null/[] en custom → fallback sur les essentiels.
   function _resolveFields() {
-    if (opts.exportMode === 'custom') {
-      if (Array.isArray(opts.exportFields) && opts.exportFields.length > 0) {
-        return opts.exportFields;
+    if (opts.profileId === 'custom') {
+      if (Array.isArray(opts.profileFields) && opts.profileFields.length > 0) {
+        return opts.profileFields;
       }
       // Mode custom mais aucun champ fourni → on garde au moins les essentiels
       // (id + title + prix + url + description) plutôt qu'un fichier vide.
       return ['id', 'title', 'url', 'prix', 'description'];
     }
-    return null; // null = toutes les clés (mode Défaut)
+    if (opts.profileId === 'maximum') {
+      return null; // null = toutes les clés (profil Maximum)
+    }
+    // Profil Défaut : on restreint aux champs essentiels.
+    return DEFAULT_PROFILE_FIELDS;
   }
 
   const exportOptions = opts.includeSellerData === false ? { excludeSellerData: true } : {};
@@ -820,20 +860,17 @@ function writeOutputsFactory(outDir, opts) {
       }
     }
     const fields = _resolveFields();
-    // JSON : on filtre chaque annonce pour respecter strictement le mode
-    // Personnalisé (seuls les champs sélectionnés sont conservés en clair).
+    // JSON : on filtre chaque annonce pour respecter strictement le profil
+    // (seuls les champs sélectionnés sont conservés en clair). fields=null
+    // signifie « toutes les clés » (profil Maximum) → objet tel quel.
     const jsonAds = fields ? ads.map((a) => filterAdByFields(a, fields, exportOptions)) : ads;
     writeWithChecksum(jsonPath, jsonAds, null, 2);
     atomicWriteFileSync(txtPath, ads.map((a, i) => toReadableBlock(a, i, fields, exportOptions)).join('\n'));
-    atomicWriteFileSync(shortPath, toShortText(ads, fields, exportOptions));
-    // Méta-données d'export (mode + liste de champs) : utilisées par market:analyze
-    // pour régénérer XLSX/CSV en respectant le même mode. Sans cela, un scrape
-    // en mode Personnalisé perdait son paramétrage au moment de relancer l'IA
-    // Marché (qui réécrit les XLSX/CSV).
+    // Méta-données d'export (profil + liste de champs).
     const meta = {
-      version: 1,
-      exportMode: fields ? 'custom' : 'default',
-      exportFields: fields || null,
+      version: 2,
+      profileId: opts.profileId || 'default',
+      fields: fields || null,
       includeSellerData: opts.includeSellerData !== false,
       generatedAt: new Date().toISOString(),
     };
@@ -877,7 +914,7 @@ async function main() {
   };
 
   logger.info(`=== Pipeline Leboncoin (Vitesse: ${opts.speed || 'moyen'} — ${preset.mode}, concurrency=${preset.concurrency}) ===`);
-  logger.debug(`[main] Options : harPath=${opts.harPath} | outDir=${opts.outDir} | headless=${opts.headless}  noDesc=${opts.noDesc} | limit=${opts.limit ?? '(aucun)'} | fresh=${opts.fresh} | speed=${opts.speed || 'moyen'} | concurrency=${opts.concurrency} | minDelay=${opts.minDelayMs} | maxDelay=${opts.maxDelayMs} | exportMode=${opts.exportMode || 'default'} | exportFields=${opts.exportFields ? `[${opts.exportFields.join(', ')}]` : '(toutes)'} | includeSellerData=${opts.includeSellerData}`);
+  logger.debug(`[main] Options : harPath=${opts.harPath} | outDir=${opts.outDir} | headless=${opts.headless}  noDesc=${opts.noDesc} | limit=${opts.limit ?? '(aucun)'} | fresh=${opts.fresh} | speed=${opts.speed || 'moyen'} | concurrency=${opts.concurrency} | minDelay=${opts.minDelayMs} | maxDelay=${opts.maxDelayMs} | profileId=${opts.profileId || 'default'} | profileFields=${opts.profileFields ? `[${opts.profileFields.join(', ')}]` : '(selon profil)'} | includeSellerData=${opts.includeSellerData}`);
 
   const writeOutputs = writeOutputsFactory(opts.outDir, opts);
   const jsonPath = path.join(opts.outDir, 'annonces.json');
@@ -901,7 +938,8 @@ async function main() {
     const jsonResponses = getJsonResponses(entries, logger);
 
     if (jsonResponses.length === 0) {
-      logger.error('Aucune réponse JSON exploitable trouvée dans le HAR.');
+      const parseErr = createError('PARSE_NO_ADS', 'Aucune réponse JSON exploitable trouvée dans le HAR');
+      logger.error(`[${parseErr.code}] Aucune réponse JSON exploitable trouvée dans le HAR.`);
       logger.warn(`[main] Causes possibles : (1) Leboncoin a bloqué la recherche (captcha/403) durant la capture HAR ; (2) structure du HAR différente de celle attendue ; (3) le fichier HAR est vide ou corrompu.`);
       logger.debug(`[main] Diagnostic : ${summarizeHarEntries(entries)}`);
       return;
@@ -918,7 +956,8 @@ async function main() {
     logger.debug(`[main] ${rawAds.length} objet(s) annonce brut(s) trouvé(s) dans ${responseWithAds}/${jsonResponses.length} réponse(s) JSON.`);
 
     if (rawAds.length === 0) {
-      logger.warn('Aucun objet annonce trouvé dans les réponses JSON (les données HAR ne contiennent pas le format attendu).');
+      const noAdsErr = createError('PARSE_NO_ADS', 'Aucun objet annonce trouvé dans les réponses JSON (les données HAR ne contiennent pas le format attendu)');
+      logger.warn(`[${noAdsErr.code}] Aucun objet annonce trouvé dans les réponses JSON (les données HAR ne contiennent pas le format attendu).`);
       logger.debug(`[main] Cela peut arriver si Leboncoin a changé sa structure JSON ou si la capture HAR a intercepté une page d'erreur au lieu des résultats de recherche.`);
     } else {
       detectStructureChanges(rawAds, logger);
@@ -928,13 +967,15 @@ async function main() {
     const normalized = rawAds.map(normalizeAd).filter((a) => a.id || a.title);
     const filteredOut = beforeFilter - normalized.length;
     if (filteredOut > 0) {
-      logger.debug(`[main] Filtrage : ${filteredOut} objet(s) sans ID ni titre supprimé(s) après normalisation (${beforeFilter} → ${normalized.length}).`);
+      const emptyErr = createError('AD_EMPTY', `${filteredOut} objet(s) sans ID ni titre supprimé(s) après normalisation (${beforeFilter} → ${normalized.length})`);
+      logger.debug(`[main] [${emptyErr.code}] ${emptyErr.message}`);
     }
 
     ads = mergeDuplicates(normalized, logger);
 
     if (ads.length === 0) {
-      logger.error('0 annonce extraite de ce HAR.');
+      const emptyErr = createError('PARSE_NO_ADS', '0 annonce extraite de ce HAR');
+      logger.error(`[${emptyErr.code}] 0 annonce extraite de ce HAR.`);
       logger.warn(`[main] Récapitulatif diagnostic : ${entries.length} entrées HAR | ${jsonResponses.length} JSON parsés | ${rawAds.length} annonces brutes | ${normalized.length} après normalisation | 0 après déduplication.`);
       logger.warn(`[main] Causes probables : page de recherche non chargée, réponse réseau absente, données reçues mais ne contenant pas d'annonces, ou filtre ayant tout supprimé.`);
       return;
@@ -942,11 +983,13 @@ async function main() {
 
     writeOutputs(ads);
     logger.info(`Étape HAR -> Annonces terminée : ${ads.length} annonces extraites.`);
-    const livraisonTrue = ads.filter((a) => a.livraison === true).length;
-    const livraisonFalse = ads.filter((a) => a.livraison === false).length;
-    const livraisonNull = ads.filter((a) => a.livraison == null).length;
+    const dtLivraison = ads.filter((a) => a.deliveryType === 'livraison').length;
+    const dtMainPropre = ads.filter((a) => a.deliveryType === 'main_propre').length;
+    const dtLesDeux = ads.filter((a) => a.deliveryType === 'les_deux').length;
+    const dtAucun = ads.filter((a) => a.deliveryType === 'aucun').length;
+    const dtInconnu = ads.filter((a) => a.deliveryType === 'inconnu' || !a.deliveryType).length;
     logger.debug(`[main] ${summarizeAds(ads)}`);
-    logger.debug(`[main] Livraison : ${livraisonTrue} avec livraison=true | ${livraisonFalse} avec livraison=false | ${livraisonNull} sans info livraison (null).`);
+    logger.debug(`[main] Type de remise : ${dtLivraison} livraison | ${dtMainPropre} main_propre | ${dtLesDeux} les_deux | ${dtAucun} aucun | ${dtInconnu} inconnu.`);
   }
 
   if (opts.limit) {

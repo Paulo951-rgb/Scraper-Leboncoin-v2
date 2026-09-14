@@ -21,14 +21,6 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('status', (event, data) => callback(data));
   },
 
-  analyzeMarket: (data) => ipcRenderer.invoke('market:analyze', data),
-  generatePrompt: (data) => ipcRenderer.invoke('prompt:generate', data),
-  listPromptTemplates: () => ipcRenderer.invoke('prompt:templates:list'),
-  buildPrompt: (templateId, values) => ipcRenderer.invoke('prompt:templates:build', { templateId, values }),
-  listInternalPrompts: () => ipcRenderer.invoke('prompt:internal:list'),
-  listOllamaModels: (data) => ipcRenderer.invoke('ollama:models', data),
-  listSearchProviders: () => ipcRenderer.invoke('search:providers'),
-
   getHistory: () => ipcRenderer.invoke('job:getHistory'),
   getAdHistory: () => ipcRenderer.invoke('job:getAdHistory'),
   deleteJob: (jobId) => ipcRenderer.invoke('job:delete', jobId),
@@ -43,7 +35,6 @@ contextBridge.exposeInMainWorld('api', {
   getDiagnostics: () => ipcRenderer.invoke('app:getDiagnostics'),
   checkChromium: () => ipcRenderer.invoke('app:checkChromium'),
 
-  checkOllamaHealth: (opts) => ipcRenderer.invoke('ollama:health', opts),
   checkNetwork: () => ipcRenderer.invoke('network:check'),
 
   getSecret: (key) => ipcRenderer.invoke('secret:get', key),
@@ -54,9 +45,4 @@ contextBridge.exposeInMainWorld('api', {
   toggleWidget: () => ipcRenderer.send('widget:toggle'),
   sendWidgetProgress: (data) => ipcRenderer.send('widget:progress', data),
   sendWidgetStatus: (data) => ipcRenderer.send('widget:status', data),
-
-  // Ouvre une vraie fenêtre (BrowserWindow) pour se connecter à Google sur
-  // AI Studio — le <webview> est bloqué par Google pour l'OAuth. Même partition
-  // persistante que le <webview>, donc la session se partage après connexion.
-  openAiStudioLogin: (url) => ipcRenderer.send('aistudio:openLogin', url),
 });

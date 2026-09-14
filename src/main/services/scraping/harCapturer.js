@@ -9,6 +9,7 @@ const { GLOBAL_SESSION_PATH } = require('../../config/constants');
 const { formatBytes, formatMs, describeError } = require('../../utils/diagnostics');
 
 const { getRandomUserAgent } = require('./userAgents');
+const { ErrorCodes, createError } = require('./errorCodes');
 
 function buildPageUrl(baseUrl, pageNumber) {
   try {
@@ -113,7 +114,8 @@ class HarCapturer extends EventEmitter {
         : null;
 
       if (blocked) {
-        this.emit('log', { level: 'debug', message: `[captcha] Blocage détecté — ${reason}.` });
+        const captchaErr = createError(ErrorCodes.CAPTCHA_DETECTED, `Blocage détecté — ${reason}`, { url: currentUrl, reason });
+        this.emit('log', { level: 'debug', message: `[captcha] [${captchaErr.code}] Blocage détecté — ${reason}.` });
       }
       return blocked;
     } catch (e) {
@@ -184,7 +186,8 @@ class HarCapturer extends EventEmitter {
     await p.close().catch(() => {});
     await ctx.close().catch(() => {});
 
-    this.emit('log', { level: 'warn', message: '⚠️ Blocage CAPTCHA détecté — affichage de la fenêtre (résolution humaine requise).' });
+    const captchaDetectedErr = createError(ErrorCodes.CAPTCHA_DETECTED, 'Blocage CAPTCHA détecté — affichage de la fenêtre (résolution humaine requise)');
+    this.emit('log', { level: 'warn', message: `⚠️ [${captchaDetectedErr.code}] Blocage CAPTCHA détecté — affichage de la fenêtre (résolution humaine requise).` });
     this.emit('log', { level: 'info', message: '👤 Une fenêtre va s\'ouvrir. Résolvez le CAPTCHA manuellement — le scraping reprendra automatiquement.' });
     this.emit('progress', { currentPage: 0, totalPages: 0, percent: 0, status: 'CAPTCHA : veuillez résoudre dans la fenêtre ouverte...' });
 
@@ -279,7 +282,8 @@ class HarCapturer extends EventEmitter {
       }
 
       if (this.isCancelled) {
-        this.emit('log', { level: 'warn', message: '[warmup] Résolution annulée par l\'utilisateur.' });
+        const cancelErr = createError(ErrorCodes.CAPTCHA_UNRESOLVED, 'Résolution annulée par l\'utilisateur');
+        this.emit('log', { level: 'warn', message: `[warmup] [${cancelErr.code}] Résolution annulée par l\'utilisateur.` });
         // NE PAS persister la session : on est encore bloqué (CAPTCHA non résolu),
         // persister reviendrait à sauvegarder une session avec des cookies anti-bot
         // qui empoisonneraient tous les jobs suivants. On ferme sans storageState.
@@ -290,14 +294,15 @@ class HarCapturer extends EventEmitter {
 
       if (!confirmedClear) {
         // Timeout atteint sans résolution — on ne persiste pas la session.
-        this.emit('log', { level: 'warn', message: '[warmup] CAPTCHA non résolu dans le délai — session non persistée.' });
+        const timeoutErr = createError(ErrorCodes.CAPTCHA_TIMEOUT, `CAPTCHA non résolu dans le délai (${Math.round(MAX_WAIT_MS / 60000)} min) — session non persistée`);
+        this.emit('log', { level: 'warn', message: `[warmup] [${timeoutErr.code}] CAPTCHA non résolu dans le délai — session non persistée.` });
         await vPage.close().catch(() => {});
         await vCtx.close().catch(() => {});
         return;
       }
 
       const elapsedSec = Math.round((Date.now() - startTime) / 1000);
-      this.emit('log', { level: 'info', message: `[warmup] ✅ CAPTCHA résolu après ${elapsedSec}s (HTTP ${latestHttpStatus || '?'}) — stabilisation de la session...` });
+      this.emit('log', { level: 'info', message: `[warmup] ✅ [${ErrorCodes.CAPTCHA_DETECTED}] CAPTCHA résolu après ${elapsedSec}s (HTTP ${latestHttpStatus || '?'}) — stabilisation de la session...` });
 
       // FIX POST-CAPTCHA : attendre que la page se stabilise complètement
       // avant de persister la session. Leboncoin redirige ou recharge la page
@@ -314,7 +319,8 @@ class HarCapturer extends EventEmitter {
       // consécutif (anti-bot agressif). Si oui, on ne persiste PAS.
       const stillBlocked = await checkVBlocked();
       if (stillBlocked) {
-        this.emit('log', { level: 'warn', message: '[warmup] Un 2e CAPTCHA consécutif est apparu — session non persistée. Relancez le scraping.' });
+        const secondCaptchaErr = createError(ErrorCodes.CAPTCHA_UNRESOLVED, 'Un 2e CAPTCHA consécutif est apparu — session non persistée. Relancez le scraping.');
+        this.emit('log', { level: 'warn', message: `[warmup] [${secondCaptchaErr.code}] Un 2e CAPTCHA consécutif est apparu — session non persistée. Relancez le scraping.` });
         await vPage.close().catch(() => {});
         await vCtx.close().catch(() => {});
         return;
@@ -429,7 +435,9 @@ class HarCapturer extends EventEmitter {
           const httpBlocked = typeof httpStatus === 'number' && httpStatus >= 400;
           if (captchaBlocked || httpBlocked) {
             const reason = httpBlocked ? `HTTP ${httpStatus}` : 'CAPTCHA';
-            this.emit('log', { level: 'warn', message: `⚠️ [Page ${pageNum}] BLOCAGE DÉTECTÉ (${reason}) — tentative de résolution interactive...` });
+            const blockCode = httpBlocked ? (httpStatus === 403 ? ErrorCodes.HTTP_403 : httpStatus === 429 ? ErrorCodes.HTTP_429 : ErrorCodes.HTTP_UNKNOWN) : ErrorCodes.CAPTCHA_DETECTED;
+            const blockErr = createError(blockCode, `BLOCAGE DÉTECTÉ (${reason}) — tentative de résolution interactive`, { page: pageNum, httpStatus, reason });
+            this.emit('log', { level: 'warn', message: `⚠️ [Page ${pageNum}] [${blockErr.code}] BLOCAGE DÉTECTÉ (${reason}) — tentative de résolution interactive...` });
 
             // Au lieu d'abandonner, on tente une résolution interactive :
             // ferme le contexte HAR, ouvre une fenêtre visible, puis relance

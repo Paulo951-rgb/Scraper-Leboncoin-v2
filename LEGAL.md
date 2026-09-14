@@ -2,9 +2,17 @@
 
 ## 1. Finalité du logiciel
 
-**Leboncoin Scraper Pro** est un outil technique d'automatisation, de structuration et d'analyse de données. Il permet de capturer, organiser et exporter des informations publiquement accessibles sur des sites web, puis d'appliquer des analyses locales (statistiques, IA optionnelle) sur ces données.
+**Leboncoin Scraper Pro** est un outil technique d'automatisation et de structuration de données. Il permet de capturer, organiser et exporter des informations publiquement accessibles sur des sites web, puis d'appliquer des analyses locales (statistiques, carte géographique) sur ces données.
 
 Ce logiciel ne fournit aucun contenu propre : il ne fait que traiter des données auxquelles l'utilisateur accède lui-même.
+
+### Caractéristiques techniques
+
+- **Aucune intelligence artificielle** : le logiciel ne contient aucun système d'IA, aucun LLM, aucune analyse de vision, aucun traitement par modèle. Toutes les opérations sont déterministes (extraction, normalisation, statistiques).
+- **100% local** : les données restent sur l'ordinateur de l'utilisateur. Aucune transmission vers le cloud, aucune API externe (hors site ciblé et géocodage optionnel).
+- **Formats d'export** : JSON et TXT uniquement.
+- **Champ `deliveryType`** : mode de remise unifié (`les_deux`, `livraison`, `main_propre`, `aucun`, `inconnu`).
+- **Profils de données** : Défaut, Maximum, Personnalisé.
 
 ## 2. Responsabilité de l'utilisateur
 
@@ -25,7 +33,10 @@ Ce logiciel n'accorde aucune autorisation particulière concernant les sites ou 
 
 Les données collectées peuvent contenir des informations permettant d'identifier une personne (nom, prénom, adresse, coordonnées, etc.). L'utilisateur doit traiter ces données conformément aux lois applicables, notamment en matière de protection de la vie privée.
 
-Lorsque les données personnelles ne sont pas nécessaires à son analyse, l'utilisateur est invité à désactiver leur collecte ou leur exportation dans les paramètres du logiciel.
+Lorsque les données personnelles ne sont pas nécessaires à son analyse, l'utilisateur est invité à :
+- désactiver la collecte des données vendeur dans les paramètres du logiciel ;
+- utiliser le profil Personnalisé pour limiter les champs exportés ;
+- supprimer les jobs dès qu'ils ne sont plus nécessaires.
 
 ## 5. Avertissement légal
 

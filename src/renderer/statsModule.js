@@ -5,6 +5,21 @@ const statMinPrice = document.getElementById('statMinPrice');
 const statMaxPrice = document.getElementById('statMaxPrice');
 const statHandDelivery = document.getElementById('statHandDelivery');
 const statLivraison = document.getElementById('statLivraison');
+const statDeliveryTypeDist = document.getElementById('statDeliveryTypeDist');
+
+/**
+ * Calcule le deliveryType depuis les anciens champs livraison/mainPropre
+ * pour la rétro-compatibilité des annonces cachées sans deliveryType.
+ */
+function _computeDeliveryTypeCompatMap(livraison, mainPropre) {
+  if (livraison === true && mainPropre === true) return 'les_deux';
+  if (livraison === true) return 'livraison';
+  if (mainPropre === true) return 'main_propre';
+  if (livraison === false && mainPropre === false) return 'aucun';
+  if (livraison === false) return 'aucun';
+  if (mainPropre === false) return 'aucun';
+  return 'inconnu';
+}
 const statPro = document.getElementById('statPro');
 const statPart = document.getElementById('statPart');
 
@@ -62,33 +77,46 @@ function renderStatsView() {
     statMaxPrice.textContent = '-';
   }
 
-  // Statistiques livraison / main propre
+  // Statistiques deliveryType (modèle unifié)
   let livraisonCount = 0;
   let mainPropreCount = 0;
   let lesDeuxCount = 0;
+  let aucunCount = 0;
+  let inconnuCount = 0;
   let nonRenseigneCount = 0;
 
   for (const a of sourceAds) {
-    const livraison = a.livraison ?? a.shipping;
-    const mainPropre = a.mainPropre ?? a.handDelivery;
-    if (livraison === true && mainPropre === true) lesDeuxCount++;
-    else if (livraison === true) livraisonCount++;
-    else if (mainPropre === true) mainPropreCount++;
-    else if (livraison === null && mainPropre === null) nonRenseigneCount++;
-    else if (livraison === false && mainPropre === true) mainPropreCount++;
-    else if (livraison === true && mainPropre === false) livraisonCount++;
-    else nonRenseigneCount++;
+    let dt = a.deliveryType;
+    if (!dt) {
+      const livraison = a.livraison ?? a.shipping;
+      const mainPropre = a.mainPropre ?? a.handDelivery;
+      if (livraison === true && mainPropre === true) dt = 'les_deux';
+      else if (livraison === true) dt = 'livraison';
+      else if (mainPropre === true) dt = 'main_propre';
+      else if (livraison === false && mainPropre === false) dt = 'aucun';
+      else dt = 'inconnu';
+    }
+    if (dt === 'livraison') livraisonCount++;
+    else if (dt === 'main_propre') mainPropreCount++;
+    else if (dt === 'les_deux') lesDeuxCount++;
+    else if (dt === 'aucun') aucunCount++;
+    else { inconnuCount++; nonRenseigneCount++; }
   }
 
   const proCount = sourceAds.filter((a) => a.vendeurType === 'pro').length;
   const partCount = sourceAds.length - proCount;
 
-  statHandDelivery.textContent = fmt(mainPropreCount);
-  statLivraison.textContent = fmt(livraisonCount);
+  // Cartes livraison / main propre : compte les annonces qui proposent ce mode
+  // (livraison seule OU les_deux pour livraison ; main_propre seule OU les_deux pour main propre)
+  statHandDelivery.textContent = fmt(mainPropreCount + lesDeuxCount);
+  statLivraison.textContent = fmt(livraisonCount + lesDeuxCount);
+  if (statDeliveryTypeDist) {
+    statDeliveryTypeDist.textContent = `${fmt(livraisonCount)} / ${fmt(mainPropreCount)} / ${fmt(lesDeuxCount)} / ${fmt(aucunCount)} / ${fmt(inconnuCount)}`;
+  }
   statPro.textContent = fmt(proCount);
   statPart.textContent = fmt(partCount);
 
-  renderCharts(sourceAds, { livraisonCount, mainPropreCount, lesDeuxCount, nonRenseigneCount });
+  renderCharts(sourceAds, { livraisonCount, mainPropreCount, lesDeuxCount, aucunCount, inconnuCount, nonRenseigneCount });
   renderMap(sourceAds);
 }
 
@@ -182,17 +210,16 @@ async function renderMap(ads) {
       }
     }
 
-    // Filtrer les annonces "main propre" uniquement (livraison === false,
-    // pas null qui signifie « info non extraite »). On lit les DEUX champs
-    // (nouveau `livraison` ET legacy `shipping`) pour rester compatible avec
-    // d'anciens jobs scrapés avant l'unification des noms. Le filtre
-    // « Remise en main propre uniquement » avait cessé d'afficher quoi que ce
-    // soit depuis l'introduction du champ `livraison` car la carte lisait
-    // toujours `shipping` (toujours absent → 0 marqueur).
+    // Filtrer les annonces "main propre" uniquement : deliveryType === 'main_propre'
+    // ou deliveryType === 'les_deux' (livraison + main propre). Rétro-compat :
+    // si deliveryType absent, on calcule depuis livraison/mainPropre.
     let targetAds = dedupedAds;
     if (mapHandDeliveryOnly) {
-      targetAds = dedupedAds.filter((a) => (a.livraison ?? a.shipping) === false);
-      console.log(`[Carte] Filtre main propre ON : ${targetAds.length}/${dedupedAds.length} annonces (livraison=false uniquement) — ${ads.length - dedupedAds.length} doublon(s) supprimé(s)`);
+      targetAds = dedupedAds.filter((a) => {
+        const dt = a.deliveryType ?? _computeDeliveryTypeCompatMap(a.livraison ?? a.shipping, a.mainPropre ?? a.handDelivery);
+        return dt === 'main_propre' || dt === 'les_deux';
+      });
+      console.log(`[Carte] Filtre main propre ON : ${targetAds.length}/${dedupedAds.length} annonces (main_propre + les_deux) — ${ads.length - dedupedAds.length} doublon(s) supprimé(s)`);
     } else {
       console.log(`[Carte] Filtre main propre OFF : ${dedupedAds.length} annonces affichées — ${ads.length - dedupedAds.length} doublon(s) supprimé(s)`);
     }
@@ -208,12 +235,12 @@ async function renderMap(ads) {
         coords[1] + (Math.random() - 0.5) * 0.012
       ];
       const marker = L.marker(jitterCoords).addTo(mapInstance);
-      const livraison = a.livraison ?? a.shipping;
-      const deliveryTxt = livraison === true
-        ? '📦 Livraison possible'
-        : livraison === false
-          ? '🤝 Remise en main propre'
-          : 'ℹ️ Remise non précisée';
+      const dt = a.deliveryType ?? _computeDeliveryTypeCompatMap(a.livraison ?? a.shipping, a.mainPropre ?? a.handDelivery);
+      const deliveryTxt = dt === 'livraison' ? '📦 Livraison possible'
+        : dt === 'main_propre' ? '🤝 Remise en main propre'
+        : dt === 'les_deux' ? '📦🤝 Livraison + Main propre'
+        : dt === 'aucun' ? '🚫 Aucune remise'
+        : 'ℹ️ Remise non précisée';
       marker.bindPopup(`
         <div style="font-family:sans-serif; font-size:0.8rem; line-height:1.3;">
           <strong>${escapeHtml(a.title)}</strong><br>
@@ -392,19 +419,19 @@ function renderCharts(ads, transactionStats) {
     },
   });
 
-  // 4) Modes de transaction (livraison / main propre / les deux / non renseigné)
-  const tStats = transactionStats || { livraisonCount: 0, mainPropreCount: 0, lesDeuxCount: 0, nonRenseigneCount: 0 };
+  // 4) Modes de remise (deliveryType : livraison / main_propre / les_deux / aucun / inconnu)
+  const tStats = transactionStats || { livraisonCount: 0, mainPropreCount: 0, lesDeuxCount: 0, aucunCount: 0, inconnuCount: 0, nonRenseigneCount: 0 };
   const transactionCtx = transactionCanvas.getContext('2d');
   if (transactionChartInstance) transactionChartInstance.destroy();
 
   transactionChartInstance = new Chart(transactionCtx, {
     type: 'bar',
     data: {
-      labels: ['📦 Livraison', '🤝 Main propre', '📦+🤝 Les deux', '❓ Non renseigné'],
+      labels: ['📦 Livraison', '🤝 Main propre', '📦+🤝 Les deux', '🚫 Aucun', '❓ Inconnu'],
       datasets: [{
         label: 'Nombre d\'annonces',
-        data: [tStats.livraisonCount, tStats.mainPropreCount, tStats.lesDeuxCount, tStats.nonRenseigneCount],
-        backgroundColor: ['#38bdf8', '#22c55e', '#a855f7', '#64748b'],
+        data: [tStats.livraisonCount, tStats.mainPropreCount, tStats.lesDeuxCount, tStats.aucunCount || 0, tStats.inconnuCount || tStats.nonRenseigneCount || 0],
+        backgroundColor: ['#38bdf8', '#22c55e', '#a855f7', '#f97316', '#64748b'],
         borderRadius: 8,
         borderSkipped: false,
         barPercentage: 0.65,
@@ -416,7 +443,7 @@ function renderCharts(ads, transactionStats) {
       responsive: true,
       maintainAspectRatio: false,
       plugins: {
-        title: { display: true, text: 'Modes de Transaction', padding: { bottom: 10 } },
+        title: { display: true, text: 'Modes de Remise', padding: { bottom: 10 } },
         legend: { display: false },
         tooltip: {
           backgroundColor: 'rgba(15,23,42,0.95)',

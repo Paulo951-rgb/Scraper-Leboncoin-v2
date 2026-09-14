@@ -5,41 +5,88 @@ Ce document détaille les catégories de données traitées par **Leboncoin Scra
 ## Principes
 
 1. **Collecte minimale** : le logiciel ne collecte que les données présentes dans les réponses réseau du site ciblé. Aucune donnée n'est inventée ou extrapolée lors du scraping.
-2. **Transparence** : chaque catégorie de données est documentée ci-dessous avec sa finalité et sa traçabilité.
-3. **Contrôle utilisateur** : l'utilisateur peut configurer quelles données sont conservées, exportées et affichées.
+2. **100% local** : les données restent sur l'ordinateur de l'utilisateur. Aucune transmission vers le cloud, aucune API externe, aucun envoi vers un service tiers. Les seules connexions réseau sortantes sont vers le site ciblé (scraping) et l'API de géocodage du gouvernement français (carte, optionnelle).
+3. **Transparence** : chaque catégorie de données est documentée ci-dessous avec sa finalité et sa traçabilité.
+4. **Contrôle utilisateur** : l'utilisateur peut configurer quelles données sont conservées, exportées et affichées.
 
 ## Tableau des catégories de données
 
 | Catégorie | Utilisation | Exportable | Désactivable | Stockage |
 |-----------|-------------|------------|--------------|----------|
-| Informations annonce (titre, prix, URL, localisation, dates, photos, description) | Analyse, export, statistiques | Oui (TXT, JSON, CSV, XLSX, Texte raccourci) | Oui (sélection personnalisée des champs) | Disque local (`output/jobs/`) |
-| Prix | Analyse de marché, statistiques, filtres | Oui | Oui (peut être exclu du mode Personnalisé) | Disque local |
-| Description | Analyse IA (texte), export TXT | Oui | Oui (case « Ignorer les descriptions » + sélection personnalisée) | Disque local |
+| Informations annonce (titre, prix, URL, localisation, dates, photos, description) | Analyse, export, statistiques | Oui (JSON, TXT) | Oui (profil Personnalisé) | Disque local (`output/jobs/`) |
+| Prix | Statistiques, filtres | Oui | Oui (profil Personnalisé) | Disque local |
+| Description | Export TXT | Oui | Oui (case « Ignorer les descriptions » + profil Personnalisé) | Disque local |
 | Données vendeur (nom, ID, type, note, avis, URL profil, ancienneté) | Identification, filtres, statistiques, export | Oui | Oui (paramètre « Données vendeur » dans les réglages) | Disque local |
 | Données brutes HAR (capture réseau complète) | Diagnostic, reprise de scraping, intégrité | Non (fichier technique `.har`) | Oui (nettoyage automatique paramétrable) | Disque local, nettoyé après X jours |
-| Analyses IA (produit identifié, résumé, verdict marché, valeur estimée, sources) | Aide à la décision, export | Oui (champs granulaires ou blocs complets) | Partiellement (sélection personnalisée) | Disque local (dans `annonces.json`) |
 | Favoris et filtres utilisateur | Interface, rappel entre sessions | Non | Oui (effacement localStorage) | localStorage (navigateur intégré) |
-| Clés API (moteur de recherche) | Accès à des services de recherche web | Non | Oui (suppression dans les paramètres) | Stockage chiffré OS (safeStorage) |
 
-## Modes d'export et minimisation
+## Champ `deliveryType` (unifié)
 
-### Mode Défaut
-Toutes les informations disponibles sont exportées. Ce mode garantit une sauvegarde complète et intacte de chaque session.
+Le logiciel utilise un champ unique `deliveryType` pour décrire le mode de remise d'une annonce. Il remplace les anciens champs séparés `livraison` et `mainPropre` par une seule valeur canonique :
 
-### Mode Personnalisé
-L'utilisateur sélectionne uniquement les champs qu'il souhaite conserver. Les champs non sélectionnés n'apparaissent dans aucun export (JSON, TXT, Texte raccourci, XLSX, CSV).
+| Valeur | Signification |
+|---|---|
+| `les_deux` | Livraison **et** remise en main propre |
+| `livraison` | Livraison uniquement |
+| `main_propre` | Remise en main propre uniquement |
+| `aucun` | Ni livraison ni main propre |
+| `inconnu` | Indéterminé (données indisponibles) |
 
-### Données vendeur
-Un paramètre dédié permet d'exclure systématiquement les champs identifiés comme données vendeur de tous les exports, quelle que soit la sélection personnalisée. Cela concerne :
+Ce champ est extrait défensivement à partir des attributs structurés de l'annonce (`has_option.shipping`, attributs `shippable`) et de l'analyse de la description (détection des mentions « remise en main propre », « retrait sur place », « pas d'envoi », etc.).
+
+## Profils de données
+
+L'utilisateur choisit parmi **3 profils** au moment du scraping, dans l'onglet Scraper :
+
+### Profil Défaut
+Récupération des champs essentiels pour un scraping rapide et léger (13 champs) :
+- `id`, `title`, `url`, `prix`, `ville`, `codePostal`, `deliveryType`, `datePublication`, `dateScraping`, `vendeurNom`, `vendeurType`, `photosCount`, `description`.
+
+### Profil Maximum
+Récupération de toutes les données disponibles techniquement (~23 champs). Ce profil garantit une sauvegarde complète et intacte de chaque session.
+
+### Profil Personnalisé
+L'utilisateur sélectionne uniquement les champs qu'il souhaite conserver, organisés par catégorie :
+- **Identification** : id, title, url
+- **Prix** : prix
+- **Localisation** : ville, codePostal
+- **Vendeur** : vendeurNom, vendeurType, vendeurId, vendeurNote, vendeurNbAvis, vendeurUrlProfil, vendeurAnciennete
+- **Transaction** : deliveryType
+- **Dates** : datePublication, dateModification, dateScraping
+- **Statistiques** : likes
+- **Produit** : etat
+- **Photos** : photosCount, photosUrls
+- **Description** : description
+
+Les champs non sélectionnés n'apparaissent dans aucun export (JSON, TXT). La sélection est sauvegardée pour les sessions suivantes.
+
+## Données vendeur
+
+Un paramètre dédié permet d'exclure systématiquement les champs identifiés comme données vendeur de tous les exports, quelle que soit le profil choisi. Cela concerne :
 - Nom du vendeur
 - ID du vendeur
-- URL du profil vendeur
+- Type du vendeur
 - Note du vendeur
 - Nombre d'avis
+- URL du profil vendeur
 - Ancienneté du vendeur
 
-### Descriptions
+Dans l'interface, les informations vendeur sont également masquées lorsque cette option est activée.
+
+## Descriptions
+
 L'utilisateur peut choisir d'ignorer les descriptions lors du scraping (case « Ignorer les descriptions » dans le formulaire de recherche). Cela accélère le traitement et réduit la quantité de texte conservé.
+
+## Formats d'export
+
+Deux formats d'export sont disponibles :
+
+| Format | Contenu | Usage |
+|---|---|---|
+| **JSON** (`annonces.json`) | Données structurées + checksum SHA-256 | Reprise programmatique, intégration |
+| **TXT** (`annonces.txt`) | Texte lisible (blocs alignés par annonce) | Lecture humaine, partage |
+
+> **Note** : Les formats XLSX et CSV ne sont plus disponibles. Seuls JSON et TXT sont générés.
 
 ## Persistance et durée de vie
 
@@ -49,7 +96,6 @@ L'utilisateur peut choisir d'ignorer les descriptions lors du scraping (case « 
 | `output/jobs/job-<timestamp>/capture.har` | Capture réseau brute | Nettoyage automatique paramétrable (défaut : 7 jours) |
 | `user-settings.json` | Paramètres utilisateur | Persistante |
 | `localStorage` | Favoris, filtres, préférences UI | Persistante (navigateur intégré) |
-| `safeStorage` (OS) | Clés API chiffrées | Persistantes |
 
 ## Suppression des données
 
@@ -59,21 +105,20 @@ Le nettoyage automatique des jobs anciens et des fichiers HAR peut être activé
 
 ## Aucune transmission externe
 
-En mode de fonctionnement standard :
-- L'analyse IA est effectuée localement par Ollama (100% local). Aucune donnée n'est transmise à un serveur distant pour l'analyse.
-- Les exports sont générés et stockés localement.
+Les données restent **100% locales** :
+- Les exports sont générés et stockés sur le disque de l'utilisateur.
 - Aucune télémétrie, aucun tracking et aucun compte-rendu automatique n'est envoyé au développeur.
+- Aucun traitement par IA, aucun envoi vers un service cloud, aucune clé API requise.
 
 Les seules connexions réseau externes sont :
 - vers le site ciblé pour la collecte ;
-- vers le serveur Ollama local (127.0.0.1) ;
-- vers l'API de géocodage du gouvernement français pour la carte (si activée) ;
-- vers un moteur de recherche web si l'IA Marché est utilisée (DuckDuckGo ou Tavily, selon la configuration).
+- vers l'API de géocodage du gouvernement français pour la carte (si activée).
 
 ## Informations sensibles
 
 Si vous collectez des données sensibles ou personnelles, appliquez les principes suivants :
 - Ne conservez que ce qui est strictement nécessaire.
+- Utilisez le profil Personnalisé pour limiter les champs récupérés.
 - Désactivez les données vendeur si elles ne sont pas utiles à votre analyse.
 - Supprimez les jobs dès qu'ils ne sont plus nécessaires.
 - Utilisez le chiffrement de disque si votre système l'autorise.

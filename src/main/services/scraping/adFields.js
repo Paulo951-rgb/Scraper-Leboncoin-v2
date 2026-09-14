@@ -44,12 +44,18 @@ function _normalizeBool(val) {
  *   - objet {text, ...} : raw.body = { text: "texte...", ... }
  *   - string dans raw.description ou raw.text
  */
-function extractDescription(raw) {
+function extractDescription(raw, opts = {}) {
+  const onError = opts.onError || (() => {});
   if (!raw) return null;
   const candidates = [raw.body, raw.description, raw.text];
   for (const c of candidates) {
     if (typeof c === 'string' && c.length > 0) return c;
     if (c && typeof c === 'object' && typeof c.text === 'string' && c.text.length > 0) return c.text;
+  }
+  // Si l'annonce a un body mais qu'il n'est pas exploitable (objet sans text,
+  // nombre, etc.), c'est potentiellement un changement de structure.
+  if (raw.body != null && typeof raw.body !== 'string' && !(raw.body && typeof raw.body.text === 'string')) {
+    onError({ code: 'EXTRACTOR_DESCRIPTION_FAILED', message: 'Champ body présent mais non exploitable (type inattendu)' });
   }
   return null;
 }
@@ -58,7 +64,8 @@ function extractDescription(raw) {
  * Extraction du prix (valeur numérique).
  * Renvoie un nombre ou null.
  */
-function extractPrice(raw) {
+function extractPrice(raw, opts = {}) {
+  const onError = opts.onError || (() => {});
   if (!raw || raw.price == null) return null;
   if (typeof raw.price === 'number') return raw.price;
   if (Array.isArray(raw.price) && raw.price.length > 0) {
@@ -77,6 +84,10 @@ function extractPrice(raw) {
   } else {
     const n = parseFloat(raw.price);
     if (!Number.isNaN(n)) return n;
+  }
+  // Si price est présent mais qu'on n'a pas pu le convertir → structure inattendue.
+  if (raw.price != null) {
+    onError({ code: 'EXTRACTOR_PRICE_FAILED', message: 'Champ price présent mais non convertible en nombre' });
   }
   return null;
 }
@@ -129,6 +140,34 @@ function extractTransaction(raw) {
 }
 
 /**
+ * Calcule le `deliveryType` unifié à partir des deux booléens internes
+ * `livraison` et `mainPropre` (extraits par extractTransaction).
+ *
+ * Renvoie une chaîne canonique :
+ *   - "les_deux"     : livraison=true ET mainPropre=true
+ *   - "livraison"    : livraison=true, mainPropre=false/null
+ *   - "main_propre"  : livraison=false/null, mainPropre=true
+ *   - "aucun"        : livraison=false ET mainPropre=false
+ *   - "inconnu"      : livraison=null ET mainPropre=null (indéterminé)
+ *
+ * @param {boolean|null} livraison
+ * @param {boolean|null} mainPropre
+ * @returns {string}
+ */
+function computeDeliveryType(livraison, mainPropre) {
+  if (livraison === true && mainPropre === true) return 'les_deux';
+  if (livraison === true && mainPropre === false) return 'livraison';
+  if (livraison === true && mainPropre === null) return 'livraison';
+  if (livraison === false && mainPropre === true) return 'main_propre';
+  if (livraison === null && mainPropre === true) return 'main_propre';
+  if (livraison === false && mainPropre === false) return 'aucun';
+  if (livraison === false && mainPropre === null) return 'aucun';
+  if (livraison === null && mainPropre === false) return 'aucun';
+  // both null
+  return 'inconnu';
+}
+
+/**
  * Extraction des likes / favoris.
  * Renvoie un nombre ou null (0 = Leboncoin affiche 0, null = info absente).
  */
@@ -152,12 +191,16 @@ function extractLikes(raw) {
  * Extraction des photos : URLs.
  * Renvoie { count, urls }.
  */
-function extractPhotos(raw) {
+function extractPhotos(raw, opts = {}) {
+  const onError = opts.onError || (() => {});
   let urls = [];
   if (Array.isArray(raw?.images?.urls)) {
     urls = raw.images.urls.filter((u) => typeof u === 'string' && u.trim() !== '');
   } else if (Array.isArray(raw?.images)) {
     urls = raw.images.filter((u) => typeof u === 'string' && u.trim() !== '');
+  } else if (raw?.images != null && !Array.isArray(raw.images) && typeof raw.images === 'object' && !Array.isArray(raw.images.urls)) {
+    // images est un objet mais sans urls array → structure potentiellement changée.
+    onError({ code: 'EXTRACTOR_PHOTOS_FAILED', message: 'Champ images présent mais structure inattendue (ni array ni {urls:[]})' });
   }
   return { count: urls.length, urls };
 }
@@ -166,7 +209,8 @@ function extractPhotos(raw) {
  * Extraction du vendeur.
  * Renvoie { nom, type, id, note, urlProfil, ancienneteJours }.
  */
-function extractSeller(raw) {
+function extractSeller(raw, opts = {}) {
+  const onError = opts.onError || (() => {});
   const owner = raw?.owner || {};
   const seller = raw?.seller || {};
   const store = raw?.store || {};
@@ -179,7 +223,16 @@ function extractSeller(raw) {
     raw?.owner_name,
     null
   );
+  // Si owner existe mais sans name ni store_name → possible changement de structure.
+  if (!nom && raw?.owner && typeof raw.owner === 'object' && !raw.owner.name && !raw.owner.store_name) {
+    onError({ code: 'EXTRACTOR_SELLER_NAME_FAILED', message: 'Champ owner.name absent alors que owner existe' });
+  }
+
   const id = firstNonNull(owner.user_id, owner.id, seller.id, store.id, raw?.user_id, null);
+  // Si owner existe avec un user_id attendu mais absent → possible changement de structure.
+  if (!id && raw?.owner && typeof raw.owner === 'object' && !raw.owner.user_id && !raw.owner.id) {
+    onError({ code: 'EXTRACTOR_SELLER_ID_FAILED', message: 'Champ owner.user_id absent alors que owner existe' });
+  }
 
   const rawType = firstNonNull(owner.type, seller.type, store.type, raw?.user_type, null);
   let type = null;
@@ -195,6 +248,9 @@ function extractSeller(raw) {
   if (ratingVal !== null) {
     const n = parseFloat(ratingVal);
     if (!Number.isNaN(n) && n >= 0 && n <= 5) note = Math.round(n * 10) / 10;
+  } else if (raw?.owner && typeof raw.owner === 'object' && raw.owner.rating === undefined && raw.owner.rating_average === undefined) {
+    // owner existe mais aucune clé de rating → possible changement de structure.
+    onError({ code: 'EXTRACTOR_SELLER_RATING_FAILED', message: 'Champ owner.rating absent alors que owner existe' });
   }
 
   let nombreAvis = null;
@@ -231,7 +287,8 @@ function extractSeller(raw) {
  * Extraction des dates : publication, modification.
  * Renvoie { publication, modification }.
  */
-function extractDates(raw) {
+function extractDates(raw, opts = {}) {
+  const onError = opts.onError || (() => {});
   const publication = firstNonNull(
     raw?.first_publication_date,
     raw?.publication_date,
@@ -247,6 +304,11 @@ function extractDates(raw) {
     raw?.refresh_date,
     null
   );
+  // Si l'annonce a des champs mais aucune date de publication reconnue →
+  // possible changement de structure.
+  if (!publication && raw && typeof raw === 'object' && !raw.first_publication_date && !raw.publication_date && !raw.index_date && !raw.date && !raw.created_at && Object.keys(raw).length > 3) {
+    onError({ code: 'EXTRACTOR_DATES_FAILED', message: 'Aucune date de publication reconnue alors que l\'annonce contient des données' });
+  }
   return { publication, modification };
 }
 
@@ -276,6 +338,7 @@ module.exports = {
   extractDescription,
   extractPrice,
   extractTransaction,
+  computeDeliveryType,
   extractLikes,
   extractPhotos,
   extractSeller,

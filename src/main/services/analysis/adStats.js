@@ -42,23 +42,31 @@ class AdStats {
     const minPrice = validPrices[0];
     const maxPrice = validPrices[validPrices.length - 1];
 
-    // Statistiques livraison / main propre
+    // Statistiques deliveryType (modèle unifié)
     let livraisonCount = 0;
     let mainPropreCount = 0;
     let lesDeuxCount = 0;
-    let nonRenseigneCount = 0;
+    let aucunCount = 0;
+    let inconnuCount = 0;
+    let nonRenseigneCount = 0; // alias pour inconnu (rétro-compat)
 
     for (const a of ads) {
-      const livraison = a.livraison ?? a.shipping;
-      const mainPropre = a.mainPropre ?? a.handDelivery;
-      if (livraison === true && mainPropre === true) lesDeuxCount++;
-      else if (livraison === true) livraisonCount++;
-      else if (mainPropre === true) mainPropreCount++;
-      else if (livraison === null && mainPropre === null) nonRenseigneCount++;
-      else if (livraison === false && mainPropre === true) mainPropreCount++;
-      else if (livraison === true && mainPropre === false) livraisonCount++;
-      else if (livraison === false && mainPropre === false) nonRenseigneCount++;
-      else nonRenseigneCount++;
+      let dt = a.deliveryType;
+      // Rétro-compat : si deliveryType absent, calcule depuis livraison/mainPropre
+      if (!dt) {
+        const livraison = a.livraison ?? a.shipping;
+        const mainPropre = a.mainPropre ?? a.handDelivery;
+        if (livraison === true && mainPropre === true) dt = 'les_deux';
+        else if (livraison === true) dt = 'livraison';
+        else if (mainPropre === true) dt = 'main_propre';
+        else if (livraison === false && mainPropre === false) dt = 'aucun';
+        else dt = 'inconnu';
+      }
+      if (dt === 'livraison') livraisonCount++;
+      else if (dt === 'main_propre') mainPropreCount++;
+      else if (dt === 'les_deux') lesDeuxCount++;
+      else if (dt === 'aucun') aucunCount++;
+      else { inconnuCount++; nonRenseigneCount++; }
     }
 
     return {
@@ -71,6 +79,8 @@ class AdStats {
         livraisonCount,
         mainPropreCount,
         lesDeuxCount,
+        aucunCount,
+        inconnuCount,
         nonRenseigneCount,
       },
       ads,

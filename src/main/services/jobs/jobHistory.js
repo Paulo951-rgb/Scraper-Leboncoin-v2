@@ -120,11 +120,7 @@ class JobHistoryManager {
       const jobPath = path.join(jobsDir, entry.name);
       const resultsDir = path.join(jobPath, 'results');
       const jsonPath = path.join(resultsDir, 'annonces.json');
-      const xlsxPath = path.join(resultsDir, 'annonces.xlsx');
-      const csvPath = path.join(resultsDir, 'annonces.csv');
       const txtPath = path.join(resultsDir, 'annonces.txt');
-      const shortTxtPath = path.join(resultsDir, 'annonces.short.txt');
-      const resumesPath = path.join(resultsDir, 'resumes-ia.json');
       const exportMetaPath = path.join(resultsDir, 'export-meta.json');
 
       let rawAds = [];
@@ -164,11 +160,7 @@ class JobHistoryManager {
         integrityWarning,
         files: {
           json: fs.existsSync(jsonPath) ? jsonPath : null,
-          xlsx: fs.existsSync(xlsxPath) ? xlsxPath : null,
-          csv: fs.existsSync(csvPath) ? csvPath : null,
           txt: fs.existsSync(txtPath) ? txtPath : null,
-          short: fs.existsSync(shortTxtPath) ? shortTxtPath : null,
-          resumes: fs.existsSync(resumesPath) ? resumesPath : null,
         },
         // Méta-données d'export (mode Défaut / Personnalisé + liste de champs).
         // Chargées depuis export-meta.json (écrit par le pipeline). Fallback
