@@ -255,6 +255,66 @@ function isFetchUrlAllowed(urlStr) {
   }
 }
 
+/**
+ * Détecte proactivement un changement de structure Leboncoin en analysant
+ * les clés présentes dans les objets bruts. Si Leboncoin renomme ou supprime
+ * des champs clés (list_id, subject, price, body, location), le scraper
+ * continuera à fonctionner mais perdra silencieusement des données.
+ *
+ * Cette fonction vérifie la présence des champs critiques sur un échantillon
+ * d'objets bruts et émet un avertissement explicite si un champ clé manque
+ * sur une proportion significative d'annonces.
+ *
+ * @param {Array} rawAds - objets bruts extraits du HAR (avant normalisation)
+ * @param {object} logger - logger du pipeline
+ * @returns {object} { warnings: string[], missingFields: string[] }
+ */
+function detectStructureChanges(rawAds, logger) {
+  const result = { warnings: [], missingFields: [] };
+  if (!Array.isArray(rawAds) || rawAds.length === 0) return result;
+
+  // Champs critiques attendus dans chaque objet annonce Leboncoin brut.
+  // Si un de ces champs disparaît, c'est un signal fort que Leboncoin a
+  // changé sa structure JSON.
+  const CRITICAL_FIELDS = [
+    { key: 'list_id', alternatives: ['id', 'ad_id'], label: 'identifiant' },
+    { key: 'subject', alternatives: ['title', 'name'], label: 'titre' },
+    { key: 'price', alternatives: [], label: 'prix' },
+    { key: 'body', alternatives: ['description', 'text'], label: 'description' },
+    { key: 'location', alternatives: [], label: 'localisation' },
+  ];
+
+  const sample = rawAds.slice(0, Math.min(rawAds.length, 50));
+  const sampleSize = sample.length;
+
+  for (const field of CRITICAL_FIELDS) {
+    const missingCount = sample.filter((ad) => {
+      if (!ad || typeof ad !== 'object') return true;
+      if (ad[field.key] != null) return false;
+      for (const alt of field.alternatives) {
+        if (ad[alt] != null) return false;
+      }
+      return true;
+    }).length;
+
+    const missingRatio = missingCount / sampleSize;
+    // Seuil : si >70% des annonces manquent un champ critique, c'est un
+    // changement de structure probable (pas juste une annonce incomplète).
+    if (missingRatio > 0.7) {
+      const msg = `Champ "${field.key}" (${field.label}) absent sur ${missingCount}/${sampleSize} annonces (${Math.round(missingRatio * 100)}%) — Leboncoin a peut-être modifié sa structure JSON.`;
+      result.warnings.push(msg);
+      result.missingFields.push(field.key);
+      if (logger) logger.warn(`[detectStructureChanges] ${msg}`);
+    }
+  }
+
+  if (result.warnings.length > 0 && logger) {
+    logger.warn(`[detectStructureChanges] ${result.warnings.length} champ(s) critique(s) potentiellement modifié(s) par Leboncoin. Le scraper continue mais certaines données peuvent être incomplètes. Vérifiez les extracteurs dans adFields.js si le problème persiste.`);
+  }
+
+  return result;
+}
+
 // Note : les wrappers extractDeliveryInfo et extractSellerRating ont été
 // supprimés car la structure plate expose directement livraison, mainPropre,
 // vendeurNom, vendeurNote, etc. via normalizeAd().
@@ -781,6 +841,8 @@ function writeOutputsFactory(outDir, opts) {
   };
 }
 
+module.exports = { detectStructureChanges, normalizeAd, looksLikeAd };
+
 async function main() {
   let opts;
   try {
@@ -858,6 +920,8 @@ async function main() {
     if (rawAds.length === 0) {
       logger.warn('Aucun objet annonce trouvé dans les réponses JSON (les données HAR ne contiennent pas le format attendu).');
       logger.debug(`[main] Cela peut arriver si Leboncoin a changé sa structure JSON ou si la capture HAR a intercepté une page d'erreur au lieu des résultats de recherche.`);
+    } else {
+      detectStructureChanges(rawAds, logger);
     }
 
     const beforeFilter = rawAds.length;

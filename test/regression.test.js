@@ -1813,6 +1813,220 @@ assert(csvContent.includes("'+123"), 'CSV: +123 neutralisé par quote');
 assert(csvContent.includes("'-456"), 'CSV: -456 neutralisé par quote');
 assert(csvContent.includes('Normal title'), 'CSV: titre normal préservé');
 
+// --- 13. Détection de changement de structure Leboncoin ---
+console.log('\n[13] Détection changement de structure');
+(function () {
+const { detectStructureChanges } = require('../src/main/services/scraping/leboncoin-pipeline');
+assert(typeof detectStructureChanges === 'function', 'detectStructureChanges exportée depuis le pipeline');
+
+// Cas normal : tous les champs critiques présents → pas de warning
+const normalAds = Array.from({ length: 10 }, (_, i) => ({
+  list_id: i + 1, subject: `Item ${i}`, price: 100, body: 'desc',
+  location: { city: 'Paris' },
+}));
+const normalResult = detectStructureChanges(normalAds, null);
+assert(normalResult.warnings.length === 0, 'detectStructureChanges: pas de warning quand tous les champs présents');
+assert(normalResult.missingFields.length === 0, 'detectStructureChanges: missingFields vide quand structure OK');
+
+// Cas changement : list_id supprimé (renommé en ad_id) → détecté via alternatives
+const renamedIdAds = Array.from({ length: 10 }, (_, i) => ({
+  ad_id: i + 1, subject: `Item ${i}`, price: 100, body: 'desc',
+  location: { city: 'Paris' },
+}));
+const renamedResult = detectStructureChanges(renamedIdAds, null);
+assert(renamedResult.warnings.length === 0, 'detectStructureChanges: pas de warning si alternative trouvée (ad_id pour list_id)');
+
+// Cas réel : Leboncoin supprime "price" et "body" → 2 warnings
+const brokenAds = Array.from({ length: 10 }, (_, i) => ({
+  list_id: i + 1, subject: `Item ${i}`,
+  location: { city: 'Lyon' },
+  new_price_field: 100,
+  new_body_field: 'desc',
+}));
+const brokenResult = detectStructureChanges(brokenAds, null);
+assert(brokenResult.warnings.length >= 2, 'detectStructureChanges: 2+ warnings quand price ET body manquent');
+assert(brokenResult.missingFields.includes('price'), 'detectStructureChanges: price détecté comme manquant');
+assert(brokenResult.missingFields.includes('body'), 'detectStructureChanges: body détecté comme manquant');
+
+// Cas limite : tableau vide → pas de crash, pas de warning
+const emptyResult = detectStructureChanges([], null);
+assert(emptyResult.warnings.length === 0, 'detectStructureChanges: tableau vide → pas de warning');
+assert(detectStructureChanges(null, null).warnings.length === 0, 'detectStructureChanges: null → pas de crash');
+
+// Cas seuil : 50% manquant → pas de warning (seuil >70%)
+const halfMissing = Array.from({ length: 10 }, (_, i) => ({
+  list_id: i + 1, subject: `Item ${i}`, body: 'desc', location: { city: 'Lyon' },
+  ...(i < 5 ? { price: 100 } : {}),
+}));
+const halfResult = detectStructureChanges(halfMissing, null);
+assert(halfResult.warnings.length === 0, 'detectStructureChanges: 50% manquant → pas de warning (seuil 70%)');
+
+})();
+
+// --- 14. exportFields : round-trip toShortText / fromShortText ---
+console.log('\n[14] exportFields round-trip (toShortText/fromShortText)');
+(function () {
+const { toShortText, fromShortText, filterAdByFields, toReadableBlock, ALL_FIELD_KEYS } = require('../src/main/services/exporting/exportFields');
+
+const rtAd = {
+  id: '12345', title: 'iPhone 12 | 128Go', url: 'https://www.leboncoin.fr/ad/12345.htm',
+  prix: 350, city: 'Lyon', zipcode: '69000',
+  vendeurNom: 'Jean', vendeurType: 'particulier', vendeurId: 'u1',
+  vendeurNote: 4.8, nombreAvis: 27, vendeurUrlProfil: 'https://www.leboncoin.fr/u1',
+  vendeurAncienneteJours: 365,
+  livraison: true, mainPropre: false,
+  likes: 12,
+  datePublication: '2026-09-10T10:00:00Z',
+  dateModification: null,
+  dateScraping: '2026-09-14T12:00:00Z',
+  etat: 'Très bon état',
+  photosCount: 5, photosUrls: ['https://img.lbc.fr/1.jpg', 'https://img.lbc.fr/2.jpg'],
+  description: 'Vends iPhone 12\n128Go\nPas de rayures',
+};
+
+// Round-trip complet : toShortText → fromShortText → valeurs préservées
+const shortText = toShortText([rtAd]);
+const decoded = fromShortText(shortText);
+assert(decoded.items.length === 1, 'fromShortText: 1 annonce décodée');
+assert(decoded.items[0]['I'] === '12345', 'fromShortText: id préservé');
+assert(decoded.items[0]['T'] === 'iPhone 12 | 128Go', 'fromShortText: titre avec pipe préservé');
+assert(decoded.items[0]['P'] === '350', 'fromShortText: prix préservé');
+assert(decoded.items[0]['V'] === 'Lyon', 'fromShortText: ville préservée');
+assert(decoded.items[0]['D'] === 'Vends iPhone 12\n128Go\nPas de rayures', 'fromShortText: description multi-ligne préservée');
+
+// Round-trip avec valeur null (dateModification = null)
+assert(decoded.items[0]['Dm'] === null, 'fromShortText: valeur null décodée comme null (pas string "null")');
+
+// Round-trip avec champ excluant les données vendeur
+const shortNoSeller = toShortText([rtAd], null, { excludeSellerData: true });
+const decodedNoSeller = fromShortText(shortNoSeller);
+assert(!('Vn' in decodedNoSeller.items[0]), 'toShortText: excludeSellerData exclut vendeurNom');
+assert(!('Vr' in decodedNoSeller.items[0]), 'toShortText: excludeSellerData exclut vendeurNote');
+
+// Round-trip multi-annonces
+const rtAd2 = { ...rtAd, id: '67890', title: 'Samsung S21', prix: 200 };
+const multiShort = toShortText([rtAd, rtAd2]);
+const multiDecoded = fromShortText(multiShort);
+assert(multiDecoded.items.length === 2, 'fromShortText: 2 annonces décodées');
+assert(multiDecoded.items[0]['I'] === '12345', 'fromShortText: annonce 1 id correct');
+assert(multiDecoded.items[1]['I'] === '67890', 'fromShortText: annonce 2 id correct');
+
+// Round-trip mode Personnalisé (champs restreints)
+const customFields = ['id', 'title', 'prix', 'ville'];
+const customShort = toShortText([rtAd], customFields);
+const customDecoded = fromShortText(customShort);
+assert(customDecoded.items[0]['I'] === '12345', 'fromShortText custom: id présent');
+assert(customDecoded.items[0]['T'] === 'iPhone 12 | 128Go', 'fromShortText custom: titre présent');
+assert(!('Vn' in customDecoded.items[0]), 'fromShortText custom: vendeurNom absent (non sélectionné)');
+assert(!('D' in customDecoded.items[0]), 'fromShortText custom: description absente (non sélectionnée)');
+
+// filterAdByFields : mode Personnalisé ne garde que les champs sélectionnés
+const filtered = filterAdByFields(rtAd, ['id', 'title', 'prix']);
+assert(filtered.id === '12345', 'filterAdByFields: id conservé');
+assert(filtered.title === 'iPhone 12 | 128Go', 'filterAdByFields: title conservé');
+assert(filtered.prix === 350, 'filterAdByFields: prix conservé');
+assert(!('city' in filtered), 'filterAdByFields: city supprimé (non sélectionné)');
+assert(!('vendeurNom' in filtered), 'filterAdByFields: vendeurNom supprimé (non sélectionné)');
+
+// filterAdByFields : null/[] → objet tel quel (mode Défaut)
+assert(filterAdByFields(rtAd, null) === rtAd, 'filterAdByFields: null → objet original (mode Défaut)');
+assert(filterAdByFields(rtAd, []) === rtAd, 'filterAdByFields: [] → objet original (mode Défaut)');
+
+// filterAdByFields : excludeSellerData
+const filteredNoSeller = filterAdByFields(rtAd, ALL_FIELD_KEYS, { excludeSellerData: true });
+assert(!('vendeurNom' in filteredNoSeller), 'filterAdByFields: excludeSellerData supprime vendeurNom');
+assert(filteredNoSeller.id === '12345', 'filterAdByFields: excludeSellerData garde id');
+
+// toReadableBlock : génère un bloc TXT lisible
+const block = toReadableBlock(rtAd, 0);
+assert(block.includes('===== ANNONCE 1 ====='), 'toReadableBlock: en-tête annonce');
+assert(block.includes('iPhone 12 | 128Go'), 'toReadableBlock: titre dans le bloc');
+assert(block.includes('350 €'), 'toReadableBlock: prix formaté avec €');
+assert(block.includes('Lyon'), 'toReadableBlock: ville dans le bloc');
+
+// toReadableBlock : mode Personnalisé ne montre que les champs sélectionnés
+const customBlock = toReadableBlock(rtAd, 0, ['id', 'title']);
+assert(customBlock.includes('12345'), 'toReadableBlock custom: id présent');
+assert(customBlock.includes('iPhone 12 | 128Go'), 'toReadableBlock custom: titre présent');
+assert(!customBlock.includes('Lyon'), 'toReadableBlock custom: ville absente (non sélectionnée)');
+
+})();
+
+// --- 15. adFields : extracteurs défensifs sur fixtures variées ---
+console.log('\n[15] adFields extracteurs (fixtures)');
+(function () {
+const adFields = require('../src/main/services/scraping/adFields');
+
+// extractDescription : body string, objet {text}, null
+assert(adFields.extractDescription({ body: 'texte simple' }) === 'texte simple', 'extractDescription: body string');
+assert(adFields.extractDescription({ body: { text: 'texte objet' } }) === 'texte objet', 'extractDescription: body objet {text}');
+assert(adFields.extractDescription({ body: {} }) === null, 'extractDescription: body objet vide → null');
+assert(adFields.extractDescription({ body: 42 }) === null, 'extractDescription: body nombre → null');
+assert(adFields.extractDescription({ body: null }) === null, 'extractDescription: body null → null');
+assert(adFields.extractDescription({ description: 'fallback' }) === 'fallback', 'extractDescription: description fallback');
+assert(adFields.extractDescription({}) === null, 'extractDescription: objet vide → null');
+assert(adFields.extractDescription(null) === null, 'extractDescription: null → null');
+
+// extractPrice : nombre, string, array, objet, null
+assert(adFields.extractPrice({ price: 150 }) === 150, 'extractPrice: nombre');
+assert(adFields.extractPrice({ price: '200' }) === 200, 'extractPrice: string');
+assert(adFields.extractPrice({ price: [{ value: 300 }] }) === 300, 'extractPrice: array d\'objets');
+assert(adFields.extractPrice({ price: { value: 250 } }) === 250, 'extractPrice: objet {value}');
+assert(adFields.extractPrice({ price: null }) === null, 'extractPrice: null → null');
+assert(adFields.extractPrice({}) === null, 'extractPrice: absent → null');
+assert(adFields.extractPrice({ price: 'abc' }) === null, 'extractPrice: string non-numérique → null');
+
+// extractTransaction : livraison et mainPropre indépendants
+const tx1 = adFields.extractTransaction({ has_option: { shipping: true }, body: 'remise en main propre' });
+assert(tx1.livraison === true, 'extractTransaction: livraison=true depuis has_option');
+assert(tx1.mainPropre === true, 'extractTransaction: mainPropre=true depuis description');
+const tx2 = adFields.extractTransaction({ has_option: { shipping: false }, body: 'pas d\'envoi' });
+assert(tx2.livraison === false, 'extractTransaction: livraison=false');
+assert(tx2.mainPropre === true, 'extractTransaction: mainPropre=true (pas d\'envoi)');
+const tx3 = adFields.extractTransaction({ body: 'retrait sur place' });
+assert(tx3.livraison === null, 'extractTransaction: livraison=null si non trouvé');
+assert(tx3.mainPropre === true, 'extractTransaction: mainPropre=true (retrait sur place)');
+const tx4 = adFields.extractTransaction({});
+assert(tx4.livraison === null && tx4.mainPropre === null, 'extractTransaction: objet vide → null/null');
+
+// extractSeller : nom, type, note, id
+const seller1 = adFields.extractSeller({
+  owner: { name: 'Jean', type: 'particulier', rating: 4.5, nb_ratings: 10, user_id: 42 },
+});
+assert(seller1.nom === 'Jean', 'extractSeller: nom');
+assert(seller1.type === 'particulier', 'extractSeller: type particulier');
+assert(seller1.note === 4.5, 'extractSeller: note');
+assert(seller1.nombreAvis === 10, 'extractSeller: nombreAvis');
+assert(seller1.id === '42', 'extractSeller: id string');
+const seller2 = adFields.extractSeller({ owner: { type: 'pro', store_name: 'Shop' } });
+assert(seller2.type === 'pro', 'extractSeller: type pro');
+assert(seller2.isPro === true, 'extractSeller: isPro déduit');
+const seller3 = adFields.extractSeller({});
+assert(seller3.nom === null, 'extractSeller: objet vide → nom null');
+assert(seller3.note === null, 'extractSeller: objet vide → note null');
+
+// extractCondition : attribut condition/etat
+assert(adFields.extractCondition({ attributes: [{ key: 'condition', value: 'Bon état' }] }) === 'Bon état', 'extractCondition: key=condition');
+assert(adFields.extractCondition({ attributes: [{ key: 'etat', value: 'Neuf' }] }) === 'Neuf', 'extractCondition: key=etat');
+assert(adFields.extractCondition({ attributes: [] }) === null, 'extractCondition: attributs vides → null');
+assert(adFields.extractCondition({}) === null, 'extractCondition: pas dattributs → null');
+
+// extractPhotos : urls depuis images.urls ou images array
+const photos1 = adFields.extractPhotos({ images: { urls: ['https://a.jpg', 'https://b.jpg'] } });
+assert(photos1.count === 2, 'extractPhotos: count depuis images.urls');
+assert(photos1.urls.length === 2, 'extractPhotos: urls depuis images.urls');
+const photos2 = adFields.extractPhotos({ images: ['https://c.jpg'] });
+assert(photos2.count === 1, 'extractPhotos: count depuis images array');
+const photos3 = adFields.extractPhotos({});
+assert(photos3.count === 0, 'extractPhotos: pas dimages → count 0');
+
+// extractLikes : nombre, string, null
+assert(adFields.extractLikes({ favorites_count: 5 }) === 5, 'extractLikes: favorites_count');
+assert(adFields.extractLikes({ likes_count: '10' }) === 10, 'extractLikes: string parsée');
+assert(adFields.extractLikes({}) === null, 'extractLikes: absent → null');
+
+})();
+
 console.log(`\n=== RÉSULTAT : ${pass} réussis, ${fail} échoués ===`);
 process.exit(fail > 0 ? 1 : 0);
 }
