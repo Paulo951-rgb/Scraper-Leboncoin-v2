@@ -88,8 +88,7 @@ const EXPORT_FIELDS = [
   { key: 'vendeurNbAvis', label: 'Vendeur (nb avis)' },
   { key: 'vendeurUrlProfil', label: 'Vendeur (URL profil)' },
   { key: 'vendeurAnciennete', label: 'Vendeur (ancienneté)' },
-  { key: 'livraison', label: 'Livraison' },
-  { key: 'mainPropre', label: 'Main propre' },
+  { key: 'deliveryType', label: 'Type de remise' },
   { key: 'likes', label: 'Likes' },
   { key: 'datePublication', label: 'Date publication' },
   { key: 'dateModification', label: 'Date modification' },
@@ -289,23 +288,31 @@ window.toggleCompare = (adId) => {
 openCompareModalBtn.addEventListener('click', () => {
   if (compareSet.size === 0) return alert('Sélectionnez au moins 1 annonce avec les cases ☑️ pour comparer.');
 
-  let selectedAds = [];
+  const seenIds = new Set();
+  const selectedAds = [];
   allJobsCache.forEach((j) => {
     if (Array.isArray(j.ads)) {
       j.ads.forEach((a) => {
-        if (compareSet.has(String(a.id))) selectedAds.push(a);
+        const idStr = String(a.id);
+        if (compareSet.has(idStr) && !seenIds.has(idStr)) {
+          seenIds.add(idStr);
+          selectedAds.push(a);
+        }
       });
     }
   });
 
   compareGrid.innerHTML = selectedAds
     .map((a) => {
+      const sellerName = includeSellerData ? (a.vendeurNom || a.seller || 'Particulier') : 'Masqué';
+      const priceText = a.prix != null ? a.prix + ' €' : (a.price != null ? a.price + ' €' : '-');
+      const thumb = (a.photosUrls && a.photosUrls[0]) || (a.images && a.images[0]) || noPhotoUrl();
       return `
       <div class="compare-col">
-        <img src="${escapeHtml((a.photosUrls && a.photosUrls[0]) || (a.images && a.images[0]) || noPhotoUrl())}" style="width:100%; height:140px; object-fit:cover; border-radius:6px;">
+        <img src="${escapeHtml(thumb)}" style="width:100%; height:140px; object-fit:cover; border-radius:6px;">
         <strong>${escapeHtml(a.title || a.titre || 'Sans titre')}</strong>
-        <div style="font-size:1.2rem; font-weight:bold; color:var(--primary-color);">${a.prix != null ? a.prix + ' €' : (a.price != null ? a.price + ' €' : '-')}</div>
-        <div style="font-size:0.8rem;">Vendeur : ${escapeHtml(a.seller || 'Particulier')}</div>
+        <div style="font-size:1.2rem; font-weight:bold; color:var(--primary-color);">${escapeHtml(priceText)}</div>
+        <div style="font-size:0.8rem;">Vendeur : ${escapeHtml(sellerName)}</div>
         <button class="btn btn-primary btn-small" onclick="openUrl('${escapePath(a.url)}')">🔗 Voir Leboncoin</button>
       </div>
     `;
@@ -344,7 +351,7 @@ const cfgLogRetention = document.getElementById('cfgLogRetention');
 
 function applySettingsToUI(cfg) {
   cfgTheme.value = localStorage.getItem('app-theme') || cfg.theme || 'theme-dark';
-  cfgScrapeSpeed.value = cfg.scrapeSpeed || 'fast';
+  cfgScrapeSpeed.value = cfg.scrapeSpeed || 'moyen';
   cfgPageDelay.value = cfg.pageDelayMs ?? 1000;
   cfgHeadless.checked = cfg.headless !== false;
   if (cfgIncludeSellerData) cfgIncludeSellerData.checked = cfg.includeSellerData !== false;
@@ -397,7 +404,7 @@ resetSettingsBtn.addEventListener('click', async () => {
   localStorage.setItem('app-theme', 'theme-dark');
   document.body.className = 'theme-dark';
   await window.api.saveConfig({
-    scrapeSpeed: 'fast',
+    scrapeSpeed: 'moyen',
     pageDelayMs: 1000,
     headless: true,
     includeSellerData: true,
@@ -405,7 +412,7 @@ resetSettingsBtn.addEventListener('click', async () => {
     autoCleanJobsDays: 0,
     logRetentionDays: 7,
   });
-  applySettingsToUI({ scrapeSpeed: 'fast', pageDelayMs: 1000, headless: true, includeSellerData: true, autoCleanHarDays: 7, autoCleanJobsDays: 0, logRetentionDays: 7 });
+  applySettingsToUI({ scrapeSpeed: 'moyen', pageDelayMs: 1000, headless: true, includeSellerData: true, autoCleanHarDays: 7, autoCleanJobsDays: 0, logRetentionDays: 7 });
   alert('Paramètres réinitialisés.');
 });
 

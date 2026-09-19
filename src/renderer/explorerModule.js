@@ -139,7 +139,7 @@ function restoreExplorerFilters() {
     if (saved.priceMin != null && filterPriceMin) filterPriceMin.value = saved.priceMin;
     if (saved.priceMax != null && filterPriceMax) filterPriceMax.value = saved.priceMax;
     if (saved.tag && filterTagSelect) filterTagSelect.value = saved.tag;
-    if (saved.sort && sortSelect) sortSelect.value = saved.sort;
+    if (saved.sort && sortSelect) sortSelect.value = saved.sort === 'DEAL_DESC' ? 'DEFAULT' : saved.sort;
     if (saved.deliveryType && filterDeliveryType) filterDeliveryType.value = saved.deliveryType;
     if (saved.sellerType && filterSellerType) filterSellerType.value = saved.sellerType;
     if (saved.minRating != null && filterMinRating) filterMinRating.value = saved.minRating;
@@ -387,7 +387,8 @@ window.openAdDetail = (adId) => {
   modalAdTitle.textContent = targetAd.title || 'Sans titre';
   modalPrice.textContent = targetAd.prix != null ? targetAd.prix : (targetAd.price != null ? targetAd.price : '-');
   modalCity.textContent = targetAd.city || 'Inconnue';
-  modalSeller.textContent = includeSellerData ? `${targetAd.vendeurNom || targetAd.seller || 'Particulier'}${targetAd.isPro ? ' (Pro)' : ''}` : ' Masqué';
+  const isProSeller = targetAd.vendeurType === 'pro' || targetAd.isPro === true;
+  modalSeller.textContent = includeSellerData ? `${targetAd.vendeurNom || targetAd.seller || 'Particulier'}${isProSeller ? ' (Pro)' : ''}` : ' Masqué';
   modalDate.textContent = targetAd.datePublication || targetAd.date || '-';
 
   // Nouveaux champs : catégorie, note vendeur, mode de remise

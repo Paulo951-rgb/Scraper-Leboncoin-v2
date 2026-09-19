@@ -68,11 +68,16 @@ function renderStatsView() {
   if (prices.length > 0) {
     const sum = prices.reduce((s, p) => s + p, 0);
     const avg = Math.round(sum / prices.length);
+    const mid = Math.floor(prices.length / 2);
+    const median = prices.length % 2 !== 0 ? prices[mid] : Math.round((prices[mid - 1] + prices[mid]) / 2);
+
     statAvgPrice.textContent = fmt(avg) + ' €';
+    if (statMedPrice) statMedPrice.textContent = fmt(median) + ' €';
     statMinPrice.textContent = fmt(prices[0]) + ' €';
     statMaxPrice.textContent = fmt(prices[prices.length - 1]) + ' €';
   } else {
     statAvgPrice.textContent = '-';
+    if (statMedPrice) statMedPrice.textContent = '-';
     statMinPrice.textContent = '-';
     statMaxPrice.textContent = '-';
   }
@@ -130,7 +135,13 @@ async function geocodeCityGov(cityName, zipcode) {
   // écrit ne doit pas faire crasher tout le rendu de carte).
   const cached = localStorage.getItem(cacheKey);
   if (cached) {
-    try { return JSON.parse(cached); } catch { localStorage.removeItem(cacheKey); }
+    try {
+      const parsed = JSON.parse(cached);
+      if (Array.isArray(parsed) && parsed.length === 2) return parsed;
+      localStorage.removeItem(cacheKey);
+    } catch {
+      localStorage.removeItem(cacheKey);
+    }
   }
 
   try {
