@@ -237,7 +237,7 @@ function setupIpcHandlers(getMainWindow) {
         noDesc,
         fresh: true,
         limit: limit ? parseInt(limit, 10) : undefined,
-        speed: userSettings.scrapeSpeed || 'fast',
+        speed: userSettings.scrapeSpeed || 'moyen',
         headless: userSettings.headless !== false,
         userAgent: activeCapturer ? activeCapturer._userAgent : undefined,
         // Profil de données (Défaut / Maximum / Personnalisé) : liste concrète de

@@ -682,7 +682,7 @@ assert(/indexAxis:\s*'y'/.test(appCode), 'app.js: graphique vendeur en barres ho
 assert(!/type:\s*'doughnut'/.test(appCode), 'app.js: V3 — plus de doughnut pour le graphique vendeur');
 assert(!/cutout:\s*'62%'/.test(appCode), 'app.js: V3 — cutout doughnut supprimé');
 // renderer : cache géocodage tolérant au JSON corrompu
-assert(/try \{ return JSON\.parse\(cached\); \} catch/.test(appCode), 'app.js: cache géocodage tolérant au JSON corrompu');
+assert(/try \{[\s\S]*?JSON\.parse\(cached\)[\s\S]*?\} catch/.test(appCode), 'app.js: cache géocodage tolérant au JSON corrompu');
 // renderer : mapHandDeliveryOnly null-safe
 assert(/mapHandDeliveryEl && mapHandDeliveryEl\.checked/.test(appCode), 'app.js: mapHandDeliveryOnly null-safe');
 // renderer : mapHandDeliveryOnly utilise deliveryType (main_propre + les_deux)
