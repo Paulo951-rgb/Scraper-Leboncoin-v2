@@ -15,6 +15,47 @@ const PLACEHOLDER_SVG = (label) =>
   )}`;
 const noPhotoUrl = () => PLACEHOLDER_SVG('Pas de photo');
 
+/**
+ * Lit la ville d'une annonce en tolérant TOUTES les variantes de nommage
+ * rencontrées selon la source : le modèle interne (`city`) et la clé d'export
+ * (`ville`) sont écrits par le pipeline, mais d'anciens JSON peuvent n'avoir
+ * qu'un des deux, voire un objet `location`. Sans cette résolution, la ville
+ * s'affichait « Inconnue » alors que la donnée existait.
+ * @param {object} a
+ * @returns {string} ville ou '' si absente (jamais inventée)
+ */
+function cityOf(a) {
+  if (!a || typeof a !== 'object') return '';
+  const v = a.city ?? a.ville ?? a.location?.city ?? a.location?.city_label ?? a.localisation?.ville;
+  return typeof v === 'string' ? v.trim() : (v != null ? String(v).trim() : '');
+}
+
+/**
+ * Lit le code postal d'une annonce (variantes `zipcode`/`codePostal`).
+ * @param {object} a
+ * @returns {string} code postal ou '' si absent
+ */
+function zipOf(a) {
+  if (!a || typeof a !== 'object') return '';
+  const v = a.zipcode ?? a.codePostal ?? a.location?.zipcode ?? a.localisation?.codePostal;
+  return typeof v === 'string' ? v.trim() : (v != null ? String(v).trim() : '');
+}
+
+/**
+ * Libellé de localisation : ville + code postal si disponibles, sinon
+ * 'Inconnue'. N'invente JAMAIS une ville : si la donnée est absente, on
+ * l'indique explicitement.
+ * @param {object} a
+ * @returns {string}
+ */
+function locationLabel(a) {
+  const city = cityOf(a);
+  const zip = zipOf(a);
+  if (!city && !zip) return 'Inconnue';
+  if (city && zip) return `${city} (${zip})`;
+  return city || zip;
+}
+
 // Échappe une valeur injectée dans un attribut HTML contenant du JS
 // (ex: onclick="func('VALUE')"). Double contexte : attribut HTML (") +
 // chaîne JS ('\). escapeHtml ne convient PAS ici car il transformerait ' en
@@ -157,6 +198,7 @@ function installDelegatedActions() {
       case 'toggleStar': window.toggleStar && window.toggleStar(id); break;
       case 'switchGalleryImg': window.switchGalleryImg && window.switchGalleryImg(url, el); break;
       case 'openFile': window.openFile && window.openFile(id); break;
+      case 'openSessionFolder': window.openSessionFolder && window.openSessionFolder(id); break;
       case 'askDeleteJob': window.askDeleteJob && window.askDeleteJob(id); break;
       case 'loadPreset': window.loadPreset && window.loadPreset(Number(id)); break;
       case 'deletePreset': e.stopPropagation(); window.deletePreset && window.deletePreset(Number(id)); break;
@@ -206,5 +248,20 @@ window.openFile = async (filePath) => {
     }
   } catch (err) {
     showToast('Impossible d\'ouvrir le fichier : ' + (err.message || err), 'error');
+  }
+};
+
+// Ouvre le dossier de résultats d'une session de scraping (JSON, TXT, rapport).
+// L'identifiant de session est validé côté main process ; le renderer ne fournit
+// jamais de chemin de fichier.
+window.openSessionFolder = async (jobId) => {
+  if (!jobId) return;
+  try {
+    const res = await window.api.openSessionFolder(jobId);
+    if (res && res.success === false) {
+      showToast(res.error || 'Impossible d\'ouvrir le dossier de la session.', 'error');
+    }
+  } catch (err) {
+    showToast('Impossible d\'ouvrir le dossier de la session : ' + (err.message || err), 'error');
   }
 };

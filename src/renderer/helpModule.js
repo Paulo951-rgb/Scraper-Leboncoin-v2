@@ -163,8 +163,8 @@ const FAQ_DATA = [
   },
   {
     q: 'Pourquoi aucune description n\'a-t-elle été récupérée ?',
-    a: `<p><strong>C'est volontaire si la case « Ignorer les descriptions » est cochée.</strong> Dans ce cas le logiciel n'extrait que les données de la liste de recherche (titre, prix, ville…) et <strong>saute l'enrichissement des descriptions détaillées</strong> pour aller beaucoup plus vite.</p>
-        <p>Pour obtenir les descriptions complètes (et les données vendeur de la page de détail), <strong>décochez</strong> cette case. Le mode de performance (Ultra rapide) reste identique dans tous les cas.</p>`
+    a: `<p>Les descriptions sont <strong>toujours enrichies</strong> quand la page de détail de l'annonce est accessible. Si une description manque, c'est que la page de détail a été bloquée (403/429), que l'annonce a été supprimée, ou que le vendeur n'a pas rédigé de description.</p>
+        <p>Le mode de performance (Ultra rapide) est identique dans tous les cas et applique la politique de scraping fixe du logiciel.</p>`
   },
   {
     q: 'J\'obtiens une erreur 403 / 429 pendant le scraping, que faire ?',
@@ -173,7 +173,6 @@ const FAQ_DATA = [
         <ul>
           <li>Attendez quelques minutes puis réessayez ;</li>
           <li>Réduisez le nombre de pages par job ;</li>
-          <li>Utilisez un <strong>proxy</strong> si vous en disposez ;</li>
           <li>Ne relancez pas en boucle : cela aggrave la limitation.</li>
         </ul>
         <p>Le logiciel n'effectue <strong>aucun contournement</strong> des protections du site (pas de rotation d'identité ni de mécanisme d'évasion).</p>`
@@ -188,8 +187,7 @@ const FAQ_DATA = [
     a: `<p>Le logiciel propose plusieurs niveaux de contrôle :</p>
         <ul>
           <li><strong>Mode d'export</strong> : choisissez entre Défaut (toutes les données) et Personnalisé (seuls les champs sélectionnés sont exportés).</li>
-          <li><strong>Données vendeur</strong> : vous pouvez désactiver les données vendeur (nom, ID, note, avis, URL profil, ancienneté) dans les Paramètres ⚙️. Elles sont alors exclues de tous les exports et masquées dans l'interface.</li>
-          <li><strong>Descriptions</strong> : vous pouvez ignorer les descriptions lors du scraping pour accélérer le traitement et réduire la quantité de texte conservé.</li>
+          <li><strong>Données vendeur</strong> : vous pouvez désactiver les données vendeur (nom, ID, note, avis, URL profil) dans les Paramètres ⚙️. Elles sont alors exclues de tous les exports et masquées dans l'interface.</li>
         </ul>
         <p>Consultez <code>docs/DATA_HANDLING.md</code> pour le tableau complet des catégories de données et leur traçabilité.</p>`
   },
@@ -218,8 +216,6 @@ const HELP_SECTIONS = [
       <ul>
         <li><strong>Pages</strong> — combien de pages de résultats parcourir (attention : trop de pages = risque de blocage).</li>
         <li><strong>Limite</strong> — plafond d'annonces (vide = toutes).</li>
-        <li><strong>Proxy</strong> — serveur HTTP/SOCKS5 pour masquer votre IP (optionnel, utile contre le blocage).</li>
-        <li><strong>Ignorer les descriptions</strong> — saute l'enrichissement des descriptions (plus rapide).</li>
       </ul>
       <p>La <strong>performance</strong> (mode ⚡ Ultra rapide, 25 parallèles, délai 400 ms) est <strong>fixe</strong> et appliquée automatiquement : elle n'est pas modifiable.</p>
       <p>Dans <strong>Paramètres ⚙️</strong> vous pouvez régler : le thème, le mode de capture (invisible / visible si CAPTCHA), les données vendeur, le nettoyage automatique.</p>`

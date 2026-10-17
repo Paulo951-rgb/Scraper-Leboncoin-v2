@@ -76,6 +76,10 @@
           <span class="nav-item-icon">📊</span>
           <span class="nav-item-label">Statistiques</span>
         </button>
+        <button class="nav-item" data-tab="tab-map">
+          <span class="nav-item-icon">🗺️</span>
+          <span class="nav-item-label">Carte</span>
+        </button>
       </nav>
 
       <div class="sidebar-divider"></div>
@@ -194,21 +198,9 @@
             </div>
           </div>
 
-          <!-- PROXIES -->
-          <div class="card subcard">
-            <h3>🌐 Configuration Proxy Rotatif (Optionnel)</h3>
-            <div class="form-group">
-              <label for="proxyUrl">Serveur Proxy (HTTP / SOCKS5) :</label>
-              <input type="text" id="proxyUrl" placeholder="http://user:pass@proxy.example.com:8080">
-            </div>
-          </div>
-
-          <div class="form-row checkboxes">
-            <label class="checkbox-label">
-              <input type="checkbox" id="noDesc">
-              Ignorer les descriptions (Mode Ultra-Rapide)
-            </label>
-          </div>
+          <!-- PROXY ROTATIF : section supprimée (le scraping utilise les
+               paramètres réseau normaux ; le backoff/circuit breaker et le
+               respect des limites du site sont conservés côté moteur). -->
 
           <div class="actions">
             <button id="startBtn" class="btn btn-primary">🚀 Lancer le scraping</button>
@@ -292,13 +284,14 @@
                 <tr>
                   <th>Date de Session</th>
                   <th>Annonces</th>
+                  <th>Statut</th>
                   <th>Fichiers Générés</th>
                   <th>Actions</th>
                 </tr>
               </thead>
               <tbody id="historyTableBody">
                 <tr>
-                  <td colspan="4" class="text-center">Chargement de l'historique...</td>
+                  <td colspan="5" class="text-center">Chargement de l'historique...</td>
                 </tr>
               </tbody>
             </table>
@@ -517,19 +510,6 @@
             </div>
           </div>
 
-          <!-- 🗺️ CARTE GEOGRAPHIQUE INTERACTIVE LEAFLET (DANS L'ONGLET STATISTIQUES) -->
-          <div class="card subcard">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-              <h3>🗺️ Carte Géographique des Annonces (France)</h3>
-              <label class="checkbox-label" style="font-size:0.8rem; margin:0;">
-                <input type="checkbox" id="mapHandDeliveryOnly" checked>
-                🤝 Remise en main propre uniquement
-              </label>
-            </div>
-            <div id="leafletMap" class="leaflet-map" style="height: 350px;"></div>
-            <p id="mapStatus" class="map-status hidden"></p>
-          </div>
-
           <div class="charts-grid" style="margin-top:15px;">
             <div class="chart-box">
               <canvas id="priceDistChart"></canvas>
@@ -547,6 +527,38 @@
         </div>
       </section>
 
+      <!-- PAGE CARTE (onglet indépendant) -->
+      <section id="tab-map" class="tab-content">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Carte</h1>
+            <p class="page-subtitle">Localisation des annonces scrapées (par commune)</p>
+          </div>
+        </div>
+
+        <div class="map-toolbar">
+          <select id="mapSessionSelect" class="filter-select" style="max-width:260px;">
+            <option value="ALL">Tous les scrapings combinés</option>
+          </select>
+          <label class="checkbox-label" style="margin:0;">
+            <input type="checkbox" id="mapHandDeliveryOnly" checked>
+            Remise en main propre uniquement
+          </label>
+          <label class="map-price-label">Prix min
+            <input type="number" id="mapMinPrice" class="filter-input filter-input-small" placeholder="0" min="0">
+          </label>
+          <label class="map-price-label">Prix max
+            <input type="number" id="mapMaxPrice" class="filter-input filter-input-small" placeholder="∞" min="0">
+          </label>
+          <button class="btn btn-secondary btn-small" id="mapRecenterBtn" title="Recentrer la carte sur les annonces affichées">Recentrer</button>
+        </div>
+
+        <div class="map-wrapper">
+          <div id="leafletMap" class="leaflet-map"></div>
+          <p id="mapStatus" class="map-status hidden"></p>
+        </div>
+      </section>
+
     </main>
   </div>
 
@@ -560,19 +572,9 @@
       <div class="form-group text-left">
         <label for="cfgTheme" style="font-size:0.8rem; color:var(--text-muted); display:block; margin-bottom:5px;">Thème de l'interface :</label>
         <select id="cfgTheme" style="width:100%;">
-          <option value="theme-dark">🌙 Sombre (Par défaut)</option>
-          <option value="theme-light">☀️ Clair</option>
-          <option value="theme-oled">⚫ OLED (Noir Pur)</option>
-          <option value="theme-violet">🟣 Violet Doux</option>
-          <option value="theme-green">💚 Vert Émeraude</option>
-          <option value="theme-sunset">🌅 Sunset</option>
-          <option value="theme-carbon">🏎️ Carbon</option>
-          <option value="theme-rose">🌸 Rose</option>
-          <option value="theme-amber">🍯 Amber</option>
-          <option value="theme-mint">🌿 Mint</option>
-          <option value="theme-slate">🧊 Slate</option>
-          <option value="theme-crimson">🔴 Crimson</option>
-          <option value="theme-nordic">❄️ Nordic</option>
+          <option value="theme-dark">Sombre</option>
+          <option value="theme-light">Clair</option>
+          <option value="theme-graphite">Graphite</option>
         </select>
       </div>
 
@@ -816,6 +818,7 @@
   <script src="scraperModule.js"></script>
   <script src="explorerModule.js"></script>
   <script src="statsModule.js"></script>
+  <script src="mapModule.js"></script>
   <script src="historyModule.js"></script>
   <script src="app.js"></script>
 </body>

@@ -74,7 +74,12 @@ document.querySelectorAll('[data-tab]').forEach((btn) => {
     if (btn.dataset.tab === 'tab-explorer') loadExplorerPage();
     if (btn.dataset.tab === 'tab-stats') {
       loadStatsPage();
-      // Force Leaflet à recalculer sa taille d'affichage après l'ouverture de l'onglet (anti-bug d'affichage)
+    }
+    if (btn.dataset.tab === 'tab-map') {
+      loadMapPage();
+      // Force Leaflet à recalculer sa taille après l'ouverture de l'onglet : sans
+      // cela la carte s'affiche grise/partiellement vide (conteneur caché au
+      // moment de l'initialisation).
       setTimeout(() => {
         if (typeof mapInstance !== 'undefined' && mapInstance) {
           mapInstance.invalidateSize();

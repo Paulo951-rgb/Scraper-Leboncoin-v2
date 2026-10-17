@@ -146,6 +146,7 @@ class JobHistoryManager {
       const jsonPath = path.join(resultsDir, 'annonces.json');
       const txtPath = path.join(resultsDir, 'annonces.txt');
       const exportMetaPath = path.join(resultsDir, 'export-meta.json');
+      const reportPath = path.join(resultsDir, 'report.json');
 
       let rawAds = [];
       // Formatage lisible : le nom du dossier est job-<ISO> (ex: job-2026-08-12T02-21-16-123Z).
@@ -173,6 +174,20 @@ class JobHistoryManager {
 
       const { stats, ads: enrichedAds } = AdStats.analyze(rawAds);
 
+      // Rapport de session (durée par phase, mesures de performance, journal
+      // réseau). Lecture tolérante : un report.json absent ou corrompu ne doit
+      // pas empêcher l'affichage de l'historique.
+      const report = (() => {
+        try {
+          if (fs.existsSync(reportPath)) {
+            const r = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+            return (r && typeof r === 'object') ? r : null;
+          }
+        } catch { /* silencieux : report illisible */ }
+        return null;
+      })();
+      const durationMs = report?.performance?.totalMs != null ? report.performance.totalMs : null;
+
       jobs.push({
         id: entry.name,
         date: dateFormatted,
@@ -182,6 +197,9 @@ class JobHistoryManager {
         jobDir: jobPath,
         resultsDir,
         integrityWarning,
+        durationMs,
+        exitCode: report?.exitCode ?? null,
+        reportAvailable: !!report,
         files: {
           json: fs.existsSync(jsonPath) ? jsonPath : null,
           txt: fs.existsSync(txtPath) ? txtPath : null,

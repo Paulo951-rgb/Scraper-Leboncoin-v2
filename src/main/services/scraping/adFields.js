@@ -218,7 +218,9 @@ function extractPhotos(raw, opts = {}) {
 
 /**
  * Extraction du vendeur.
- * Renvoie { nom, type, id, note, urlProfil, ancienneteJours }.
+ * Renvoie { nom, type, id, note, nombreAvis, urlProfil, ancienneteJours }.
+ * `ancienneteJours` est conservé en interne (diagnostic) mais n'est plus un
+ * champ exportable ni affiché (retiré du modèle d'export utilisateur).
  */
 function extractSeller(raw, opts = {}) {
   const onError = opts.onError || (() => {});

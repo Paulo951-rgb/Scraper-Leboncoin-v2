@@ -1,15 +1,17 @@
 'use strict';
 
-const { ALL_FIELD_KEYS } = require('./exportFields');
+const { ALL_FIELD_KEYS, ensureEssentialFields } = require('./exportFields');
 
-// Profil Défaut : champs essentiels pour un scraping rapide et léger
+// Profil Défaut : champs essentiels pour un scraping rapide et léger.
+// Les URL de photos sont incluses : l'explorateur (vignettes + galerie) en a
+// besoin quel que soit le profil — les images ne sont PAS un champ optionnel.
 const DEFAULT_PROFILE_FIELDS = [
   'id', 'title', 'url', 'prix',
   'ville', 'codePostal',
   'deliveryType',
   'datePublication', 'dateScraping',
   'vendeurNom', 'vendeurType',
-  'photosCount',
+  'photosCount', 'photosUrls',
   'description',
 ];
 
@@ -45,7 +47,10 @@ function getProfileFields(profileId, customFields) {
     if (!customFields || !Array.isArray(customFields) || customFields.length === 0) {
       return DEFAULT_PROFILE_FIELDS;
     }
-    return customFields.filter((k) => ALL_FIELD_KEYS.includes(k));
+    // Filtre les clés inconnues puis garantit les champs techniques essentiels
+    // (URLs des photos) : l'explorateur doit pouvoir afficher les images même
+    // si l'utilisateur n'a pas coché la catégorie « Photos ».
+    return ensureEssentialFields(customFields.filter((k) => ALL_FIELD_KEYS.includes(k)));
   }
   return PROFILES[profileId]?.fields || DEFAULT_PROFILE_FIELDS;
 }

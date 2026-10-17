@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld('api', {
 
   openFolder: (pathStr) => ipcRenderer.invoke('file:openFolder', pathStr),
   openJobsFolder: () => ipcRenderer.invoke('jobs:openFolder'),
+  openSessionFolder: (jobId) => ipcRenderer.invoke('job:openSessionFolder', jobId),
   openFile: (pathStr) => ipcRenderer.invoke('file:openFile', pathStr),
   openExternal: (urlStr) => ipcRenderer.invoke('shell:openExternal', urlStr),
 

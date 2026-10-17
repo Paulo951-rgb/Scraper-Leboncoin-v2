@@ -391,7 +391,7 @@ console.log('\n[3g] Enrichissement : moteur historique restauré');
 // --- 4. Corrections renderer + main ---
 console.log('\n[4] Corrections renderer + main');
 const rendererDir = path.join(__dirname, '..', 'src/renderer');
-const rendererFiles = ['appState.js', 'utils.js', 'logsModule.js', 'scraperModule.js', 'explorerModule.js', 'statsModule.js', 'historyModule.js', 'app.js'];
+const rendererFiles = ['appState.js', 'utils.js', 'logsModule.js', 'scraperModule.js', 'explorerModule.js', 'statsModule.js', 'mapModule.js', 'historyModule.js', 'app.js'];
 const appCode = rendererFiles.map((f) => fs.readFileSync(path.join(rendererDir, f), 'utf8')).join('\n');
 const preloadCode = fs.readFileSync(path.join(__dirname, '..', 'src/main/preload.js'), 'utf8');
 const ipcCode = fs.readFileSync(path.join(__dirname, '..', 'src/main/core/ipcHandlers.js'), 'utf8');
@@ -1267,12 +1267,14 @@ console.log('\n[10b] dataProfiles (3 profils)');
   assert(ALL_FIELD_KEYS.every((k) => maxFields.includes(k)),
     'getProfileFields(maximum): contient toutes les clés');
 
-  // getProfileFields : profil custom avec champs valides
+  // getProfileFields : profil custom avec champs valides. Les champs techniques
+  // essentiels (photos) sont TOUJOURS garantis (l'explorateur en a besoin).
   const customFields = dp.getProfileFields('custom', ['id', 'title', 'prix']);
-  assert(Array.isArray(customFields) && customFields.length === 3,
-    'getProfileFields(custom, [3 champs]): renvoie 3 champs');
-  assert(customFields.includes('id') && customFields.includes('title') && customFields.includes('prix'),
-    'getProfileFields(custom): champs personnalisés conservés');
+  assert(Array.isArray(customFields) && customFields.includes('id')
+    && customFields.includes('title') && customFields.includes('prix'),
+    'getProfileFields(custom, [3 champs]): champs demandés conservés');
+  assert(customFields.includes('photosUrls') && customFields.includes('photosCount'),
+    'getProfileFields(custom): champs photos essentiels garantis (explorateur)');
 
   // getProfileFields : profil custom sans champs → fallback sur DEFAULT
   const customEmpty = dp.getProfileFields('custom', []);
@@ -1283,7 +1285,7 @@ console.log('\n[10b] dataProfiles (3 profils)');
 
   // getProfileFields : profil custom avec champs invalides → filtrés
   const customInvalid = dp.getProfileFields('custom', ['id', 'fakeField', 'title']);
-  assert(customInvalid.length === 2 && customInvalid.includes('id') && customInvalid.includes('title'),
+  assert(customInvalid.includes('id') && customInvalid.includes('title') && !customInvalid.includes('fakeField'),
     'getProfileFields(custom): champs invalides filtrés (seuls les valides sont conservés)');
 
   // getProfileFields : profil inconnu → fallback sur DEFAULT
@@ -1576,11 +1578,9 @@ const rtAd = {
   prix: 350, city: 'Lyon', zipcode: '69000',
   vendeurNom: 'Jean', vendeurType: 'particulier', vendeurId: 'u1',
   vendeurNote: 4.8, nombreAvis: 27, vendeurUrlProfil: 'https://www.leboncoin.fr/u1',
-  vendeurAncienneteJours: 365,
   livraison: true, mainPropre: false, deliveryType: 'livraison',
   likes: 12,
   datePublication: '2026-09-10T10:00:00Z',
-  dateModification: null,
   dateScraping: '2026-09-14T12:00:00Z',
   etat: 'Très bon état',
   photosCount: 5, photosUrls: ['https://img.lbc.fr/1.jpg', 'https://img.lbc.fr/2.jpg'],
@@ -1918,8 +1918,8 @@ console.log('\n[18d] Export field-key compatibility (non-régression)');
   // Annonce au format RÉEL produit par normalizeAd() (city/zipcode/nombreAvis…).
   const modelAd = {
     id: '42', title: 'GPU', url: 'https://www.leboncoin.fr/ad/42.htm', prix: 250,
-    city: 'Lyon', zipcode: '69001',
-    vendeurNom: 'Jean', vendeurType: 'particulier', nombreAvis: 12, vendeurAncienneteJours: 400,
+    city: 'Lyon', zipcode: '69001', ville: 'Lyon', codePostal: '69001',
+    vendeurNom: 'Jean', vendeurType: 'particulier', nombreAvis: 12,
     deliveryType: 'livraison',
     datePublication: '2026-01-01T10:00:00.000Z', dateScraping: '2026-01-02T10:00:00.000Z',
     photosCount: 2, photosUrls: ['a.jpg', 'b.jpg'], description: 'bon état', likes: 5,
@@ -1929,14 +1929,14 @@ console.log('\n[18d] Export field-key compatibility (non-régression)');
   assert(json.ville === 'Lyon', 'export JSON: ville présent depuis city (modèle réel)');
   assert(json.codePostal === '69001', 'export JSON: codePostal présent depuis zipcode (modèle réel)');
   assert(json.dateScraping === '2026-01-02T10:00:00.000Z', 'export JSON: date ISO brute préservée (non formatée)');
-  assert(Array.isArray(json.photosUrls) === false, 'export JSON: photosUrls formaté/brut selon get (pas de crash)');
+  assert(Array.isArray(json.photosUrls) && json.photosUrls.length === 2,
+    'export JSON: photosUrls conservées en tableau dans le profil Défaut (explorateur)');
 
   const maxJson = filterAdByFields(modelAd, getProfileFields('maximum'));
-  // Profil Maximum = dump brut du modèle (clés city/zipcode/nombreAvis/
-  // vendeurAncienneteJours). Les profils Défaut/Personnalisé utilisent les clés
-  // d'export (ville/codePostal/vendeurNbAvis/vendeurAnciennete).
+  // Profil Maximum = dump brut du modèle (clés city/zipcode/nombreAvis).
   assert(maxJson.nombreAvis === 12, 'export JSON: profil Maximum conserve le modèle brut (nombreAvis)');
-  assert(maxJson.vendeurAncienneteJours === 400, 'export JSON: profil Maximum conserve le modèle brut (vendeurAncienneteJours)');
+  assert(!('vendeurAncienneteJours' in maxJson) && !('dateModification' in maxJson),
+    'export JSON: ancienneté vendeur et date modification supprimées du modèle');
 
   const txt = toReadableBlock(modelAd, 0, getProfileFields('default'));
   assert(txt.includes('Lyon'), 'export TXT: ville affichée');
@@ -2180,13 +2180,13 @@ console.log('\n[26] Contrat IPC preload ↔ main');
 })();
 
 // ═══════════════════════════════════════════════════════════════════════════
-// [27] CARTE (statsModule) — logique pure de sélection et validation coords
+// [27] CARTE (mapModule) — logique pure de sélection et validation coords
 // ═══════════════════════════════════════════════════════════════════════════
-console.log('\n[27] Carte statsModule (logique pure)');
+console.log('\n[27] Carte mapModule (logique pure)');
 (() => {
   const vm = require('vm');
   const repoRoot = path.join(__dirname, '..');
-  const code = fs.readFileSync(path.join(repoRoot, 'src/renderer/statsModule.js'), 'utf8');
+  const code = fs.readFileSync(path.join(repoRoot, 'src/renderer/mapModule.js'), 'utf8');
 
   const fakeEl = {
     textContent: '', innerHTML: '', value: 'ALL', checked: true, style: {},
@@ -2197,23 +2197,27 @@ console.log('\n[27] Carte statsModule (logique pure)');
   const sandbox = {
     window: windowObj,
     document: { getElementById: () => fakeEl, querySelectorAll: () => [] },
-    localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
+    localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {}, length: 0, key: () => null },
     escapeHtml: (s) => String(s == null ? '' : s),
     escapePath: (s) => String(s == null ? '' : s),
+    cityOf: (a) => (a && (a.city || a.ville)) || '',
+    zipOf: (a) => (a && (a.zipcode || a.codePostal)) || '',
+    locationLabel: (a) => (a && (a.city || a.ville)) || 'Inconnue',
     console: { log() {}, warn() {}, error() {} },
     setTimeout, clearTimeout, fetch: async () => { throw new Error('no net'); },
     AbortController,
     // Globals fournis par app.js/appState.js en exécution réelle.
-    statsSessionSelect: fakeEl,
+    mapSessionSelect: fakeEl,
     populateSessionDropdown: () => {},
   };
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(code, sandbox);
 
-  const { computeMapPoints, isValidLatLng, _deliveryTypeOf } = windowObj;
+  const { computeMapPoints, isValidLatLng, _deliveryTypeOf, clusterMarkers } = windowObj;
   assert(typeof computeMapPoints === 'function', 'carte: computeMapPoints exposé');
   assert(typeof isValidLatLng === 'function', 'carte: isValidLatLng exposé');
+  assert(typeof clusterMarkers === 'function', 'carte: clusterMarkers exposé');
 
   // Déduplication par id (une annonce présente dans 2 sessions n'apparaît qu'une fois)
   const ads = [
@@ -2257,12 +2261,29 @@ console.log('\n[27] Carte statsModule (logique pure)');
   assert(isValidLatLng([48.85, 181]) === false, 'carte: longitude hors bornes rejetée');
   assert(isValidLatLng(['48.85', '2.35']) === false, 'carte: chaînes numériques rejetées');
 
+  // Regroupement (clusterMarkers) : logique pure de grille, testable sans Leaflet.
+  assert(clusterMarkers([], 0.25).length === 0, 'carte: cluster sur liste vide → 0 groupe');
+  const one = clusterMarkers([{ lat: 45.7, lng: 4.8, ads: [{ id: 'x' }] }], 0.25);
+  assert(one.length === 1 && one[0].ads.length === 1, 'carte: 1 point → 1 groupe');
+  const twoFar = clusterMarkers([
+    { lat: 45.7, lng: 4.8, ads: [{ id: 'a' }] },
+    { lat: 48.8, lng: 2.3, ads: [{ id: 'b' }] },
+  ], 0.25);
+  assert(twoFar.length === 2, 'carte: 2 points éloignés → 2 groupes');
+  const twoNear = clusterMarkers([
+    { lat: 45.70, lng: 4.80, ads: [{ id: 'a' }] },
+    { lat: 45.71, lng: 4.81, ads: [{ id: 'b' }] },
+  ], 0.25);
+  assert(twoNear.length === 1 && twoNear[0].ads.length === 2, 'carte: 2 points proches → 1 groupe');
+  assert(clusterMarkers([{ lat: 45.7, lng: 4.8, ads: [] }], 0).length === 1, 'carte: cellSize 0 → pas de regroupement');
+
   // Le module ne doit pas écrire dans le conteneur Leaflet (détruirait la carte) :
   // l'état passe par mapStatus, et les marqueurs par un L.layerGroup.
   assert(!/mapEl\.innerHTML/.test(code), 'carte: ne détruit pas le conteneur #leafletMap (pas d\'innerHTML dessus)');
   assert(/mapMarkerLayer\.clearLayers\(\)/.test(code), 'carte: calque de marqueurs vidé à chaque rendu (anti-doublons)');
   assert(/L\.layerGroup\(\)/.test(code), 'carte: marqueurs dans un L.layerGroup');
   assert(/getElementById\('mapStatus'\)/.test(code), 'carte: messages d\'état via #mapStatus');
+  assert(/GEO_CACHE_MAX/.test(code) && /trimGeoCache/.test(code), 'carte: cache géocodage borné (pas de croissance illimitée)');
 
   // Fiabilité hors ligne : Leaflet/Chart.js sont embarqués localement, plus de
   // CDN public au chargement de l'interface (l'UI ne dépend plus d'un
@@ -2988,8 +3009,8 @@ console.log('\n[36] Fixtures HAR (résultats, doublons, 403, page vide, détail)
     'fixtures: page détail → livraison + note vendeur enrichies');
   assert(parsed.nombreAvis === 12 && parsed.urlProfil === 'https://www.leboncoin.fr/profil/111',
     'fixtures: page détail → nombre d\'avis + URL profil extraits (auparavant perdus)');
-  assert(typeof parsed.ancienneteJours === 'number' && parsed.ancienneteJours > 0,
-    'fixtures: page détail → ancienneté vendeur calculée');
+  assert(parsed.ancienneteJours == null,
+    'fixtures: page détail → ancienneté vendeur non exposée (champ retiré du modèle d\'export)');
 
   // 36.6 Page de détail sans __NEXT_DATA__ → enrichissement vide SANS crash.
   const noNext = fs.readFileSync(path.join(fixturesDir, 'detail-page-no-nextdata.html'), 'utf8');
@@ -3188,7 +3209,7 @@ console.log('\n[37b] UX jsdom (toasts, bandeau erreur, askConfirm)');
   assert(/id="toastContainer"/.test(indexHtml), 'ux: index.html contient #toastContainer');
   assert(/id="scrapeErrorBanner"/.test(indexHtml), 'ux: index.html contient #scrapeErrorBanner');
   assert(/id="askModal"/.test(indexHtml), 'ux: index.html contient #askModal');
-  const rendererFilesUx = ['utils.js', 'scraperModule.js', 'historyModule.js', 'logsModule.js', 'explorerModule.js', 'statsModule.js', 'app.js'];
+  const rendererFilesUx = ['utils.js', 'scraperModule.js', 'historyModule.js', 'logsModule.js', 'explorerModule.js', 'statsModule.js', 'mapModule.js', 'app.js'];
   const uxCodeRaw = rendererFilesUx.map((f) => fs.readFileSync(path.join(repoRoot, 'src/renderer', f), 'utf8')).join('\n');
   // On retire les commentaires ligne/bloc avant de chercher les appels natifs,
   // sinon les mentions « alert() » dans les commentaires déclenchent un faux positif.
@@ -3273,7 +3294,7 @@ console.log('\n[37c] Sécurité jsdom (actions déléguées, CSP)');
 
   // 37c.7 Statique : plus aucun handler inline dans le renderer (on ignore les
   // commentaires, qui peuvent mentionner « onclick= » à titre explicatif).
-  const files = ['utils.js', 'scraperModule.js', 'historyModule.js', 'logsModule.js', 'explorerModule.js', 'statsModule.js', 'app.js'];
+  const files = ['utils.js', 'scraperModule.js', 'historyModule.js', 'logsModule.js', 'explorerModule.js', 'statsModule.js', 'mapModule.js', 'app.js'];
   const code = files.map((f) => fs.readFileSync(path.join(repoRoot, 'src/renderer', f), 'utf8')).join('\n')
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/(^|\s)\/\/[^\n]*/g, '$1');
@@ -3660,21 +3681,21 @@ console.log('\n[38] OK');
 console.log('\n[39] Bugs corrigés (fuite vendeur, fusion, widget, rétention HAR, deliveryType, require)');
 {
   // 39.1 Fuite de données vendeur en profil Maximum (excludeSellerData).
-  // Avant : nombreAvis et vendeurAncienneteJours n'étaient pas dans
-  // SELLER_FIELD_KEYS → ils fuitaient malgré « Données vendeur » désactivé.
+  // Avant : nombreAvis n'était pas dans SELLER_FIELD_KEYS → il fuyait malgré
+  // « Données vendeur » désactivé.
   {
     const { filterAdByFields } = require('../src/main/services/exporting/exportFields');
     const ad = {
       id: '1', title: 't', url: 'u', prix: 10, city: 'Lyon', zipcode: '69000',
       vendeurNom: 'Bob', vendeurType: 'pro', vendeurId: '42', vendeurNote: 4.5,
-      nombreAvis: 12, vendeurUrlProfil: 'https://p', vendeurAncienneteJours: 300,
+      nombreAvis: 12, vendeurUrlProfil: 'https://p',
       deliveryType: 'livraison', likes: 3, description: 'd',
     };
     const out = filterAdByFields(ad, null, { excludeSellerData: true });
     const leaked = Object.keys(out).filter((k) => /vendeur|avis|anciennete/i.test(k));
     assert(leaked.length === 0, `export: profil Maximum sans données vendeur → aucune fuite (${leaked.join(',') || 'aucune'})`);
-    assert(!('nombreAvis' in out) && !('vendeurAncienneteJours' in out),
-      'export: nombreAvis et vendeurAncienneteJours exclus (clés du modèle)');
+    assert(!('nombreAvis' in out),
+      'export: nombreAvis exclu (clé du modèle vendeur)');
   }
 
   // 39.2 Fusion : un tableau vide ne doit pas écraser une liste déjà extraite.
@@ -3802,8 +3823,8 @@ console.log('\n[40] Extraction des données manquantes (vendeur, détail, fusion
   assert(parsed.note === 4.5, '40: détail → note vendeur');
   assert(parsed.nombreAvis === 12, `40: détail → nombre d'avis (obtenu ${parsed.nombreAvis})`);
   assert(parsed.urlProfil === 'https://www.leboncoin.fr/profil/abc', '40: détail → URL profil');
-  assert(typeof parsed.ancienneteJours === 'number' && parsed.ancienneteJours > 0,
-    `40: détail → ancienneté calculée en jours (obtenu ${parsed.ancienneteJours})`);
+  assert(parsed.ancienneteJours == null,
+    '40: détail → ancienneté non exposée (champ retiré du modèle d\'export)');
   assert(parsed.vendeurNom === 'Vendeur Complet' && parsed.vendeurType === 'pro' && parsed.vendeurId === 'u1',
     '40: détail → nom/type/id vendeur');
   assert(parsed.etat === 'Neuf' && parsed.livraison === true,
@@ -3814,15 +3835,13 @@ console.log('\n[40] Extraction des données manquantes (vendeur, détail, fusion
   const searchAd = {
     id: '111', title: 'Velo', description: 'Description liste.', prix: 100,
     vendeurNom: 'Vendeur Complet', vendeurType: 'pro', vendeurId: 'u1',
-    vendeurNote: null, nombreAvis: null, vendeurUrlProfil: null, vendeurAncienneteJours: null,
+    vendeurNote: null, nombreAvis: null, vendeurUrlProfil: null,
     livraison: null, mainPropre: null, deliveryType: 'inconnu', etat: null,
   };
   const enriched = applyDetailFields(searchAd, parsed);
   assert(enriched === true, '40: applyDetailFields signale un enrichissement');
   assert(searchAd.nombreAvis === 12 && searchAd.vendeurUrlProfil === 'https://www.leboncoin.fr/profil/abc',
     '40: détail complète nombre d\'avis + URL profil absents de la recherche');
-  assert(searchAd.vendeurAncienneteJours === parsed.ancienneteJours,
-    '40: détail complète l\'ancienneté vendeur');
   assert(searchAd.vendeurNote === 4.5 && searchAd.etat === 'Neuf',
     '40: détail complète note + état');
   assert(searchAd.deliveryType === 'livraison',
@@ -3871,11 +3890,11 @@ console.log('\n[40] Extraction des données manquantes (vendeur, détail, fusion
   const phZero = adFields.extractPhotos({ images: { urls: [] } });
   assert(phZero.count === 0 && phZero.urls.length === 0, '40: photos = 0 → count 0 (pas null)');
 
-  // 40.8 Annonce sans date de modification accessible → null (jamais confondue
-  // avec la date de publication).
+  // 40.8 dateModification n'est plus un champ du modèle exporté (retiré). La
+  // date de publication reste extraite séparément.
   const dates = adFields.extractDates({ first_publication_date: '2024-05-01T00:00:00Z' });
   assert(dates.publication === '2024-05-01T00:00:00Z' && dates.modification === null,
-    '40: dateModification null si absente (pas = datePublication)');
+    '40: date de publication extraite ; date de modification non exposée (null)');
 
   // 40.9 Photos : déduplication sans perte, toutes les URL uniques conservées.
   const ph = adFields.extractPhotos({ images: { urls: ['https://a.jpg', 'https://b.jpg', 'https://a.jpg'] } });
@@ -3901,8 +3920,9 @@ console.log('\n[40] Extraction des données manquantes (vendeur, détail, fusion
     '40: profil Défaut conserve les champs essentiels');
   assert(maxOut.nombreAvis === 12 && maxOut.vendeurUrlProfil === 'https://www.leboncoin.fr/profil/abc',
     '40: profil Maximum expose les nouvelles données vendeur');
-  assert(maxFields.length === ALL_FIELD_KEYS.length && ALL_FIELD_KEYS.includes('vendeurAnciennete'),
-    '40: profil Maximum = toutes les clés d\'export (dont vendeurAnciennete)');
+  assert(maxFields.length === ALL_FIELD_KEYS.length && !ALL_FIELD_KEYS.includes('vendeurAnciennete')
+    && !ALL_FIELD_KEYS.includes('dateModification'),
+    '40: profil Maximum = toutes les clés d\'export (sans ancienneté ni date modification)');
   assert(custOut.id === '111' && custOut.vendeurNote === 4.5 && custOut.vendeurNbAvis === 12
     && !('title' in custOut),
     '40: profil Personnalisé → uniquement les champs choisis (vendeurNbAvis traduit depuis nombreAvis)');
@@ -4128,8 +4148,13 @@ console.log('\n[42] Exports JSON/TXT (contenu réel)');
   const cus = runHar(payload, ['--profile-id', 'custom', '--profile-fields', 'id,title,prix'], 'cus');
   const cusAds = cus.jsonRaw ? JSON.parse(cus.jsonRaw) : null;
   const cusRich = cusAds && cusAds.find((a) => a.id === 'rich-1');
-  assert(cusRich && Object.keys(cusRich).sort().join(',') === 'id,prix,title',
-    `42: profil Personnalisé → exactement id,prix,title (obtenu ${cusRich ? Object.keys(cusRich).sort().join(',') : 'null'})`);
+  // Le profil Personnalisé garantit TOUJOURS les champs photos essentiels
+  // (l'explorateur en a besoin) en plus des champs choisis.
+  assert(cusRich && ['id', 'prix', 'title', 'photosCount', 'photosUrls']
+    .every((k) => k in cusRich) && Object.keys(cusRich).length === 5,
+    `42: profil Personnalisé → champs demandés + photos (obtenu ${cusRich ? Object.keys(cusRich).sort().join(',') : 'null'})`);
+  assert(cusRich && !('vendeurNom' in cusRich) && !('description' in cusRich),
+    '42: profil Personnalisé → champs non demandés absents');
 
   // 42.6 TXT : lisible, labels alignés, accents + valeurs présentes.
   assert(max.txtRaw && /===== ANNONCE 1 =====/.test(max.txtRaw), '42: TXT contient l\'en-tête d\'annonce');

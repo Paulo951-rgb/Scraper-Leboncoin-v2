@@ -26,6 +26,6 @@ module.exports = {
   // (SETTINGS_DEFAULTS). L'ancien bloc DEFAULTS ici était mort ET conflictuel
   // (headless:false ici vs headless:true dans settings) — supprimé pour éviter
   // toute confusion.
-  THEMES: ['theme-dark', 'theme-light', 'theme-oled', 'theme-violet', 'theme-green', 'theme-sunset', 'theme-carbon', 'theme-rose', 'theme-amber', 'theme-mint', 'theme-slate', 'theme-crimson', 'theme-nordic'],
+  THEMES: ['theme-dark', 'theme-light', 'theme-graphite'],
   GLOBAL_SESSION_PATH,
 };

@@ -104,316 +104,103 @@
 /* -------------------------------------------------------------------------
  * THEMES
  * ------------------------------------------------------------------------- */
+/* -------------------------------------------------------------------------
+ * THÈMES — exactement trois thèmes : Sombre, Clair, Graphite.
+ * Chaque thème ne redéfinit que des VARIABLES ; toutes les règles de mise en
+ * page et de composant sont communes (mêmes dimensions, espacements, radius).
+ * ------------------------------------------------------------------------- */
+
+/* ---------------------------------------------------------------------------
+ * 1) SOMBRE — sombre neutre, professionnel, sans dominante bleue.
+ * Accent discret : teal désaturé. Surfaces en gris neutres froids.
+ * ------------------------------------------------------------------------- */
 :root, body.theme-dark {
-  --bg-color: var(--neutral-900);
-  --bg-secondary: var(--neutral-800);
-  --card-bg: var(--neutral-800);
-  --text-color: var(--neutral-50);
-  --text-muted: var(--neutral-400);
-  --primary-color: var(--primary-400);
-  --primary-hover: var(--primary-500);
-  --primary-contrast: #0f172a;
-  --danger-color: var(--error-500);
-  --danger-hover: var(--error-600);
-  --border-color: var(--neutral-700);
-  --badge-bg: var(--primary-900);
-  --header-bg: var(--neutral-950);
-  --sidebar-bg: var(--neutral-950);
-  --sidebar-text: var(--neutral-400);
-  --sidebar-text-active: var(--neutral-50);
-  --sidebar-border: var(--neutral-800);
-  --green-deal: var(--success-500);
-  --red-risk: var(--error-500);
-  --input-bg: var(--neutral-900);
-  --hover-bg: var(--neutral-800);
+  --bg-color: #16181c;
+  --bg-secondary: #1c1f24;
+  --card-bg: #212429;
+  --card-bg-hover: #262a30;
+  --text-color: #e6e8ec;
+  --text-muted: #9aa1ac;
+  --primary-color: #5fa79d;
+  --primary-hover: #4d9086;
+  --primary-contrast: #0c1113;
+  --danger-color: #e0655f;
+  --danger-hover: #c9534d;
+  --border-color: #313640;
+  --border-strong: #3d434f;
+  --badge-bg: #2a2f37;
+  --header-bg: #101216;
+  --sidebar-bg: #101216;
+  --sidebar-text: #8b929c;
+  --sidebar-text-active: #eef0f3;
+  --sidebar-border: #212429;
+  --green-deal: #5bbf87;
+  --red-risk: #e0655f;
+  --input-bg: #191c21;
+  --hover-bg: #262a30;
+  --accent-muted: #b8a06a;
 }
 
+/* ---------------------------------------------------------------------------
+ * 2) CLAIR — clair élégant, contrasté, hiérarchie visuelle nette.
+ * ------------------------------------------------------------------------- */
 body.theme-light {
-  --bg-color: #f1f5f9;
-  --bg-secondary: #e2e8f0;
+  --bg-color: #f5f6f8;
+  --bg-secondary: #e9ebef;
   --card-bg: #ffffff;
-  --text-color: #1a2744;
-  --text-muted: #5b6b88;
-  --primary-color: var(--primary-600);
-  --primary-hover: var(--primary-700);
+  --card-bg-hover: #f7f8fa;
+  --text-color: #1b1f26;
+  --text-muted: #565e6b;
+  --primary-color: #2b7a70;
+  --primary-hover: #22655d;
   --primary-contrast: #ffffff;
-  --danger-color: var(--error-600);
-  --danger-hover: var(--error-700);
-  --border-color: #d4dde8;
-  --badge-bg: var(--primary-100);
-  --header-bg: #f8fafc;
-  --sidebar-bg: #0f172a;
-  --sidebar-text: #94a3b8;
-  --sidebar-text-active: #f8fafc;
-  --sidebar-border: #1e293b;
-  --green-deal: var(--success-600);
-  --red-risk: var(--error-600);
-  --input-bg: #f8fafc;
-  --hover-bg: #f1f5f9;
+  --danger-color: #c0392f;
+  --danger-hover: #a32f27;
+  --border-color: #d6dae1;
+  --border-strong: #c1c7d0;
+  --badge-bg: #e6e9ee;
+  --header-bg: #ffffff;
+  --sidebar-bg: #1b1f26;
+  --sidebar-text: #98a0ac;
+  --sidebar-text-active: #f5f6f8;
+  --sidebar-border: #2a2f38;
+  --green-deal: #2f8a5b;
+  --red-risk: #c0392f;
+  --input-bg: #f7f8fa;
+  --hover-bg: #eef0f4;
+  --accent-muted: #8a6d2f;
 }
 
-body.theme-oled {
-  --bg-color: #000000;
-  --bg-secondary: #0a0a0a;
-  --card-bg: #0a0a0a;
-  --text-color: #e4e4e7;
-  --text-muted: #71717a;
-  --primary-color: #60a5fa;
-  --primary-hover: #3b82f6;
-  --primary-contrast: #ffffff;
-  --danger-color: #ef4444;
-  --danger-hover: #dc2626;
-  --border-color: #1a1a1a;
-  --badge-bg: #1a1a1a;
-  --header-bg: #000000;
-  --sidebar-bg: #000000;
-  --sidebar-text: #52525b;
-  --sidebar-text-active: #fafafa;
-  --sidebar-border: #18181b;
-  --green-deal: #22c55e;
-  --red-risk: #ef4444;
-  --input-bg: #0a0a0a;
-  --hover-bg: #18181b;
-}
-
-body.theme-violet {
-  --bg-color: #1a1530;
-  --bg-secondary: #211a3a;
-  --card-bg: #251e3f;
-  --text-color: #e0d8f0;
-  --text-muted: #9b8ec0;
-  --primary-color: #a78bfa;
-  --primary-hover: #8b5cf6;
-  --primary-contrast: #ffffff;
-  --danger-color: #fb7185;
-  --danger-hover: #e11d48;
-  --border-color: #3d3461;
-  --badge-bg: #2e2650;
-  --header-bg: #110d1f;
-  --sidebar-bg: #110d1f;
-  --sidebar-text: #7c6fa8;
-  --sidebar-text-active: #e0d8f0;
-  --sidebar-border: #251e3f;
-  --green-deal: #34d399;
-  --red-risk: #fb7185;
-  --input-bg: #1a1530;
-  --hover-bg: #251e3f;
-}
-
-body.theme-green {
-  --bg-color: #022c22;
-  --bg-secondary: #033128;
-  --card-bg: #064e3b;
-  --text-color: #ecfdf5;
-  --text-muted: #6ee7b7;
-  --primary-color: #34d399;
-  --primary-hover: #10b981;
-  --primary-contrast: #022c22;
-  --danger-color: #f43f5e;
-  --danger-hover: #e11d48;
-  --border-color: #047857;
-  --badge-bg: #065f46;
-  --header-bg: #02201a;
-  --sidebar-bg: #02201a;
-  --sidebar-text: #4ade80;
-  --sidebar-text-active: #ecfdf5;
-  --sidebar-border: #064e3b;
-  --green-deal: #34d399;
-  --red-risk: #f43f5e;
-  --input-bg: #022c22;
-  --hover-bg: #064e3b;
-}
-
-body.theme-sunset {
-  --bg-color: #1a0f1f;
-  --bg-secondary: #22152a;
-  --card-bg: #2a1a2e;
-  --text-color: #fde68a;
-  --text-muted: #c084a0;
-  --primary-color: #fb923c;
-  --primary-hover: #ea580c;
-  --primary-contrast: #ffffff;
-  --danger-color: #f43f5e;
-  --danger-hover: #be123c;
-  --border-color: #4a2f3a;
-  --badge-bg: #7c2d12;
-  --header-bg: #0f0810;
-  --sidebar-bg: #0f0810;
-  --sidebar-text: #9a6b50;
-  --sidebar-text-active: #fde68a;
-  --sidebar-border: #2a1a2e;
-  --green-deal: #84cc16;
-  --red-risk: #f43f5e;
-  --input-bg: #1a0f1f;
-  --hover-bg: #2a1a2e;
-}
-
-body.theme-carbon {
-  --bg-color: #18181b;
-  --bg-secondary: #1f1f23;
-  --card-bg: #27272a;
-  --text-color: #fafafa;
-  --text-muted: #a1a1aa;
-  --primary-color: #fbbf24;
-  --primary-hover: #d97706;
-  --primary-contrast: #18181b;
-  --danger-color: #ef4444;
-  --danger-hover: #b91c1c;
-  --border-color: #3f3f46;
-  --badge-bg: #52525b;
-  --header-bg: #09090b;
-  --sidebar-bg: #09090b;
-  --sidebar-text: #71717a;
-  --sidebar-text-active: #fafafa;
-  --sidebar-border: #27272a;
-  --green-deal: #34d399;
-  --red-risk: #f87171;
-  --input-bg: #18181b;
-  --hover-bg: #27272a;
-}
-
-body.theme-rose {
-  --bg-color: #1c1217;
-  --bg-secondary: #241620;
-  --card-bg: #2e1d25;
-  --text-color: #fce4ec;
-  --text-muted: #c99aaa;
-  --primary-color: #f472b6;
-  --primary-hover: #ec4899;
-  --primary-contrast: #ffffff;
-  --danger-color: #fb7185;
-  --danger-hover: #e11d48;
-  --border-color: #4a2e38;
-  --badge-bg: #3d2230;
-  --header-bg: #100a0e;
-  --sidebar-bg: #100a0e;
-  --sidebar-text: #9a6b7a;
-  --sidebar-text-active: #fce4ec;
-  --sidebar-border: #2e1d25;
-  --green-deal: #34d399;
-  --red-risk: #fb7185;
-  --input-bg: #1c1217;
-  --hover-bg: #2e1d25;
-}
-
-body.theme-amber {
-  --bg-color: #1a1410;
-  --bg-secondary: #221a15;
-  --card-bg: #2a2018;
-  --text-color: #fef3c7;
-  --text-muted: #c4a87e;
-  --primary-color: #fbbf24;
-  --primary-hover: #f59e0b;
-  --primary-contrast: #1a1410;
-  --danger-color: #f87171;
-  --danger-hover: #ef4444;
-  --border-color: #3d3025;
-  --badge-bg: #332820;
-  --header-bg: #0f0c09;
-  --sidebar-bg: #0f0c09;
-  --sidebar-text: #8a7350;
-  --sidebar-text-active: #fef3c7;
-  --sidebar-border: #2a2018;
-  --green-deal: #84cc16;
-  --red-risk: #f87171;
-  --input-bg: #1a1410;
-  --hover-bg: #2a2018;
-}
-
-body.theme-mint {
-  --bg-color: #0a1f1c;
-  --bg-secondary: #0d2824;
-  --card-bg: #0f2e2a;
-  --text-color: #d1fae5;
-  --text-muted: #6b9b92;
-  --primary-color: #2dd4bf;
-  --primary-hover: #14b8a6;
-  --primary-contrast: #0a1f1c;
-  --danger-color: #fb7185;
-  --danger-hover: #e11d48;
-  --border-color: #1a3d38;
-  --badge-bg: #123530;
-  --header-bg: #061513;
-  --sidebar-bg: #061513;
-  --sidebar-text: #4a8a82;
-  --sidebar-text-active: #d1fae5;
-  --sidebar-border: #0f2e2a;
-  --green-deal: #4ade80;
-  --red-risk: #fb7185;
-  --input-bg: #0a1f1c;
-  --hover-bg: #0f2e2a;
-}
-
-body.theme-slate {
-  --bg-color: #1e293b;
-  --bg-secondary: #25303f;
-  --card-bg: #334155;
-  --text-color: #f1f5f9;
-  --text-muted: #94a3b8;
-  --primary-color: #818cf8;
-  --primary-hover: #6366f1;
-  --primary-contrast: #1e293b;
-  --danger-color: #f87171;
-  --danger-hover: #ef4444;
-  --border-color: #475569;
-  --badge-bg: #3e4d63;
-  --header-bg: #161e2e;
-  --sidebar-bg: #161e2e;
-  --sidebar-text: #64748b;
-  --sidebar-text-active: #f1f5f9;
-  --sidebar-border: #334155;
-  --green-deal: #4ade80;
-  --red-risk: #f87171;
-  --input-bg: #1e293b;
-  --hover-bg: #334155;
-}
-
-body.theme-crimson {
-  --bg-color: #1a0a0a;
-  --bg-secondary: #220e0e;
-  --card-bg: #2a1010;
-  --text-color: #fee2e2;
-  --text-muted: #c49494;
-  --primary-color: #ef4444;
-  --primary-hover: #dc2626;
-  --primary-contrast: #ffffff;
-  --danger-color: #f87171;
-  --danger-hover: #ef4444;
-  --border-color: #3d1a1a;
-  --badge-bg: #331515;
-  --header-bg: #0f0606;
-  --sidebar-bg: #0f0606;
-  --sidebar-text: #8a4040;
-  --sidebar-text-active: #fee2e2;
-  --sidebar-border: #2a1010;
-  --green-deal: #34d399;
-  --red-risk: #f87171;
-  --input-bg: #1a0a0a;
-  --hover-bg: #2a1010;
-}
-
-body.theme-nordic {
-  --bg-color: #2e3440;
-  --bg-secondary: #353c4a;
-  --card-bg: #3b4252;
-  --text-color: #eceff4;
-  --text-muted: #81a1c1;
-  --primary-color: #88c0d0;
-  --primary-hover: #5e81ac;
-  --primary-contrast: #2e3440;
-  --danger-color: #bf616a;
-  --danger-hover: #a3535b;
-  --border-color: #4c566a;
-  --badge-bg: #434c5e;
-  --header-bg: #242933;
-  --sidebar-bg: #242933;
-  --sidebar-text: #6e7a8c;
-  --sidebar-text-active: #eceff4;
-  --sidebar-border: #3b4252;
-  --green-deal: #a3be8c;
-  --red-risk: #bf616a;
-  --input-bg: #2e3440;
-  --hover-bg: #3b4252;
+/* ---------------------------------------------------------------------------
+ * 3) GRAPHITE — carbone/graphite premium : gris profonds, contraste subtil,
+ * accent bronze mesuré. Identité distincte du thème Sombre (surfaces plus
+ * sombres, plus « techniques », accent bronze plutôt que teal).
+ * ------------------------------------------------------------------------- */
+body.theme-graphite {
+  --bg-color: #141517;
+  --bg-secondary: #191b1e;
+  --card-bg: #1e2124;
+  --card-bg-hover: #24272b;
+  --text-color: #e8eaed;
+  --text-muted: #878d96;
+  --primary-color: #c2a25a;
+  --primary-hover: #a98a44;
+  --primary-contrast: #141517;
+  --danger-color: #d4625c;
+  --danger-hover: #bb4f49;
+  --border-color: #2b2f33;
+  --border-strong: #383d42;
+  --badge-bg: #262a2e;
+  --header-bg: #0d0e10;
+  --sidebar-bg: #0d0e10;
+  --sidebar-text: #7e848d;
+  --sidebar-text-active: #f0f2f4;
+  --sidebar-border: #1e2124;
+  --green-deal: #6aa87e;
+  --red-risk: #d4625c;
+  --input-bg: #17191c;
+  --hover-bg: #24272b;
+  --accent-muted: #c2a25a;
 }
 
 /* -------------------------------------------------------------------------

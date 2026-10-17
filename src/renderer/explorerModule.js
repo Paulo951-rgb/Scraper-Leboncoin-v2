@@ -31,6 +31,10 @@ function _computeDeliveryTypeCompat(livraison, mainPropre) {
   return 'inconnu';
 }
 
+// Les helpers de localisation (cityOf, zipOf, locationLabel) vivent dans
+// utils.js (chargé avant ce module) et sont partagés avec l'explorateur, la
+// carte et les statistiques.
+
 // Modal Suppression & Detail
 const closeDetailModalBtn = document.getElementById('closeDetailModalBtn');
 const modalAdTitle = document.getElementById('modalAdTitle');
@@ -230,7 +234,7 @@ function renderExplorerAds() {
 
   let filtered = sourceAds.filter((a) => {
     const desc = descTextOf(a);
-    const fullText = `${a.title || ''} ${desc} ${a.city || ''} ${a.vendeurNom || a.seller || ''}`.toLowerCase();
+    const fullText = `${a.title || ''} ${desc} ${cityOf(a)} ${zipOf(a)} ${a.vendeurNom || a.seller || ''}`.toLowerCase();
     const matchesQuery = !query || fullText.includes(query);
 
     const price = typeof a.prix === 'number' ? a.prix : (typeof a.price === 'number' ? a.price : parseFloat(a.price) || 0);
@@ -321,7 +325,7 @@ function renderExplorerAds() {
           <td>${nameHtml}</td>
           <td><strong>${escapeHtml(String(priceText))}</strong></td>
           <td class="cell-vendeur">${sellerChip} ${typeVendeurBadge}${deliveryChip}${noteChip}${likesChip}</td>
-          <td>${escapeHtml(a.city || '-')}</td>
+          <td>${escapeHtml(locationLabel(a))}</td>
           <td>${escapeHtml(a.datePublication || a.date || '-')}</td>
           <td>
             <div style="display:flex; gap:4px;">
@@ -345,13 +349,13 @@ function renderExplorerAds() {
         return `
         <div class="ad-card">
           <div class="ad-card-thumb-box">
-            <img src="${escapeHtml(thumbUrl)}" alt="Photo" class="ad-card-thumb" data-action="openAdDetail" data-id="${escapeHtml(String(a.id))}">
+            <img src="${escapeHtml(thumbUrl)}" alt="Photo de l'annonce" class="ad-card-thumb" loading="lazy" decoding="async" data-action="openAdDetail" data-id="${escapeHtml(String(a.id))}">
             <div class="ad-card-star"><span class="star-icon ${isStarred ? 'starred' : ''}" data-action="toggleStar" data-id="${escapeHtml(String(a.id))}">★</span></div>
           </div>
           <div class="ad-card-body">
             <div class="ad-card-title">${escapeHtml(a.title || 'Sans titre')}</div>
             <div class="ad-card-price">${escapeHtml(String(a.prix != null ? a.prix + ' €' : (a.price != null ? a.price + ' €' : '-')))}</div>
-            <div class="ad-card-city">📍 ${escapeHtml(a.city || 'Inconnue')}</div>
+            <div class="ad-card-city">📍 ${escapeHtml(locationLabel(a))}</div>
             <div class="ad-card-footer">
               <button class="btn btn-secondary btn-small" style="flex:1;" data-action="openAdDetail" data-id="${escapeHtml(String(a.id))}">👁️ Fiche Détaillée</button>
               <button class="btn btn-primary btn-small" data-action="openUrl" data-url="${escapeHtml(a.url)}">🔗 Voir</button>
@@ -373,6 +377,32 @@ window.toggleStar = (adId) => {
   localStorage.setItem('starred-ads', JSON.stringify([...starredAds]));
   renderExplorerAds();
 };
+
+/**
+ * Affiche une image dans la galerie principale de la fiche détaillée, en
+ * gérant proprement les états de chargement et d'erreur :
+ *  - l'image est chargée à la demande depuis son URL distante (aucun
+ *    téléchargement sur disque) ;
+ *  - en cas d'erreur (URL expirée, réponse distante en échec), on affiche un
+ *    état explicite au lieu d'une image cassée silencieuse ;
+ *  - si aucune image n'est disponible, le placeholder local est conservé.
+ * @param {string} url
+ */
+function setGalleryImage(url) {
+  if (!mainGalleryImg) return;
+  mainGalleryImg.classList.remove('img-error', 'img-loading');
+  if (!url) { mainGalleryImg.src = noPhotoUrl(); return; }
+  mainGalleryImg.classList.add('img-loading');
+  mainGalleryImg.onload = () => mainGalleryImg.classList.remove('img-loading');
+  mainGalleryImg.onerror = () => {
+    mainGalleryImg.classList.remove('img-loading');
+    mainGalleryImg.classList.add('img-error');
+    mainGalleryImg.src = noPhotoUrl();
+    mainGalleryImg.alt = 'Image indisponible (URL expirée ou inaccessible)';
+  };
+  mainGalleryImg.alt = 'Photo principale';
+  mainGalleryImg.src = url;
+}
 
 // 👁️ MODAL FICHE DÉTAILLÉE DE L'ANNONCE
 window.openAdDetail = (adId) => {
@@ -400,7 +430,7 @@ window.openAdDetail = (adId) => {
 
   modalAdTitle.textContent = targetAd.title || 'Sans titre';
   modalPrice.textContent = targetAd.prix != null ? targetAd.prix : (targetAd.price != null ? targetAd.price : '-');
-  modalCity.textContent = targetAd.city || 'Inconnue';
+  modalCity.textContent = locationLabel(targetAd);
   const isProSeller = targetAd.vendeurType === 'pro' || targetAd.isPro === true;
   modalSeller.textContent = includeSellerData ? `${targetAd.vendeurNom || targetAd.seller || 'Particulier'}${isProSeller ? ' (Pro)' : ''}` : ' Masqué';
   modalDate.textContent = targetAd.datePublication || targetAd.date || '-';
@@ -422,7 +452,7 @@ window.openAdDetail = (adId) => {
     ratingText = `${note}/5`;
     if (nbAvis != null) ratingText += ` (${nbAvis} avis)`;
   }
-  setExtraVal('modalSellerRating', includeSellerData ? (note != null ? ratingText : '❓ Aucune note') : ' Masqué');
+  setExtraVal('modalSellerRating', includeSellerData ? (note != null ? ratingText : 'Non disponible') : ' Masqué');
 
   // Type de remise unifié
   const dt = targetAd.deliveryType ?? _computeDeliveryTypeCompat(
@@ -430,30 +460,30 @@ window.openAdDetail = (adId) => {
     targetAd.mainPropre != null ? targetAd.mainPropre : targetAd.handDelivery
   );
   const deliveryTypeLabels = {
-    livraison: '📦 Livraison uniquement',
-    main_propre: '🤝 Main propre uniquement',
-    les_deux: '📦🤝 Livraison + Main propre',
-    aucun: '🚫 Aucune',
-    inconnu: '❓ Indéterminé',
+    livraison: 'Livraison uniquement',
+    main_propre: 'Main propre uniquement',
+    les_deux: 'Livraison + Main propre',
+    aucun: 'Aucune',
+    inconnu: 'Indéterminé',
   };
-  setExtraVal('modalDeliveryType', deliveryTypeLabels[dt] || '❓ Indéterminé');
+  setExtraVal('modalDeliveryType', deliveryTypeLabels[dt] || 'Indéterminé');
 
   // Likes
   const likes = targetAd.likes != null ? targetAd.likes : null;
-  setExtraVal('modalLikes', likes != null ? `❤️ ${likes}` : '❓ Indisponible');
+  setExtraVal('modalLikes', likes != null ? String(likes) : 'Non disponible');
 
   // Date scraping
   const dateScrape = targetAd.dateScraping;
-  setExtraVal('modalDateScraping', dateScrape ? `🕒 ${formatDateTime(dateScrape)}` : '❓ Indisponible');
+  setExtraVal('modalDateScraping', dateScrape ? formatDateTime(dateScrape) : 'Non disponible');
 
   // Type vendeur
   const typeVendeur = targetAd.vendeurType || (targetAd.isPro ? 'pro' : 'particulier');
-  const typeVendeurLabel = includeSellerData ? (typeVendeur === 'pro' ? '🏪 Professionnel' : '👤 Particulier') : ' Masqué';
+  const typeVendeurLabel = includeSellerData ? (typeVendeur === 'pro' ? 'Professionnel' : 'Particulier') : ' Masqué';
   setExtraVal('modalTypeVendeur', typeVendeurLabel);
 
   // État déclaré uniquement
   const etat = targetAd.etat;
-  setExtraVal('modalEtat', etat || '❓ Non précisé');
+  setExtraVal('modalEtat', etat || 'Non précisé');
 
   // Description : lire description string directement (structure plate v3)
   const modalDescText = typeof targetAd.description === 'string' ? targetAd.description
@@ -462,23 +492,26 @@ window.openAdDetail = (adId) => {
 
   // Badge favori
   modalDealBadge.className = 'tag-deal-normal';
-  modalDealBadge.textContent = starredAds.has(String(targetAd.id)) ? '⭐ Favori' : '';
+  modalDealBadge.textContent = starredAds.has(String(targetAd.id)) ? 'Favori' : '';
 
-  // Photos & Carrousel
-  const images = (Array.isArray(targetAd.photosUrls) && targetAd.photosUrls.length > 0) ? targetAd.photosUrls
-    : (Array.isArray(targetAd.images) && targetAd.images.length > 0 ? targetAd.images : [noPhotoUrl()]);
-  mainGalleryImg.src = images[0];
+  // Photos & Carrousel — les URL sont affichées à la demande (aucun
+  // téléchargement disque). En cas d'URL expirée ou d'erreur distante, on
+  // affiche un état explicite (onerror) au lieu d'une image cassée silencieuse.
+  const rawImages = (Array.isArray(targetAd.photosUrls) && targetAd.photosUrls.length > 0) ? targetAd.photosUrls
+    : (Array.isArray(targetAd.images) && targetAd.images.length > 0 ? targetAd.images : []);
+  const images = rawImages.length > 0 ? rawImages : [noPhotoUrl()];
+  setGalleryImage(images[0]);
 
   galleryThumbnails.innerHTML = images
     .map(
-      (img, i) => `<img src="${escapeHtml(img)}" alt="Thumb" class="thumb-img ${i === 0 ? 'active' : ''}" data-action="switchGalleryImg" data-url="${escapeHtml(img)}">`
+      (img, i) => `<img src="${escapeHtml(img)}" alt="Vignette photo ${i + 1}" class="thumb-img ${i === 0 ? 'active' : ''}" loading="lazy" decoding="async" data-action="switchGalleryImg" data-url="${escapeHtml(img)}">`
     )
     .join('');
 
   window.switchGalleryImg = (url, el) => {
-    mainGalleryImg.src = url;
+    setGalleryImage(url);
     document.querySelectorAll('.thumb-img').forEach((t) => t.classList.remove('active'));
-    el.classList.add('active');
+    if (el) el.classList.add('active');
   };
 
   modalOpenLeboncoinBtn.onclick = () => window.openUrl(targetAd.url);

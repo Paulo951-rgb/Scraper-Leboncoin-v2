@@ -377,10 +377,10 @@ function detectStructureChanges(rawAds, logger) {
  * Structure v3 (SCRAPING PUR, indépendant de l'IA) :
  *   id, title, url, prix,
  *   city, zipcode,
- *   vendeurNom, vendeurType, vendeurId, vendeurNote, vendeurUrlProfil, vendeurAncienneteJours,
+ *   vendeurNom, vendeurType, vendeurId, vendeurNote, vendeurUrlProfil,
  *   livraison, mainPropre,
  *   likes,
- *   datePublication, dateModification, dateScraping,
+ *   datePublication, dateScraping,
  *   etat,
  *   photosCount, photosUrls,
  *   description
@@ -430,6 +430,13 @@ function normalizeAd(raw) {
     prix,
     city: city || null,
     zipcode: zipcode || null,
+    // Alias « métier » de la localisation, écrits EN PLUS de city/zipcode.
+    // Le modèle reste city/zipcode (compatibilité ascendante) mais l'export
+    // JSON et l'interface (explorateur, fiche, carte) lisent ville/codePostal
+    // de façon cohérente : sans ces alias, la ville s'affichait « Inconnue »
+    // alors que la donnée était bien extraite.
+    ville: city || null,
+    codePostal: zipcode || null,
 
     vendeurNom: seller.nom,
     vendeurType: seller.type,
@@ -437,7 +444,6 @@ function normalizeAd(raw) {
     vendeurNote: seller.note,
     nombreAvis: seller.nombreAvis,
     vendeurUrlProfil: seller.urlProfil,
-    vendeurAncienneteJours: seller.ancienneteJours,
 
     livraison: transaction.livraison,
     mainPropre: transaction.mainPropre,
@@ -446,7 +452,6 @@ function normalizeAd(raw) {
     likes,
 
     datePublication: dates.publication,
-    dateModification: dates.modification,
     dateScraping: scrapedAt,
 
     etat,
@@ -501,7 +506,7 @@ function mergeKeepingNonNull(existing, incoming) {
 }
 
 function parseHtmlDescription(html, adId) {
-  if (!html) return { description: null, livraison: null, mainPropre: null, note: null, etat: null, nombreAvis: null, urlProfil: null, ancienneteJours: null, vendeurNom: null, vendeurType: null, vendeurId: null };
+  if (!html) return { description: null, livraison: null, mainPropre: null, note: null, etat: null, nombreAvis: null, urlProfil: null, vendeurNom: null, vendeurType: null, vendeurId: null };
   const match = html.match(/<script\s+id="__NEXT_DATA__"\s+type="application\/json">\s*([\s\S]*?)\s*<\/script>/i);
   if (match && match[1]) {
     try {
@@ -517,10 +522,9 @@ function parseHtmlDescription(html, adId) {
       const etat = target ? adFields.extractCondition(target) : null;
 
       // La page de détail expose des données vendeur plus riches que la liste
-      // de recherche (note, nombre d'avis, ancienneté du compte, URL du profil).
-      // On les remonte TOUTES : auparavant seule `note` était extraite, donc
-      // nombreAvis / vendeurUrlProfil / vendeurAncienneteJours restaient null
-      // même quand la page de détail les contenait.
+      // de recherche (note, nombre d'avis, URL du profil). On les remonte
+      // TOUTES : auparavant seule `note` était extraite, donc nombreAvis /
+      // vendeurUrlProfil restaient null même quand le détail les contenait.
       return {
         description: descriptionText ? cleanText(descriptionText) : null,
         livraison: transaction ? transaction.livraison : null,
@@ -528,7 +532,6 @@ function parseHtmlDescription(html, adId) {
         note: seller ? seller.note : null,
         nombreAvis: seller ? seller.nombreAvis : null,
         urlProfil: seller ? seller.urlProfil : null,
-        ancienneteJours: seller ? seller.ancienneteJours : null,
         vendeurNom: seller ? seller.nom : null,
         vendeurType: seller ? seller.type : null,
         vendeurId: seller ? seller.id : null,
@@ -536,7 +539,7 @@ function parseHtmlDescription(html, adId) {
       };
     } catch { /* Ignorer */ }
   }
-  return { description: null, livraison: null, mainPropre: null, note: null, etat: null, nombreAvis: null, urlProfil: null, ancienneteJours: null, vendeurNom: null, vendeurType: null, vendeurId: null };
+  return { description: null, livraison: null, mainPropre: null, note: null, etat: null, nombreAvis: null, urlProfil: null, vendeurNom: null, vendeurType: null, vendeurId: null };
 }
 
 // Applique les champs extraits d'une page de détail à une annonce SANS écraser
@@ -552,7 +555,6 @@ function applyDetailFields(ad, parsed) {
   fill('vendeurNote', parsed.note);
   fill('nombreAvis', parsed.nombreAvis);
   fill('vendeurUrlProfil', parsed.urlProfil);
-  fill('vendeurAncienneteJours', parsed.ancienneteJours);
   fill('vendeurNom', parsed.vendeurNom);
   fill('vendeurType', parsed.vendeurType);
   fill('vendeurId', parsed.vendeurId);
@@ -741,7 +743,7 @@ class DescriptionEnricher {
     // ancienneté du compte, URL du profil, état, mode de remise) restaient null.
     // On cible donc aussi les annonces dont des champs de détail sont manquants.
     const needsDetail = (a) => a.vendeurNote == null || a.nombreAvis == null
-      || a.vendeurUrlProfil == null || a.vendeurAncienneteJours == null
+      || a.vendeurUrlProfil == null
       || a.etat == null || a.livraison == null || a.mainPropre == null;
     const targets = ads.filter((a) => a.url && (!a.description || needsDetail(a)));
     const noUrlCount = ads.filter((a) => !a.url).length;
