@@ -318,7 +318,8 @@ styles.css                   habillage + 3 thèmes (Sombre/Clair/Graphite) + com
 ## Tests
 - `node test/regression.test.js` → suite de non-régression (syntaxe + stubs Electron).
   Sections : logique métier, rendu, sécurité, `[27]` carte (logique pure), `[28]` distribution/packaging,
-  `[29]` CI Windows (workflow + `verify-dist.js`).
+  `[29]` CI Windows (workflow + `verify-dist.js`), `[46]` fiche détaillée (openAdDetail),
+  `[47]` pagination explorateur (DOM borné + navigation), `[48]` `sanitizeImageUrl` (anti-SSRF renderer).
 - Le test stub `electron` : BrowserWindow a `webContents.send` mais PAS `isDestroyed`.
 - Avant tout commit : `node --check` sur les fichiers modifiés + lancer la suite.
 
