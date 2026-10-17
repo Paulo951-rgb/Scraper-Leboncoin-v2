@@ -130,6 +130,7 @@ Modules examinés :
 | Secrets (`secretStore.js`) | Politique honnête à deux niveaux : `safeStorage` préféré, repli AES-256-GCM avec **avertissement explicite** que la clé est dérivée d'infos machine publiques (protection réduite). | Corrigé |
 | XSS attributs | `escapeHtml()` pour `src`, `escapePath()` (double contexte HTML+JS) pour `onclick`. | Vérifié |
 | Fuite de secrets dans les logs/exports | `diagnostics.redact()` masque les préfixes sensibles ; les secrets ne sont pas exportés. | Vérifié |
+| **URL d'images du renderer (SSRF-style)** | Les `photosUrls` d'`annonces.json` (fichier potentiellement modifié) étaient assignées telles quelles à `img.src` → un fichier piégé pouvait faire requêter `http://127.0.0.1/…`, `http://192.168.x.x/…`, `http://169.254.169.254/…` ou `file:///…` depuis le renderer. | **Corrigé** — `sanitizeImageUrl` (`utils.js`) appliqué aux vignettes de l'explorateur, à la galerie de la fiche détaillée et à la grille de comparaison : seuls `http(s)` vers un hôte non privé sont chargés (rejet loopback/privé/link-local/CGNAT, IPv6 ULA/loopback, `localhost`, schémas exotiques). Test `[48]` (17 cas). |
 
 **Limite importante** : `urlSecurity.validateRemoteUrl()` n'est **pas** sur le
 chemin d'exécution Playwright. La protection réseau réelle des `fetch` du

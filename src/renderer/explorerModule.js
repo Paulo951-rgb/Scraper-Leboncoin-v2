@@ -55,6 +55,20 @@ function matchesVerdictFilter(a, tagFilter) {
   return true;
 }
 
+// Met à jour le bandeau de pagination (masqué si une seule page).
+function updatePaginationUI(total, totalPages) {
+  const bar = document.getElementById('explorerPagination');
+  if (!bar) return;
+  if (!total || totalPages <= 1) { bar.classList.add('hidden'); return; }
+  bar.classList.remove('hidden');
+  const info = document.getElementById('pageInfo');
+  if (info) info.textContent = `Page ${explorerPage} / ${totalPages} — ${total} annonce(s)`;
+  const prev = document.getElementById('pagePrevBtn');
+  const next = document.getElementById('pageNextBtn');
+  if (prev) prev.disabled = explorerPage <= 1;
+  if (next) next.disabled = explorerPage >= totalPages;
+}
+
 // BASCULE DE VUE TABLEAU / GALERIE
 viewTableBtn.addEventListener('click', () => {
   viewMode = 'table';
@@ -112,22 +126,22 @@ function populateSessionDropdown(selectEl) {
 // touche déclenchait un filtrage complet + reconstruction innerHTML de la liste
 // (jusqu'à plusieurs milliers d'annonces) → saisie saccadée. Les <select> restent
 // immédiats (un seul événement par choix).
-const _debouncedRender = debounce(() => { saveExplorerFilters(); renderExplorerAds(); }, 180);
+const _debouncedRender = debounce(() => { explorerPage = 1; saveExplorerFilters(); renderExplorerAds(); }, 180);
 if (filterKeyword) filterKeyword.addEventListener('input', _debouncedRender);
 if (filterPriceMin) filterPriceMin.addEventListener('input', _debouncedRender);
 if (filterPriceMax) filterPriceMax.addEventListener('input', _debouncedRender);
-if (filterTagSelect) filterTagSelect.addEventListener('change', () => { saveExplorerFilters(); renderExplorerAds(); });
-if (sortSelect) sortSelect.addEventListener('change', () => { saveExplorerFilters(); renderExplorerAds(); });
+if (filterTagSelect) filterTagSelect.addEventListener('change', () => { explorerPage = 1; saveExplorerFilters(); renderExplorerAds(); });
+if (sortSelect) sortSelect.addEventListener('change', () => { explorerPage = 1; saveExplorerFilters(); renderExplorerAds(); });
 // Filtres scraping (type de remise / type vendeur / note min / likes min / état)
-if (filterDeliveryType) filterDeliveryType.addEventListener('change', () => { saveExplorerFilters(); renderExplorerAds(); });
-if (filterSellerType) filterSellerType.addEventListener('change', () => { saveExplorerFilters(); renderExplorerAds(); });
+if (filterDeliveryType) filterDeliveryType.addEventListener('change', () => { explorerPage = 1; saveExplorerFilters(); renderExplorerAds(); });
+if (filterSellerType) filterSellerType.addEventListener('change', () => { explorerPage = 1; saveExplorerFilters(); renderExplorerAds(); });
 if (filterMinRating) filterMinRating.addEventListener('input', _debouncedRender);
 if (filterMinLikes) filterMinLikes.addEventListener('input', _debouncedRender);
-if (filterEtat) filterEtat.addEventListener('change', () => { saveExplorerFilters(); renderExplorerAds(); });
+if (filterEtat) filterEtat.addEventListener('change', () => { explorerPage = 1; saveExplorerFilters(); renderExplorerAds(); });
 
 // Changement de session : rafraîchit immédiatement tout l'explorateur (sans
 // avoir à manipuler un autre filtre pour déclencher la mise à jour).
-if (sessionSelect) sessionSelect.addEventListener('change', () => { renderExplorerAds(); });
+if (sessionSelect) sessionSelect.addEventListener('change', () => { explorerPage = 1; renderExplorerAds(); });
 
 // Sauvegarde / restauration des filtres entre les sessions
 function saveExplorerFilters() {
@@ -290,11 +304,19 @@ function renderExplorerAds() {
   if (filtered.length === 0) {
     adsTableBody.innerHTML = '<tr><td colspan="8" class="text-center">Aucune annonce ne correspond à votre recherche</td></tr>';
     adsGridContainer.innerHTML = '<div class="text-center" style="grid-column:1/-1;">Aucune annonce ne correspond à votre recherche</div>';
+    updatePaginationUI(0, 0);
     return;
   }
 
+  // Pagination : on ne construit que la tranche visible (perf + DOM borné).
+  const totalPages = Math.max(1, Math.ceil(filtered.length / EXPLORER_PAGE_SIZE));
+  if (explorerPage > totalPages) explorerPage = totalPages;
+  if (explorerPage < 1) explorerPage = 1;
+  const startIdx = (explorerPage - 1) * EXPLORER_PAGE_SIZE;
+  const pageAds = filtered.slice(startIdx, startIdx + EXPLORER_PAGE_SIZE);
+
   if (viewMode === 'table') {
-    adsTableBody.innerHTML = filtered
+    adsTableBody.innerHTML = pageAds
       .map((a) => {
         const isStarred = starredAds.has(String(a.id));
         const starIcon = `<span class="star-icon ${isStarred ? 'starred' : ''}" data-action="toggleStar" data-id="${escapeHtml(String(a.id))}">★</span>`;
@@ -340,11 +362,12 @@ function renderExplorerAds() {
   }
 
   if (viewMode === 'grid') {
-    adsGridContainer.innerHTML = filtered
+    adsGridContainer.innerHTML = pageAds
       .map((a) => {
         const isStarred = starredAds.has(String(a.id));
-        const thumbUrl = (Array.isArray(a.photosUrls) && a.photosUrls.length > 0) ? a.photosUrls[0]
-          : (Array.isArray(a.images) && a.images.length > 0 ? a.images[0] : noPhotoUrl());
+        const rawThumb = (Array.isArray(a.photosUrls) && a.photosUrls.length > 0) ? a.photosUrls[0]
+          : (Array.isArray(a.images) && a.images.length > 0 ? a.images[0] : null);
+        const thumbUrl = sanitizeImageUrl(rawThumb) || noPhotoUrl();
 
         return `
         <div class="ad-card">
@@ -366,7 +389,17 @@ function renderExplorerAds() {
       })
       .join('');
   }
+
+  updatePaginationUI(filtered.length, totalPages);
 }
+
+// Navigation de pagination (bornée, sans reconstruction inutile).
+document.getElementById('pagePrevBtn')?.addEventListener('click', () => {
+  if (explorerPage > 1) { explorerPage -= 1; renderExplorerAds(); }
+});
+document.getElementById('pageNextBtn')?.addEventListener('click', () => {
+  explorerPage += 1; renderExplorerAds();
+});
 
 // ⭐ SYSTÈME DE FAVORIS
 window.toggleStar = (adId) => {
@@ -391,7 +424,10 @@ window.toggleStar = (adId) => {
 function setGalleryImage(url) {
   if (!mainGalleryImg) return;
   mainGalleryImg.classList.remove('img-error', 'img-loading');
-  if (!url) { mainGalleryImg.src = noPhotoUrl(); return; }
+  // Validation anti-SSRF : une URL locale/interne ou un schéma exotique est
+  // remplacé par le placeholder local (jamais chargé).
+  const safe = sanitizeImageUrl(url);
+  if (!safe) { mainGalleryImg.src = noPhotoUrl(); return; }
   mainGalleryImg.classList.add('img-loading');
   mainGalleryImg.onload = () => mainGalleryImg.classList.remove('img-loading');
   mainGalleryImg.onerror = () => {
@@ -401,7 +437,7 @@ function setGalleryImage(url) {
     mainGalleryImg.alt = 'Image indisponible (URL expirée ou inaccessible)';
   };
   mainGalleryImg.alt = 'Photo principale';
-  mainGalleryImg.src = url;
+  mainGalleryImg.src = safe;
 }
 
 // 👁️ MODAL FICHE DÉTAILLÉE DE L'ANNONCE
@@ -503,7 +539,10 @@ window.openAdDetail = (adId) => {
   // affiche un état explicite (onerror) au lieu d'une image cassée silencieuse.
   const rawImages = (Array.isArray(targetAd.photosUrls) && targetAd.photosUrls.length > 0) ? targetAd.photosUrls
     : (Array.isArray(targetAd.images) && targetAd.images.length > 0 ? targetAd.images : []);
-  const images = rawImages.length > 0 ? rawImages : [noPhotoUrl()];
+  // Ne conserver que les URL sûres (anti-SSRF) ; le placeholder local est ajouté
+  // uniquement si AUCUNE URL valide n'est disponible.
+  const safeImages = rawImages.map(sanitizeImageUrl).filter(Boolean);
+  const images = safeImages.length > 0 ? safeImages : [noPhotoUrl()];
   setGalleryImage(images[0]);
 
   galleryThumbnails.innerHTML = images

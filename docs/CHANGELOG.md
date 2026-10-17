@@ -46,6 +46,11 @@ décrivent des modifications vérifiées (code + tests).
 
 ### Corrigé
 
+- **Diagnostic « images: 0 » (faux négatif)** : `summarizeAds` (utils/diagnostics)
+  comptait `a.images` alors que le modèle normalisé expose `photosUrls` — le
+  pipeline affichait « images: 0 » sur des annonces dont les photos étaient bien
+  extraites (vérifié : fixture `search-results.har` → 3 annonces, photosURLs
+  présentes). Corrigé : le résumé lit `photosUrls` **ou** `images`.
 - **Fiche détaillée (Explorateur)** : la ville s'affichait « Inconnue » alors
   qu'elle existait (désalignement de clés `city`/`ville`). Résolu par
   `cityOf`/`zipOf`/`locationLabel` (`utils.js`) ; la fiche affiche désormais
@@ -61,6 +66,36 @@ décrivent des modifications vérifiées (code + tests).
   (jamais un chemin), le valide (`job-<id>`) et vérifie le chemin reconstruit
   côté main avant tout accès disque (anti path-traversal) ; message explicite si
   la session n'existe plus.
+- **Performance explorateur (pagination)** : l'explorateur construisait TOUTES
+  les lignes d'un seul `innerHTML`. Mesuré au harnais CDP : 20 000 annonces →
+  405 089 nœuds DOM et ~17 s de gel. Pagination à 500 lignes (mesuré après :
+  ~0,5 s et 11 193 nœuds, quelle que soit la taille de session). Navigation
+  bornée + retour page 1 au changement de filtre/session.
+- **Contraste WCAG (thème Clair)** : l'en-tête de tableau mesurait 4,27:1
+  (< seuil AA 4,5:1 pour du texte de 12px). Primaire assombri (#2b7a70 →
+  #256b62) : 5,24:1 sur l'en-tête, 6,25:1 pour le texte blanc sur bouton.
+- **Graphiques Chart.js** : palette Tailwind figée (bleu #38bdf8, violet
+  #8b5cf6) remplacée par une palette lue dans les variables CSS du thème actif
+  (Sombre/Clair/Graphite). Les axes sans couleur (illisibles sur fond sombre)
+  sont corrigés, les titres/infobulles suivent le thème, et les libellés du
+  graphique « Modes de remise » ne reposent plus sur des emojis. Reconstruction
+  au changement de thème (`themechange`).
+- **Comptage des villes (Stats)** : repli `a.city || a.ville` pour les anciennes
+  sessions/export ne portant que la clé d'export.
+
+### Sécurité
+
+- **URL d'images non validées (anti-SSRF renderer)** : les URL de photos
+  proviennent d'`annonces.json` (fichier potentiellement modifié par un tiers) et
+  étaient assignées directement à `img.src`. Un fichier piégé pouvait faire
+  émettre au renderer des requêtes vers `http://127.0.0.1/…`,
+  `http://192.168.x.x/…`, `http://169.254.169.254/…` ou `file:///…`.
+  Ajout de `sanitizeImageUrl` (`utils.js`) appliqué aux vignettes de l'explorateur,
+  à la galerie de la fiche détaillée et à la grille de comparaison : seuls
+  `http(s)` vers un hôte NON privé sont chargés (rejet des IP loopback/privées/
+  link-local/CGNAT, IPv6 ULA/loopback, `localhost`, schémas exotiques). Les
+  placeholders locaux `data:image/svg+xml` restent autorisés. Tests : section
+  `[48]` (17 cas).
 
 ## [Non publié] — Politique de scraping fixe + fiabilité des exports — 2026-10-17
 

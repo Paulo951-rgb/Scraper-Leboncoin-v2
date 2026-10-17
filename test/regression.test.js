@@ -4600,6 +4600,123 @@ console.log('\n[46] Explorateur (fiche détaillée + localisation, jsdom)');
 }
 console.log('\n[46] OK');
 
+// --- 47. Explorateur : pagination (perf sur sessions volumineuses) ---
+// L'explorateur construisait TOUTES les lignes en un seul innerHTML : une
+// session de 20 000 annonces générait ~405 000 nœuds DOM et gelait l'interface
+// ~17 s (mesuré au harnais CDP). On vérifie ici que le rendu est borné à une
+// page et que la navigation fonctionne réellement.
+console.log('\n[47] Explorateur : pagination (DOM borné)');
+{
+  const { JSDOM } = require('jsdom');
+  const repoRoot = path.join(__dirname, '..');
+
+  const html = `<!doctype html><html><body>
+    <div id="adsTableContainer"><table><tbody id="adsTableBody"></tbody></table></div>
+    <div id="adsGridContainer" class="hidden"></div>
+    <span id="filteredAdsCount"></span>
+    <button id="viewTableBtn"></button><button id="viewGridBtn"></button>
+    <input id="filterKeyword"><input id="filterPriceMin"><input id="filterPriceMax">
+    <select id="filterTagSelect"><option value="ALL">ALL</option></select>
+    <select id="sortSelect"><option value="DEFAULT">DEFAULT</option></select>
+    <select id="filterDeliveryType"><option value="tous">tous</option></select>
+    <select id="filterSellerType"><option value="ALL">ALL</option></select>
+    <input id="filterMinRating"><input id="filterMinLikes">
+    <select id="filterEtat"><option value="ALL">ALL</option></select>
+    <select id="sessionSelect"><option value="ALL">ALL</option></select>
+    <div id="explorerPagination" class="hidden">
+      <button id="pagePrevBtn"></button><span id="pageInfo"></span><button id="pageNextBtn"></button>
+    </div>
+    <div id="adDetailModal" class="hidden"><h3 id="modalAdTitle"></h3><button id="closeDetailModalBtn"></button>
+      <img id="mainGalleryImg"><div id="galleryThumbnails"></div><span id="modalDealBadge"></span>
+      <button id="modalStarBtn"></button><span id="modalPrice"></span><span id="modalCity"></span>
+      <span id="modalSeller"></span><span id="modalDate"></span><div id="modalDescription"></div>
+      <button id="modalOpenLeboncoinBtn"></button></div>
+    <div id="toastContainer"></div>
+  </body></html>`;
+
+  const dom = new JSDOM(html, { runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://app.local/' });
+  const { window } = dom;
+  window.api = { getHistory: async () => [], openExternal: () => {}, openFolder: async () => ({ success: true }) };
+  const utilsSrc = fs.readFileSync(path.join(repoRoot, 'src/renderer/utils.js'), 'utf8');
+  const appStateSrc = fs.readFileSync(path.join(repoRoot, 'src/renderer/appState.js'), 'utf8');
+  const explorerSrc = fs.readFileSync(path.join(repoRoot, 'src/renderer/explorerModule.js'), 'utf8');
+  window.eval(utilsSrc + '\n' + appStateSrc + '\n' + explorerSrc
+    + '\n;window.__setCache = (v) => { allJobsCache = v; };'
+    + '\n;window.__render = () => renderExplorerAds();'
+    + '\n;window.__pageSize = () => EXPLORER_PAGE_SIZE;');
+
+  const N = 1234;
+  const ads = Array.from({ length: N }, (_, i) => ({ id: `A${i}`, title: `T${i}`, url: `u${i}`, prix: i + 1, ville: 'Lyon' }));
+  window.__setCache([{ id: 'j', date: '01/01/2026', adsCount: N, ads }]);
+  window.__render();
+
+  const $ = (id) => window.document.getElementById(id);
+  const pageSize = window.__pageSize();
+  assert(pageSize > 0 && pageSize < N, `[47] taille de page bornée (${pageSize})`);
+  assert($('adsTableBody').querySelectorAll('tr').length === pageSize,
+    `[47] une seule page rendue (${$('adsTableBody').querySelectorAll('tr').length} = ${pageSize})`);
+  assert(!$('explorerPagination').classList.contains('hidden'), '[47] barre de pagination visible (>1 page)');
+  assert(/Page 1 \//.test($('pageInfo').textContent), '[47] indication « Page 1 / N »');
+  assert($('pagePrevBtn').disabled === true, '[47] « Précédent » désactivé en page 1');
+
+  // Navigation réelle : page suivante.
+  $('pageNextBtn').click();
+  assert(/Page 2 \//.test($('pageInfo').textContent), '[47] navigation page suivante');
+  assert($('adsTableBody').querySelectorAll('tr').length === pageSize, '[47] page 2 également bornée');
+  $('pagePrevBtn').click();
+  assert(/Page 1 \//.test($('pageInfo').textContent), '[47] navigation page précédente');
+
+  // Filtrage → compteur honnête (recherche par sous-chaîne : « T123 » matche
+  // T123, T1230…T1233). On vérifie que le compteur reflète le filtre réel.
+  $('filterKeyword').value = 'T123';
+  window.__render();
+  const expected = ads.filter((a) => (a.title || '').toLowerCase().includes('t123')).length;
+  assert($('filteredAdsCount').textContent === String(expected),
+    `[47] compteur après filtre (${$('filteredAdsCount').textContent} = ${expected})`);
+  assert($('adsTableBody').querySelectorAll('tr').length === expected,
+    '[47] toutes les lignes filtrées tiennent sur une page');
+
+  dom.window.close();
+}
+console.log('\n[47] OK');
+
+// --- 48. Sécurité : validation des URL d'images du renderer (anti-SSRF) ---
+// Les URL de photos proviennent d'annonces.json (fichier potentiellement
+// modifié). Elles DOIVENT être validées avant d'être assignées à img.src, sinon
+// le renderer émettrait des requêtes vers des adresses locales/internes.
+console.log('\n[48] Sécurité : sanitizeImageUrl (anti-SSRF renderer)');
+{
+  const utilsSrc = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/utils.js'), 'utf8');
+  // On isole la fonction pure (pas de DOM requis) : on coupe le source avant
+  // les affectations `window.*` du bas de fichier.
+  const pure = utilsSrc.split('window.openUrl')[0];
+  const sandbox = {};
+  new Function('exports', pure + '\n;exports.sanitizeImageUrl = sanitizeImageUrl;')(sandbox);
+  const s = sandbox.sanitizeImageUrl;
+
+  assert(typeof s === 'function', '[48] sanitizeImageUrl exportée');
+  // Doivent PASSER (images légitimes).
+  assert(s('https://img.leboncoin.fr/abc_0.jpg') === 'https://img.leboncoin.fr/abc_0.jpg', '[48] https leboncoin accepté');
+  assert(s('http://img.leboncoin.fr/a.jpg') === 'http://img.leboncoin.fr/a.jpg', '[48] http public accepté');
+  // Doivent être REJETÉES (SSRF / schémas).
+  assert(s('http://127.0.0.1/x.jpg') === null, '[48] loopback rejeté');
+  assert(s('http://localhost/x.jpg') === null, '[48] localhost rejeté');
+  assert(s('http://192.168.1.5/x.jpg') === null, '[48] 192.168/16 rejeté');
+  assert(s('http://10.0.0.1/x.jpg') === null, '[48] 10/8 rejeté');
+  assert(s('http://172.16.0.1/x.jpg') === null, '[48] 172.16/12 rejeté');
+  assert(s('http://169.254.169.254/latest/meta-data/') === null, '[48] métadonnées cloud rejetées');
+  assert(s('http://[::1]/x.jpg') === null, '[48] IPv6 loopback rejeté');
+  assert(s('file:///etc/passwd') === null, '[48] file:// rejeté');
+  assert(s('javascript:alert(1)') === null, '[48] javascript: rejeté');
+  assert(s('ftp://host/x.jpg') === null, '[48] ftp:// rejeté');
+  assert(s('') === null, '[48] chaîne vide rejetée');
+  assert(s(null) === null, '[48] null rejeté');
+  assert(s(123) === null, '[48] non-chaîne rejetée');
+  // Placeholders locaux conservés.
+  assert(typeof s('data:image/svg+xml;utf8,%3Csvg/%3E') === 'string', '[48] placeholder data:image/svg+xml conservé');
+}
+console.log('\n[48] OK');
+
 
 console.log(`\n=== RÉSULTAT : ${pass} réussis, ${fail} échoués ===`);
 process.exit(fail > 0 ? 1 : 0);

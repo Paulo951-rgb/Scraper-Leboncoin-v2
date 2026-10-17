@@ -123,6 +123,22 @@ function renderCharts(ads, transactionStats) {
   const transactionCanvas = document.getElementById('transactionChart');
   if (!priceDistCanvas || !sellerCanvas || !citiesCanvas || !transactionCanvas) return;
 
+  // Palette lue depuis les variables CSS du thème actif : les graphiques
+  // suivent Sombre / Clair / Graphite au lieu de couleurs Tailwind figées
+  // (#38bdf8 bleu, #8b5cf6 violet) qui juraient avec la marque et empêchaient
+  // la lisibilité des axes sur fond sombre (ticks sans couleur = noir sur noir).
+  const css = (name, fallback) => (getComputedStyle(document.body).getPropertyValue(name).trim() || fallback);
+  const C = {
+    primary: css('--primary-color', '#5fa79d'),
+    muted: css('--text-muted', '#9aa1ac'),
+    text: css('--text-color', '#e6e8ec'),
+    grid: css('--border-color', '#313640'),
+    green: css('--green-deal', '#5bbf87'),
+    accent: css('--accent-muted', '#b8a06a'),
+    danger: css('--danger-color', '#e0655f'),
+    tooltipBg: css('--card-bg', '#212429'),
+  };
+
   // Aucune donnée (ou Chart.js indisponible) : on DÉTRUIT les instances
   // existantes pour ne pas laisser à l'écran les graphiques de la session
   // précédente (données fantômes). L'ancien early-return laissait les anciens
@@ -173,11 +189,18 @@ function renderCharts(ads, transactionStats) {
     }
     priceDistChartInstance = new Chart(priceDistCtx, {
       type: 'bar',
-      data: { labels, datasets: [{ label: 'Nombre d\'annonces', data: buckets, backgroundColor: '#38bdf8', borderRadius: 6 }] },
+      data: { labels, datasets: [{ label: 'Nombre d\'annonces', data: buckets, backgroundColor: C.primary, borderRadius: 6 }] },
       options: {
         responsive: true, maintainAspectRatio: false,
-        plugins: { title: { display: true, text: 'Distribution des Prix' }, legend: { display: false } },
-        scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
+        plugins: {
+          title: { display: true, text: 'Distribution des Prix', color: C.text },
+          legend: { display: false },
+          tooltip: { backgroundColor: C.tooltipBg, padding: 12, cornerRadius: 8, bodyColor: C.text, titleColor: C.text },
+        },
+        scales: {
+          x: { ticks: { color: C.muted }, grid: { color: C.grid } },
+          y: { beginAtZero: true, ticks: { precision: 0, color: C.muted }, grid: { color: C.grid } },
+        },
       },
     });
   }
@@ -199,7 +222,7 @@ function renderCharts(ads, transactionStats) {
       datasets: [{
         label: 'Nombre d\'annonces',
         data: [partCount, proCount],
-        backgroundColor: ['#38bdf8', '#8b5cf6'],
+        backgroundColor: [C.primary, C.accent],
         borderRadius: 8,
         borderSkipped: false,
         barPercentage: 0.65,
@@ -211,10 +234,12 @@ function renderCharts(ads, transactionStats) {
       responsive: true,
       maintainAspectRatio: false,
       plugins: {
-        title: { display: true, text: 'Vendeurs Particuliers vs Pros', padding: { bottom: 10 } },
+        title: { display: true, text: 'Vendeurs Particuliers vs Pros', padding: { bottom: 10 }, color: C.text },
         legend: { display: false },
         tooltip: {
-          backgroundColor: 'rgba(15,23,42,0.95)',
+          backgroundColor: C.tooltipBg,
+          titleColor: C.text,
+          bodyColor: C.text,
           padding: 12,
           cornerRadius: 8,
           callbacks: {
@@ -229,11 +254,11 @@ function renderCharts(ads, transactionStats) {
       scales: {
         x: {
           beginAtZero: true,
-          ticks: { precision: 0, color: getComputedStyle(document.body).getPropertyValue('--text-muted').trim() || '#94a3b8' },
-          grid: { color: 'rgba(148,163,184,0.12)' },
+          ticks: { precision: 0, color: C.muted },
+          grid: { color: C.grid },
         },
         y: {
-          ticks: { color: getComputedStyle(document.body).getPropertyValue('--text-muted').trim() || '#94a3b8' },
+          ticks: { color: C.muted },
           grid: { display: false },
         },
       },
@@ -243,7 +268,9 @@ function renderCharts(ads, transactionStats) {
   // 3) Top 10 villes par nombre d'annonces
   const cityCounts = {};
   for (const a of ads) {
-    const c = (a.city || 'Inconnue').trim() || 'Inconnue';
+    // Compatibilité anciennes sessions : le modèle expose `city`, mais les
+    // exports « métier » et certaines sessions antérieures utilisent `ville`.
+    const c = (a.city || a.ville || 'Inconnue').trim() || 'Inconnue';
     cityCounts[c] = (cityCounts[c] || 0) + 1;
   }
   const topCities = Object.entries(cityCounts).sort((a, b) => b[1] - a[1]).slice(0, 10);
@@ -254,16 +281,20 @@ function renderCharts(ads, transactionStats) {
     type: 'bar',
     data: {
       labels: topCities.map((c) => c[0]),
-      datasets: [{ label: 'Annonces', data: topCities.map((c) => c[1]), backgroundColor: '#22c55e', borderRadius: 6 }],
+      datasets: [{ label: 'Annonces', data: topCities.map((c) => c[1]), backgroundColor: C.green, borderRadius: 6 }],
     },
     options: {
       indexAxis: 'y', responsive: true, maintainAspectRatio: false,
-      plugins: { title: { display: true, text: 'Top 10 Villes' }, legend: { display: false } },
+      plugins: {
+        title: { display: true, text: 'Top 10 Villes', color: C.text },
+        legend: { display: false },
+        tooltip: { backgroundColor: C.tooltipBg, titleColor: C.text, bodyColor: C.text, padding: 12, cornerRadius: 8 },
+      },
       scales: {
-        x: { beginAtZero: true, ticks: { precision: 0 } },
+        x: { beginAtZero: true, ticks: { precision: 0, color: C.muted }, grid: { color: C.grid } },
         // Force l'affichage des 10 labels de villes (autoSkip désactivé, aucun
         // masquage alterné).
-        y: { ticks: { autoSkip: false, maxTicksLimit: 10 } },
+        y: { ticks: { autoSkip: false, maxTicksLimit: 10, color: C.muted }, grid: { display: false } },
       },
     },
   });
@@ -276,11 +307,13 @@ function renderCharts(ads, transactionStats) {
   transactionChartInstance = new Chart(transactionCtx, {
     type: 'bar',
     data: {
-      labels: ['📦 Livraison', '🤝 Main propre', '📦+🤝 Les deux', '🚫 Aucun', '❓ Inconnu'],
+      // Libellés sans emoji : l'identité graphique repose sur des icônes
+      // vectorielles, pas sur des pictogrammes emoji (incohérents selon l'OS).
+      labels: ['Livraison', 'Main propre', 'Les deux', 'Aucun', 'Inconnu'],
       datasets: [{
         label: 'Nombre d\'annonces',
         data: [tStats.livraisonCount, tStats.mainPropreCount, tStats.lesDeuxCount, tStats.aucunCount || 0, tStats.inconnuCount || tStats.nonRenseigneCount || 0],
-        backgroundColor: ['#38bdf8', '#22c55e', '#a855f7', '#f97316', '#64748b'],
+        backgroundColor: [C.primary, C.green, C.accent, C.danger, C.muted],
         borderRadius: 8,
         borderSkipped: false,
         barPercentage: 0.65,
@@ -292,10 +325,12 @@ function renderCharts(ads, transactionStats) {
       responsive: true,
       maintainAspectRatio: false,
       plugins: {
-        title: { display: true, text: 'Modes de Remise', padding: { bottom: 10 } },
+        title: { display: true, text: 'Modes de Remise', padding: { bottom: 10 }, color: C.text },
         legend: { display: false },
         tooltip: {
-          backgroundColor: 'rgba(15,23,42,0.95)',
+          backgroundColor: C.tooltipBg,
+          titleColor: C.text,
+          bodyColor: C.text,
           padding: 12,
           cornerRadius: 8,
           callbacks: {
@@ -304,8 +339,8 @@ function renderCharts(ads, transactionStats) {
         },
       },
       scales: {
-        x: { beginAtZero: true, ticks: { precision: 0 } },
-        y: { ticks: { color: getComputedStyle(document.body).getPropertyValue('--text-muted').trim() || '#94a3b8' }, grid: { display: false } },
+        x: { beginAtZero: true, ticks: { precision: 0, color: C.muted }, grid: { color: C.grid } },
+        y: { ticks: { color: C.muted }, grid: { display: false } },
       },
     },
   });
@@ -314,4 +349,10 @@ function renderCharts(ads, transactionStats) {
 // Écouteur pour rafraîchir la carte si on coche/décoche la remise en main propre
 document.getElementById('mapHandDeliveryOnly')?.addEventListener('change', () => {
   renderStatsView();
+});
+
+// Les graphiques figent leurs couleurs à la construction : on les reconstruit
+// au changement de thème pour qu'ils suivent la palette active.
+document.addEventListener('themechange', () => {
+  if (document.getElementById('tab-stats')?.classList.contains('active')) renderStatsView();
 });

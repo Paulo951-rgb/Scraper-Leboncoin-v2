@@ -59,7 +59,12 @@ function summarizeAds(ads) {
   const withPrice = ads.filter((a) => (a.prix ?? a.price) != null && !isNaN(parseFloat(a.prix ?? a.price))).length;
   const withDesc = ads.filter((a) => a.description).length;
   const withUrl = ads.filter((a) => a.url).length;
-  const withImages = ads.filter((a) => Array.isArray(a.images) && a.images.length > 0).length;
+  // Le modèle normalisé expose `photosUrls` (et non `images`, qui n'existe que
+  // sur les objets BRUTS d'avant normalisation). Lire `a.images` affichait
+  // « images: 0 » sur des annonces qui avaient bien des photos extraites.
+  const withImages = ads.filter((a) =>
+    (Array.isArray(a.photosUrls) && a.photosUrls.length > 0) ||
+    (Array.isArray(a.images) && a.images.length > 0)).length;
   const ids = ads.slice(0, 5).map((a) => a.id).filter(Boolean);
   const sample = ads[0] || {};
   return `${ads.length} annonce(s) | prix: ${withPrice} | description: ${withDesc} | url: ${withUrl} | images: ${withImages} | premiers IDs: [${ids.join(', ')}${ads.length > 5 ? ', …' : ''}] | exemple titre: "${truncate(sample.title, 40)}"`;

@@ -16,6 +16,50 @@ const PLACEHOLDER_SVG = (label) =>
 const noPhotoUrl = () => PLACEHOLDER_SVG('Pas de photo');
 
 /**
+ * Valide une URL d'image AVANT de l'assigner à `img.src`.
+ *
+ * Les URL proviennent d'un fichier `annonces.json` (données scrapées ou fichier
+ * modifié par un tiers) : les charger sans contrôle permettrait de faire
+ * émettre au renderer des requêtes vers des adresses locales/internes
+ * (SSRF-style) via `http://127.0.0.1/…`, `http://192.168.x.x/…`, `file:///…`.
+ * On n'autorise donc que http(s) vers des domaines NON privés, et on rejette
+ * les schémas exotiques (`data:` est toléré uniquement pour nos placeholders).
+ * Les domaines d'images Leboncoin sont évidemment acceptés.
+ *
+ * @param {*} raw URL candidate
+ * @returns {string|null} URL sûre, ou null si rejetée
+ */
+function sanitizeImageUrl(raw) {
+  if (typeof raw !== 'string') return null;
+  const s = raw.trim();
+  if (s === '') return null;
+  // Nos propres placeholders (data:image/svg+xml) restent autorisés.
+  if (/^data:image\/svg\+xml/i.test(s)) return s;
+  let u;
+  try { u = new URL(s); } catch { return null; }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+  const host = u.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  if (host === '' || host === 'localhost' || host.endsWith('.localhost')) return null;
+  // IPv4 privée / loopback / link-local / CGNAT.
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) {
+    const p = host.split('.').map(Number);
+    if (p.some((n) => n > 255)) return null;
+    if (p[0] === 0 || p[0] === 10 || p[0] === 127) return null;
+    if (p[0] === 169 && p[1] === 254) return null;              // link-local (métadonnées cloud)
+    if (p[0] === 172 && p[1] >= 16 && p[1] <= 31) return null;  // 172.16/12
+    if (p[0] === 192 && p[1] === 168) return null;              // 192.168/16
+    if (p[0] === 100 && p[1] >= 64 && p[1] <= 127) return null; // CGNAT 100.64/10
+  }
+  // IPv6 loopback / unique-local / link-local.
+  if (/^[0-9a-f:]+$/i.test(host) && host.includes(':')) {
+    if (host === '::1' || host === '::') return null;
+    if (/^f[cd]/.test(host)) return null; // fc00::/7 (ULA)
+    if (/^fe80/.test(host)) return null;  // link-local
+  }
+  return u.toString();
+}
+
+/**
  * Lit la ville d'une annonce en tolérant TOUTES les variantes de nommage
  * rencontrées selon la source : le modèle interne (`city`) et la clé d'export
  * (`ville`) sont écrits par le pipeline, mais d'anciens JSON peuvent n'avoir
