@@ -90,15 +90,21 @@ const mapMaxPriceInput = document.getElementById('mapMaxPrice');
     for (const p of points) {
       const key = `${Math.floor(p.lat / cellSize)}:${Math.floor(p.lng / cellSize)}`;
       let cell = cells.get(key);
-      if (!cell) { cell = { lat: 0, lng: 0, ads: [] }; cells.set(key, cell); }
-      cell.lat += p.lat;
-      cell.lng += p.lng;
+      if (!cell) { cell = { latSum: 0, lngSum: 0, pointCount: 0, ads: [] }; cells.set(key, cell); }
+      cell.latSum += p.lat;
+      cell.lngSum += p.lng;
+      cell.pointCount += 1;
       cell.ads.push(...(Array.isArray(p.ads) ? p.ads : []));
     }
     const groups = [];
     for (const cell of cells.values()) {
-      const n = cell.ads.length || 1;
-      groups.push({ lat: cell.lat / n, lng: cell.lng / n, ads: cell.ads });
+      // Le centroïde est la moyenne des POINTS regroupés, pas des annonces :
+      // diviser par le nombre d'annonces (au lieu du nombre de points) décalait
+      // le marqueur hors de la zone (ex. 1 ville à 5 annonces → lat 9,1 au lieu
+      // de 45,7). Chaque point contribue pour 1, quel que soit son nombre
+      // d'annonces.
+      const n = cell.pointCount || 1;
+      groups.push({ lat: cell.latSum / n, lng: cell.lngSum / n, ads: cell.ads });
     }
     return groups;
   }

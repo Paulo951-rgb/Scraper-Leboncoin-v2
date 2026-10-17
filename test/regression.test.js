@@ -4718,6 +4718,102 @@ console.log('\n[48] Sécurité : sanitizeImageUrl (anti-SSRF renderer)');
 console.log('\n[48] OK');
 
 
+// ═══════════════════════════════════════════════════════════════════════════
+// [49] Anomalies confirmées par l'audit intégral 2026-10-17
+//   49.1 Prix : parsing des formats français (parseFloat seul tronquait)
+//   49.2 Carte : centroïde de regroupement (moyenne des POINTS, pas des annonces)
+//   49.3 IPC job:start : configuration invalide ne doit pas verrouiller le job
+//   49.4 Détail : pas de contamination croisée entre annonces (repli found[0])
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n[49] Audit 2026-10-17 : prix, carte, verrou job, contamination détail');
+{
+  const adFields = require('../src/main/services/scraping/adFields');
+  const { parseHtmlDescription, normalizeAd } = require('../src/main/services/scraping/leboncoin-pipeline');
+  const repoRoot = path.join(__dirname, '..');
+
+  // 49.1 Prix — `parseFloat` seul renvoyait 1 pour « 1 250 € » (troncature).
+  assert(adFields.extractPrice({ price: '1 250 €' }) === 1250, '[49] prix « 1 250 € » → 1250 (pas 1)');
+  assert(adFields.extractPrice({ price: '1 250' }) === 1250, '[49] prix « 1 250 » → 1250');
+  assert(adFields.extractPrice({ price: '12,50' }) === 12.5, '[49] prix « 12,50 » → 12,5');
+  assert(adFields.extractPrice({ price: '1.299,99' }) === 1299.99, '[49] prix « 1.299,99 » → 1299,99');
+  assert(adFields.extractPrice({ price: '1.299,99 €' }) === 1299.99, '[49] prix avec devise → 1299,99');
+  assert(adFields.extractPrice({ price: '1250' }) === 1250, '[49] prix entier sans séparateur');
+  assert(adFields.extractPrice({ price: [{ value: '1 299' }] }) === 1299, '[49] prix array d\'objet string → 1299');
+  assert(adFields.extractPrice({ price: { value: '1.299,99 €' } }) === 1299.99, '[49] prix objet {value} string FR');
+  // Les cas non numériques restent null (jamais une valeur inventée).
+  assert(adFields.extractPrice({ price: 'abc' }) === null, '[49] prix non numérique → null');
+  assert(adFields.extractPrice({ price: '' }) === null, '[49] prix chaîne vide → null');
+  assert(adFields.extractPrice({ price: 0 }) === 0, '[49] prix 0 → 0 (0 ≠ null)');
+  // Cohérence avec normalizeAd (chaîne de production réelle).
+  assert(normalizeAd({ list_id: 'p1', subject: 'T', price: '1 250 €' }).prix === 1250,
+    '[49] normalizeAd : prix chaîne FR → nombre correct');
+
+  // 49.2 Carte — centroïde : la moyenne porte sur les POINTS, pas sur les annonces.
+  const mapSrc = fs.readFileSync(path.join(repoRoot, 'src/renderer/mapModule.js'), 'utf8');
+  const mapWin = {};
+  const mapSandbox = {
+    window: mapWin,
+    document: { getElementById: () => null },
+    localStorage: { getItem: () => null, setItem() {}, removeItem() {}, key: () => null, length: 0 },
+    console, L: undefined, fetch: () => Promise.reject(new Error('offline')), setTimeout, clearTimeout,
+  };
+  mapSandbox.globalThis = mapSandbox;
+  require('vm').createContext(mapSandbox);
+  require('vm').runInContext(mapSrc, mapSandbox);
+  const clusterMarkers = mapWin.clusterMarkers;
+  // Une seule ville (point) contenant 5 annonces : le marqueur doit rester sur la ville.
+  const solo = clusterMarkers([{ lat: 45.7, lng: 4.8, ads: [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }, { id: 5 }] }], 0.25);
+  assert(solo.length === 1 && Math.abs(solo[0].lat - 45.7) < 1e-9 && Math.abs(solo[0].lng - 4.8) < 1e-9,
+    `[49] carte : 1 ville à 5 annonces → marqueur sur la ville (obtenu lat=${solo[0].lat})`);
+  assert(solo[0].ads.length === 5, '[49] carte : les 5 annonces restent rattachées au groupe');
+  // Deux points proches, nombre d'annonces inégal : centroïde = moyenne des points.
+  const pA = { lat: 45.0, lng: 3.0, ads: new Array(10).fill({}) };
+  const pB = { lat: 45.2, lng: 3.0, ads: [{}] };
+  const mixed = clusterMarkers([pA, pB], 0.25);
+  const expectedLat = (pA.lat + pB.lat) / 2; // 45,1 (moyenne des points)
+  const weightedLat = (pA.lat * 10 + pB.lat) / 11; // 45,018 (ancien calcul erroné)
+  assert(mixed.length === 1 && Math.abs(mixed[0].lat - expectedLat) < 1e-9,
+    `[49] carte : centroïde = moyenne des points ${expectedLat} (obtenu ${mixed[0].lat})`);
+  assert(Math.abs(mixed[0].lat - weightedLat) > 0.05,
+    '[49] carte : le centroïde n\'est PAS pondéré par le nombre d\'annonces');
+
+  // 49.3 IPC job:start — la validation précède l'armement du verrou `isRunning`.
+  const ipcSrc = fs.readFileSync(path.join(repoRoot, 'src/main/core/ipcHandlers.js'), 'utf8');
+  const lockIdx = ipcSrc.indexOf("ipcMain.on('job:start'");
+  const guardIdx = ipcSrc.indexOf('Configuration de scraping absente ou invalide');
+  const armIdx = ipcSrc.indexOf('isRunning = true', lockIdx);
+  assert(guardIdx > lockIdx && armIdx > guardIdx,
+    '[49] ipcHandlers : la validation config précède `isRunning = true` (pas de verrou permanent)');
+  assert(/typeof searchUrl !== 'string' \|\| searchUrl\.trim\(\) === ''/.test(ipcSrc),
+    '[49] ipcHandlers : URL de recherche validée avant le lancement du job');
+  assert(!/parseInt\(config\.pages, 10\)/.test(ipcSrc),
+    '[49] ipcHandlers : plus de lecture `config.pages` avant validation (cause du verrou)');
+
+  // 49.4 Détail — pas de repli sur une AUTRE annonce quand l'ID demandé est absent.
+  const otherAdHtml = '<html><head><script id="__NEXT_DATA__" type="application/json">'
+    + JSON.stringify({ props: { pageProps: { ad: {
+      list_id: 111, subject: 'Autre annonce', body: 'Description étrangère.',
+      url: 'https://www.leboncoin.fr/ad/111.htm',
+      owner: { name: 'Autre vendeur', user_id: 'u111', rating: 4.5, nb_ratings: 12 },
+    } } } })
+    + '</script></head><body></body></html>';
+  const noMatch = parseHtmlDescription(otherAdHtml, '999999');
+  assert(noMatch.description === null && noMatch.vendeurNom === null && noMatch.note === null,
+    '[49] détail : ID absent de la page → champs null (pas de données d\'une autre annonce)');
+  // L'ID exact continue de fonctionner (aucune régression fonctionnelle).
+  const matchOk = parseHtmlDescription(otherAdHtml, '111');
+  assert(matchOk.description === 'Description étrangère.' && matchOk.vendeurNom === 'Autre vendeur',
+    '[49] détail : ID exact toujours enrichi (pas de régression)');
+  // Le repli `found[0]` n'est conservé QUE pour un appel sans identifiant
+  // (aucun risque d'attribuer les données d'une autre annonce).
+  assert(parseHtmlDescription(otherAdHtml, null).description === 'Description étrangère.',
+    '[49] détail : appel sans ID → repli documenté sur la 1re annonce trouvée');
+  assert(parseHtmlDescription(otherAdHtml, undefined).description === 'Description étrangère.',
+    '[49] détail : adId undefined → repli documenté (pas de contamination d\'un ID précis)');
+}
+console.log('\n[49] OK');
+
+
 console.log(`\n=== RÉSULTAT : ${pass} réussis, ${fail} échoués ===`);
 process.exit(fail > 0 ? 1 : 0);
 }
