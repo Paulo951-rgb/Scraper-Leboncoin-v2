@@ -2869,6 +2869,17 @@ console.log('\n[35] Intégration pipeline (fixture HAR → annonces.json)');
   assert(report.journal && typeof report.journal.detailRequests === 'number',
     'pipeline: report.json embarque le journal réseau');
 
+  // Mesures de performance observées (comparaison avant/après reproductible).
+  assert(report.performance && typeof report.performance.totalMs === 'number' && report.performance.totalMs >= 0,
+    'pipeline: report.json contient performance.totalMs (durée observée)');
+  assert(report.performance.adsProcessed === 2,
+    'pipeline: performance.adsProcessed = nombre réel d\'annonces');
+  assert(typeof report.performance.adsPerMinute === 'number' && report.performance.adsPerMinute > 0,
+    'pipeline: performance.adsPerMinute calculé (débit)');
+  assert(typeof report.performance.peakRssMb === 'number' && report.performance.peakRssMb > 0,
+    'pipeline: performance.peakRssMb mesuré (pic mémoire)');
+  assert(report.speed === 'ultra-rapide', 'pipeline: report.speed = politique fixe ultra-rapide');
+
   // Les codes d'erreur PARSE_NO_ADS ne doivent PAS apparaître (HAR exploitable).
   assert(!/PARSE_NO_ADS/.test(stdout), 'pipeline: aucune erreur PARSE_NO_ADS sur HAR valide');
 
@@ -3999,6 +4010,13 @@ console.log('\n[41] Politique de scraping fixe');
   // utilisateur hérité. Un ancien `--speed` ne doit pas réapparaître.
   assert(/speed: policy\.mode/.test(pipeSrc), '[41] pipeline: report.speed = politique fixe');
   assert(!/opts\.speed \|\| 'moyen'/.test(pipeSrc), '[41] pipeline: plus de repli « moyen » depuis opts.speed');
+
+  // 41.14 Mesures de performance reproductibles dans report.json (durée totale,
+  // débit, durée moyenne, pic mémoire) — observées, jamais estimées.
+  assert(/report\.performance = \{/.test(pipeSrc), '[41] pipeline: bloc performance écrit dans report.json');
+  for (const field of ['totalMs', 'adsPerMinute', 'avgMsPerAd', 'peakRssMb']) {
+    assert(new RegExp('\\b' + field + '\\b').test(pipeSrc), `[41] pipeline: mesure performance "${field}" présente`);
+  }
 }
 console.log('\n[41] OK');
 

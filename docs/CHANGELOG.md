@@ -44,6 +44,10 @@ décrivent des modifications vérifiées (code + tests).
   Vérifié que `ctx.route()` et `recordHar` coexistent (le HAR n'est pas vidé).
   Tests de non-régression `[44]` ajoutés ; l'ancien test qui asserait l'absence
   du contrôle a été corrigé.
+- **Mesures de performance observées dans `report.json`** : ajout d'un bloc
+  `performance` (`totalMs`, `adsProcessed`, `adsPerMinute`, `avgMsPerAd`,
+  `peakRssMb`) permettant une comparaison avant/après reproductible. Ces valeurs
+  sont **mesurées**, jamais estimées. Test `[35]` (pipeline forké réel) + `[41]`.
 - **Photos « inconnu » ≠ « zéro »** : `normalizeAd` renvoyait `photosCount: 0`
   même quand le champ `images` était **absent** de la source, transformant une
   information *non récupérée* en *absence confirmée*. Désormais : `images` absent

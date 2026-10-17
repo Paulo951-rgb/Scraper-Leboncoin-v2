@@ -144,7 +144,8 @@ une limitation de débit. C'est pourquoi `enrichMinDelayMs = 400` (jamais 50).
   sur les messages de détection CAPTCHA.
 - **Journal réseau** : `NetworkJournal` compte navigations / requêtes détail /
   403-429 (avec URLs) / erreurs ; `harCapturer` émet `[NET_JOURNAL] …` et le
-  pipeline écrit `report.json` (durées par phase + circuit + journal) dans
+  pipeline écrit `report.json` (durées par phase + circuit + journal + mesures de
+  performance `totalMs`/`adsPerMinute`/`avgMsPerAd`/`peakRssMb`) dans
   `<jobDir>/results/`.
 - **Reprise incrémentale** : `harCapturer` persiste `capture-progress.json`
   (`lastPageOk`) après chaque page réussie ; en reprise il écrit un HAR séparé

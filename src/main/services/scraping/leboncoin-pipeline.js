@@ -1177,6 +1177,7 @@ async function main() {
     circuit: null,
     circuitStop: null,
     journal: null,
+    performance: null,
     exitCode: 0,
   };
   function writeReport() {
@@ -1318,6 +1319,20 @@ async function main() {
     descriptions: ads.filter((a) => a.description).length,
   };
   report.exitCode = process.exitCode || 0;
+
+  // Mesures de performance reproductibles (comparaison avant/après) : durée
+  // totale, débit d'annonces/minute, durée moyenne par annonce, pic mémoire.
+  // Ces valeurs sont OBSERVÉES, jamais estimées.
+  const totalMs = Date.now() - t0Main;
+  const rssMb = Math.round(process.memoryUsage().rss / (1024 * 1024));
+  report.performance = {
+    totalMs,
+    adsProcessed: ads.length,
+    adsPerMinute: totalMs > 0 ? Math.round((ads.length * 60000) / totalMs) : null,
+    avgMsPerAd: ads.length > 0 ? Math.round(totalMs / ads.length) : null,
+    peakRssMb: rssMb,
+  };
+
   writeReport();
   logger.info('\n✅ Opération terminée avec succès.');
   logger.debug(`[main] Bilan final : ${summarizeAds(ads)}`);
