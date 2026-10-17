@@ -512,8 +512,20 @@ function parseHtmlDescription(html, adId) {
     try {
       const nextData = JSON.parse(match[1]);
       const found = findAdsIterative(nextData);
-      const exact = found.find((c) => String(c.list_id || c.id) === String(adId));
-      const target = exact || found[0];
+      // Rapprochement STRICT sur l'ID demandé : l'ancien repli `found[0]`
+      // attribuait la description/le vendeur d'une AUTRE annonce lorsque l'ID
+      // cherché était absent de la page (page de détail d'une annonce supprimée,
+      // redirection, structure inattendue). C'était une corruption silencieuse :
+      // une annonce recevait les données d'une autre. On ne renvoie donc RIEN
+      // (champs null) si l'ID attendu est fourni mais introuvable ; le repli
+      // `found[0]` n'est conservé que pour un appel sans identifiant.
+      const wanted = adId != null ? String(adId) : null;
+      const target = wanted
+        ? found.find((c) => String(c.list_id || c.id) === wanted)
+        : found[0];
+      if (!target) {
+        return { description: null, livraison: null, mainPropre: null, note: null, etat: null, nombreAvis: null, urlProfil: null, vendeurNom: null, vendeurType: null, vendeurId: null };
+      }
       const body = target?.body || target?.description;
       const descriptionText = (typeof body === 'string') ? body : (body && typeof body.text === 'string' ? body.text : null);
 

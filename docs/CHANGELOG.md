@@ -3,6 +3,47 @@
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/). Les entrées
 décrivent des modifications vérifiées (code + tests).
 
+## [Non publié] — Audit intégral et stabilisation — 2026-10-17
+
+### Corrigé
+
+- **Prix tronqués sur les formats français** (`adFields.extractPrice`) :
+  `parseFloat` renvoyait `1` pour `« 1 250 € »` et `1.299` pour `« 1.299,99 »`.
+  Ajout de `parsePriceString` (espaces retirés, `.` = milliers, `,` = décimal),
+  aligné sur la convention déjà utilisée par `AdStats` et le renderer. Les cas
+  non numériques restent `null`. Test `[49]`.
+- **Marqueur de carte décalé** (`mapModule.clusterMarkers`) : le centroïde d'un
+  groupe était divisé par le nombre d'**annonces** au lieu du nombre de
+  **points** (une ville à 5 annonces → `lat 9,14` au lieu de `45,7`). Moyenne
+  désormais calculée sur les points. Test `[49]`.
+- **Verrou de job permanent** (`ipcHandlers`, handler `job:start`) : une
+  configuration absente levait une exception **avant** le `try/finally` et
+  laissait `isRunning = true` pour toujours → tous les jobs suivants étaient
+  silencieusement ignorés jusqu'au redémarrage. Validation de `config` et de
+  `searchUrl` **avant** l'armement du verrou. Test `[49]`.
+- **Contamination croisée entre annonces** (`parseHtmlDescription`) : lorsque
+  l'ID demandé était absent de la page de détail, le repli `found[0]` attribuait
+  la description/le vendeur/l'état d'une **autre** annonce (corruption
+  silencieuse). Rapprochement strict sur l'ID ; champs `null` si introuvable.
+  Test `[49]`.
+
+### Modifié
+
+- **Documentation synchronisée avec le code réel** : versions de la pile
+  (Electron 44, Playwright 1.64, electron-builder 26) dans `AGENTS.md` et
+  `docs/ARCHITECTURE.md` ; section « Vérification d'accès » corrigée
+  (`_verifyAccess` a été retirée du code — les tests `[30]` asservissent son
+  absence) ; séparation des onglets Statistiques / Carte ; KI-5 actualisé
+  (9 avis de dépendances, dont `extract-zip` élevé, tous en outillage de build).
+- **`docs/AUDIT_COMPLET.md`** : rapport d'audit intégral (architecture,
+  inventaire, matrice fonctionnelle, anomalies P1/P2, sécurité, tests, risques
+  résiduels, limites de vérification).
+
+### Tests
+
+- Nouvelle section `[49]` (23 assertions) : prix, carte, verrou `job:start`,
+  contamination détail. Suite de régression : **1571 réussis / 0 échoués**.
+
 ## [Non publié] — Refonte produit « Vendra » — 2026-10-17
 
 ### Ajouté

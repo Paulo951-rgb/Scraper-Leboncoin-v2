@@ -3,9 +3,9 @@
 Repository knowledge for AI agents working on this codebase.
 
 ## Stack
-- Electron 28 (main + renderer, contextIsolation + sandbox)
-- Node.js main process, Playwright 1.41 (Chromium) pour le scraping
-- electron-builder 24 pour la génération du `.exe` (NSIS + portable)
+- Electron 44 (main + renderer, contextIsolation + sandbox)
+- Node.js main process, Playwright 1.64 (Chromium) pour le scraping
+- electron-builder 26 pour la génération du `.exe` (NSIS + portable)
 - **Aucune IA** : pas d'Ollama, pas de LLM, pas de vision, pas de cloud. L'app est 100% locale.
 - **Aucune dépendance Excel** : pas d'ExcelJS, pas d'export XLSX/CSV. Seuls JSON et TXT sont générés.
 
@@ -67,11 +67,28 @@ Les deux booléens internes (`livraison`, `mainPropre`) sont toujours extraits s
 
 ## Vérification d'accès (anti-fausse-réussite)
 
-`_verifyAccess(page, url)` (harCapturer) confirme l'accès APRÈS résolution d'un
-CAPTCHA. Elle effectue une requête document autorisée (HEAD puis GET) et juge sur
-le **statut HTTP réel** + la validité du contenu — JAMAIS sur la seule disparition
-visuelle du défi. HTTP 403 → `HTTP_403`, HTTP 429 → `HTTP_429` (avec Retry-After),
-contenu bloqué en 200 → non confirmé, aucune réponse → `ACCESS_UNVERIFIED`.
+La vérification d'accès est assurée par `_warmupSession` (harCapturer) : elle
+juge sur des signaux OBJECTIFS et JAMAIS sur la seule disparition visuelle du
+défi CAPTCHA.
+
+- Statut HTTP de la navigation de pré-check (`warmupStatus`) : `>= 400` (403/429)
+  → blocage détecté même sans CAPTCHA visible.
+- `_checkCaptcha(page)` : détection content-based (iframes Arkose/hCaptcha/
+  reCaptcha/Cloudflare, éléments DOM `#challenge-form`/`.cf-turnstile`, URL
+  `/captcha`|`/challenge`).
+- `latestHttpStatus` : écouteur de réponse dynamique pour suivre un 403/429
+  après redirection.
+- Confirmation 2 s (double re-vérification) avant de déclarer la résolution,
+  pour éviter les faux positifs de transition.
+- Après résolution : stabilisation (`networkidle` + 1,5 s) puis re-vérification
+  finale (2e CAPTCHA consécutif → session NON persistée).
+
+`_warmupSession` renvoie `{ verified, reason }`. La session n'est persistée QUE
+si `verified === true`. Historiquement, une fonction `_verifyAccess()` (requête
+document HEAD/GET) avait été ajoutée puis **retirée** (son filtre de contenu
+rejetait à tort des réponses valides — cf. `[30]` « moteur historique restauré »).
+Ne pas la réintroduire ni documenter son existence : les tests `[30]` asservissent
+son ABSENCE (`!/_verifyAccess/`).
 
 États de statut envoyés au renderer : `capturing`, `processing`, `completed`,
 `partial` (succès partiel : enrichissement bloqué 403/429 ou interruption),
@@ -319,7 +336,8 @@ styles.css                   habillage + 3 thèmes (Sombre/Clair/Graphite) + com
 - `node test/regression.test.js` → suite de non-régression (syntaxe + stubs Electron).
   Sections : logique métier, rendu, sécurité, `[27]` carte (logique pure), `[28]` distribution/packaging,
   `[29]` CI Windows (workflow + `verify-dist.js`), `[46]` fiche détaillée (openAdDetail),
-  `[47]` pagination explorateur (DOM borné + navigation), `[48]` `sanitizeImageUrl` (anti-SSRF renderer).
+  `[47]` pagination explorateur (DOM borné + navigation), `[48]` `sanitizeImageUrl` (anti-SSRF renderer),
+  `[49]` audit intégral 2026-10-17 (prix FR, centroïde carte, verrou `job:start`, contamination détail).
 - Le test stub `electron` : BrowserWindow a `webContents.send` mais PAS `isDestroyed`.
 - Avant tout commit : `node --check` sur les fichiers modifiés + lancer la suite.
 
@@ -416,6 +434,26 @@ Sans Wine, `-c.win.signAndEditExecutable=false` permet de produire `dist/win-unp
 (dossier app lançable) mais PAS l'installeur ni le portable.
 
 ## Pièges corrigés (à ne PAS réintroduire)
+- **Prix en chaîne (audit 2026-10-17)** : `extractPrice` (adFields) NE DOIT PAS
+  utiliser `parseFloat` seul. `parseFloat('1 250 €')` → `1` et
+  `parseFloat('1.299,99')` → `1.299` (troncature silencieuse). Utiliser
+  `parsePriceString` (espaces retirés, `.` = milliers, `,` = décimal) — même
+  convention que `AdStats` et le renderer. Test `[49]`.
+- **`clusterMarkers` : centroïde = moyenne des POINTS** (audit 2026-10-17). Le
+  diviser par le nombre d'ANNONCES (`cell.ads.length`) plaçait un marqueur hors
+  de la ville (1 ville à 5 annonces → `lat 9,14`). Utiliser un compteur de points
+  dédié. Test `[49]`.
+- **`job:start` : valider AVANT d'armer le verrou** (audit 2026-10-17).
+  `isRunning = true` était posé avant le `try/finally` et `config.pages` lu sans
+  garde → une config `undefined` levait hors `finally` et laissait le verrou armé
+  pour toujours (tous les jobs suivants ignorés jusqu'au redémarrage). Valider
+  `config` (objet) et `searchUrl` (chaîne non vide) AVANT `isRunning = true`.
+  Test `[49]`.
+- **`parseHtmlDescription` : rapprochement STRICT sur l'ID** (audit 2026-10-17).
+  Le repli `exact || found[0]` attribuait description/vendeur/état d'une AUTRE
+  annonce quand l'ID demandé était absent (corruption silencieuse, risque de
+  données personnelles mal attribuées). Si l'ID est fourni mais introuvable →
+  champs `null` ; le repli `found[0]` n'est permis que sans identifiant. Test `[49]`.
 - **Diagnostic « images: 0 »** : `summarizeAds` (utils/diagnostics.js) DOIT compter
   `photosUrls` (clé du modèle `normalizeAd`), pas seulement `a.images` (clé des
   objets BRUTS d'avant normalisation). Lire `a.images` affichait « images: 0 »
@@ -495,10 +533,13 @@ Sans Wine, `-c.win.signAndEditExecutable=false` permet de produire `dist/win-unp
   403 même après résolution. Utiliser `_checkCaptcha(page)` (content-based) +
   `latestHttpStatus` (response listener dynamique) + confirmation 2s anti-faux-positif.
 - **Fausse validation d'accès (CAPTCHA)** : la disparition visuelle du défi
-  (iframe/texte/URL) NE prouve PAS l'autorisation. `_warmupSession` DOIT appeler
-  `_verifyAccess()` (statut HTTP réel) avant de persister la session et de
-  reprendre. Ne JAMAIS déclarer « CAPTCHA résolu » puis lancer la capture si le
-  serveur répond encore 403/429. En cas d'échec : arrêt propre, pas de boucle.
+  (iframe/texte/URL) NE prouve PAS l'autorisation. `_warmupSession` DOIT
+  confirmer sur des signaux objectifs (statut HTTP de navigation `warmupStatus`,
+  `_checkCaptcha` content-based, `latestHttpStatus`, confirmation 2 s) avant de
+  persister la session et de reprendre. Ne JAMAIS déclarer « CAPTCHA résolu »
+  puis lancer la capture si le serveur répond encore 403/429. En cas d'échec :
+  arrêt propre, pas de boucle. NB : la fonction `_verifyAccess()` a été retirée
+  (filtre de contenu trop large → faux rejets) — ne pas la réintroduire.
 - **Boucle de fenêtres CAPTCHA** : la capture ne relance la reprise QUE si
   `_warmupSession` renvoie `verified === true`. Sinon elle `break` (arrêt) — ne
   jamais ré-ouvrir une fenêtre en boucle pour chaque page bloquée.

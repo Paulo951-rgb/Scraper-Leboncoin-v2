@@ -137,15 +137,28 @@ function setupIpcHandlers(getMainWindow) {
       sendLog({ level: 'warn', message: '[job:start] Un job est déjà en cours — requête ignorée.' });
       return;
     }
+    // Validation AVANT d'armer le verrou : une configuration absente/malformée
+    // ne doit pas positionner le verrou hors du bloc `try/finally`. Sinon
+    // l'exception (ex. `config` undefined → lecture de `config.pages`) laissait
+    // le verrou armé pour toujours : tous les jobs suivants étaient
+    // silencieusement ignorés jusqu'au redémarrage de l'application.
+    if (!config || typeof config !== 'object') {
+      sendLog({ level: 'error', message: '[job:start] Configuration de scraping absente ou invalide — job refusé.' });
+      return;
+    }
+    const { searchUrl, pages = 1, limit, profileId, exportFields } = config;
+    if (typeof searchUrl !== 'string' || searchUrl.trim() === '') {
+      sendLog({ level: 'error', message: '[job:start] URL de recherche absente — job refusé.' });
+      return;
+    }
     isRunning = true;
     // Nouveau token d'annulation pour ce job (bouton « Arrêter »). Réinitialisé
     // à chaque job : un clic Arrêter n'affecte QUE le job en cours.
     activeCancel = { cancelled: false };
     sessionStats = newSessionStats();
     sessionStats.t0 = Date.now();
-    sessionStats.pagesRequested = parseInt(config.pages, 10) || 1;
+    sessionStats.pagesRequested = parseInt(pages, 10) || 1;
 
-    const { searchUrl, pages = 1, limit, profileId, exportFields } = config;
     // Les descriptions sont toujours enrichies : l'option « Ignorer les
     // descriptions » a été retirée de l'interface. Le pipeline reçoit donc
     // toujours noDesc=false (comportement normal du produit).

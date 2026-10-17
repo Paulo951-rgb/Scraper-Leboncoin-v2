@@ -4,11 +4,11 @@
 
 | Composant | Technologie | Rôle |
 |---|---|---|
-| Shell applicatif | **Electron 28** | App web comme application desktop native (main + renderer, contextIsolation, sandbox) |
-| Scraping | **Playwright 1.41** (Chromium) | Pilotage du navigateur, capture réseau HAR |
+| Shell applicatif | **Electron 44** | App web comme application desktop native (main + renderer, contextIsolation, sandbox) |
+| Scraping | **Playwright 1.64** (Chromium) | Pilotage du navigateur, capture réseau HAR |
 | Graphiques | **Chart.js** | Distribution des prix, vendeurs, top villes, modes de transaction |
 | Carte | **Leaflet** | Carte interactive des annonces (géocodage via API Gouv France) |
-| Build | **electron-builder 24** | Génération du `.exe` Windows (NSIS + portable) |
+| Build | **electron-builder 26** | Génération du `.exe` Windows (NSIS + portable) |
 | Tests | **Node.js natif** | Suite de non-régression (sans framework externe) |
 
 > **Aucune dépendance IA** : pas d'Ollama, pas de LLM, pas de vision, pas de cloud. L'application est 100% locale.
@@ -36,7 +36,8 @@ Renderer process
   ├── Logs tab (real-time logs)
   ├── History tab (job list)
   ├── Explorer tab (ads table/grid, filters, detail)
-  └── Stats tab (charts, map)
+  ├── Stats tab (cards + charts)
+  └── Map tab (Leaflet, geocoding, clusters)
 ```
 
 ### Main process (`src/main/`)

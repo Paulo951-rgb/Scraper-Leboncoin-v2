@@ -61,6 +61,32 @@ function extractDescription(raw, opts = {}) {
 }
 
 /**
+ * Convertit une chaîne de prix en nombre.
+ *
+ * `parseFloat` seul est FAUX sur les formats français : `parseFloat('1 250 €')`
+ * renvoie `1` et `parseFloat('1.299,99')` renvoie `1.299` (arrêt au premier
+ * séparateur non numérique). Leboncoin expose des prix numériques, mais des
+ * variantes textuelles apparaissent selon la source ; sans normalisation le
+ * prix extrait était tronqué (perte silencieuse de données). Convention
+ * identique à `AdStats` et au renderer : espaces retirés, `.` = séparateur de
+ * milliers, `,` = séparateur décimal.
+ *
+ * @param {*} raw
+ * @returns {number} nombre fini, ou NaN si non convertible
+ */
+function parsePriceString(raw) {
+  if (typeof raw === 'number') return Number.isFinite(raw) ? raw : NaN;
+  if (raw == null) return NaN;
+  const normalized = String(raw)
+    .replace(/\s/g, '')
+    .replace(/\./g, '')
+    .replace(',', '.')
+    .replace(/[^\d.-]/g, '');
+  if (normalized === '' || normalized === '-' || normalized === '.') return NaN;
+  return parseFloat(normalized);
+}
+
+/**
  * Extraction du prix (valeur numérique).
  * Renvoie un nombre ou null.
  */
@@ -71,18 +97,18 @@ function extractPrice(raw, opts = {}) {
   if (Array.isArray(raw.price) && raw.price.length > 0) {
     const first = raw.price[0];
     if (first && typeof first === 'object' && first.value != null) {
-      const n = parseFloat(first.value);
+      const n = parsePriceString(first.value);
       if (!Number.isNaN(n)) return n;
     } else if (typeof first === 'number') return first;
     else if (typeof first === 'string') {
-      const n = parseFloat(first);
+      const n = parsePriceString(first);
       if (!Number.isNaN(n)) return n;
     }
   } else if (typeof raw.price === 'object' && raw.price.value != null) {
-    const n = parseFloat(raw.price.value);
+    const n = parsePriceString(raw.price.value);
     if (!Number.isNaN(n)) return n;
   } else {
-    const n = parseFloat(raw.price);
+    const n = parsePriceString(raw.price);
     if (!Number.isNaN(n)) return n;
   }
   // Si price est présent mais qu'on n'a pas pu le convertir → structure inattendue.
@@ -377,6 +403,7 @@ module.exports = {
   firstDefined,
   firstNonNull,
   extractDescription,
+  parsePriceString,
   extractPrice,
   extractTransaction,
   computeDeliveryType,

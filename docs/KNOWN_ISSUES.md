@@ -77,24 +77,53 @@ stabilisation. Pour chaque entrée : impact, circonstances, prochaines étapes.
 
 ## KI-5 — Dépendances vulnérables non corrigeables sans majeur *(P3)*
 
-- **Impact** : `npm audit` (mise à jour 2026-10-17) → **8 vulnérabilités
-  modérées**, toutes dans la chaîne **devDependencies** `electron-builder`
-  (`sprintf-js` ← `roarr` ← `global-agent` ← `@electron/get` ← `app-builder-lib`
-  / `dmg-builder` / `electron-builder-squirrel-windows`). **Aucune vulnérabilité
-  dans les dépendances de production** (`npm audit --omit=dev` → *found 0
-  vulnerabilities*). Les outils de build ne sont **pas embarqués** dans le
-  binaire final (l'installeur ne contient que `src/`, `node_modules/playwright*`
-  et le Chromium).
+- **Impact** : `npm audit` (mise à jour 2026-10-17) → **9 vulnérabilités
+  (8 modérées, 1 élevée)**, toutes dans la chaîne **devDependencies**
+  `electron-builder` / outillage de build :
+  - `extract-zip` (élevée) : traversée de chemin via liens symboliques dans les
+    archives. Utilisé uniquement par `tools/prepare-browsers.js` (décompression
+    des archives Chromium **officielles Playwright**) ; aucun correctif amont
+    disponible à ce jour.
+  - `sprintf-js` ← `roarr` ← `global-agent` ← `@electron/get` ← `app-builder-lib`
+    / `dmg-builder` / `electron-builder-squirrel-windows` (8 modérées, DoS par
+    précision non bornée).
+  **Aucune vulnérabilité dans les dépendances de production**
+  (`npm audit --omit=dev` → *found 0 vulnerabilities*). Les outils de build ne
+  sont **pas embarqués** dans le binaire final : `build.files` ne contient que
+  `src/`, `package.json` et `node_modules/playwright*` (+ Chromium via
+  `extraResources`). `extract-zip` et `electron-builder` ne sont donc jamais
+  présents dans `app.asar`.
 - **Corrigé dans cette mission** : `playwright` porté à `^1.64.1` (dépendance
   **directe** de production, la plus critique), `electron` à `^44.9.0` et
   `electron-builder` à `^26.15.3` (build). La CVE « téléchargement sans
   vérification TLS » de Playwright est **hors** du chemin runtime.
-- **Reste à faire** : les 8 avis modérés ne sont corrigeables que par une
-  montée majeure de `electron-builder` (`npm audit fix --force` → 26.5.0, en
-  réalité une régression de version ici). Impact limité au build ; à planifier
-  avec une campagne de packaging Windows.
-- **Prochaines étapes** : suivre les correctifs amont d'`@electron/get` ; ne PAS
-  lancer `npm audit fix --force` sans revalider le packaging complet.
+- **Reste à faire** : les 9 avis ne sont corrigeables que par une montée majeure
+  de `electron-builder` (`npm audit fix --force` → 26.5.0, en réalité une
+  régression de version ici). Impact limité au build ; à planifier avec une
+  campagne de packaging Windows.
+- **Prochaines étapes** : suivre les correctifs amont d'`@electron/get` et
+  d'`extract-zip` ; ne PAS lancer `npm audit fix --force` sans revalider le
+  packaging complet.
+
+## KI-8 — Compteur de statistiques de session non borné *(P3, perf)*
+
+- **Impact** : `sessionStats` (ipcHandlers) accumule les compteurs d'un job.
+  Borné en pratique par le volume du job ; aucun signe de fuite mesuré.
+- **Prochaines étapes** : si des jobs de plusieurs centaines de milliers
+  d'annonces deviennent courants, réévaluer l'empreinte mémoire du résumé.
+
+## KI-9 — Ambiguïté de format de prix résiduelle *(P3, données)*
+
+- **Impact** : `parsePriceString` (adFields) normalise désormais les formats
+  français (« 1 250 € » → 1250, « 1.299,99 » → 1299,99, « 12,50 » → 12,5). Le
+  format **anglo-saxon** (`1,250.50`) n'est PAS interprété : la virgule y est un
+  séparateur de milliers, mais la convention retenue (identique à `AdStats` et au
+  renderer) traite la virgule comme décimale → `1.25050`. Leboncoin (source
+  française) n'émet pas ce format ; le risque est donc théorique et non observé.
+- **Circonstances** : uniquement si une source non française était ajoutée.
+- **Prochaines étapes** : détecter la locale de la source avant d'appliquer la
+  convention, si un jour une source non-FR est supportée. Ne pas complexifier le
+  parseur pour un cas non observé.
 
 ## KI-7 — ~~Icône de build manquante~~ *(RÉSOLU, packaging)*
 
