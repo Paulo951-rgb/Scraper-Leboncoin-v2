@@ -145,7 +145,13 @@ function setupIpcHandlers(getMainWindow) {
     sessionStats.t0 = Date.now();
     sessionStats.pagesRequested = parseInt(config.pages, 10) || 1;
 
-    const { searchUrl, pages = 1, noDesc = false, limit, proxyUrl, profileId, exportFields } = config;
+    const { searchUrl, pages = 1, limit, profileId, exportFields } = config;
+    // Les descriptions sont toujours enrichies : l'option « Ignorer les
+    // descriptions » a été retirée de l'interface. Le pipeline reçoit donc
+    // toujours noDesc=false (comportement normal du produit).
+    const noDesc = false;
+    // Le proxy rotatif a été retiré de l'interface : aucune configuration proxy
+    // n'est transmise. Les mécanismes de backoff/circuit breaker restent actifs.
     // Résolution du profil de données (Défaut / Maximum / Personnalisé) en une
     // liste concrète de clés de champs. Le pipeline reçoit `profileFields` qu'il
     // applique aux exports JSON et TXT.
@@ -165,7 +171,7 @@ function setupIpcHandlers(getMainWindow) {
     const resultsDir = path.join(jobDir, 'results');
     currentJobId = `job-${timestamp}`;
 
-    sendLog({ level: 'debug', message: `[job:start] Config reçue — searchUrl=${searchUrl} | pages=${pages} | noDesc=${noDesc} | limit=${limit ?? '(aucun)'} | proxy=${proxyUrl || 'aucun'}` });
+    sendLog({ level: 'debug', message: `[job:start] Config reçue — searchUrl=${searchUrl} | pages=${pages} | limit=${limit ?? '(aucun)'}` });
     sendLog({ level: 'debug', message: `[job:start] Dossiers — jobDir=${jobDir} | harPath=${harPath} | resultsDir=${resultsDir}` });
 
     let stoppedEarly = false;
@@ -180,7 +186,6 @@ function setupIpcHandlers(getMainWindow) {
       const policy = getScrapingPolicy();
       const pageDelay = policy.pageDelayMs;
       activeCapturer = new HarCapturer({
-        proxyUrl,
         headless: userSettings.headless !== false,
         minPageDelayMs: pageDelay,
         maxPageDelayMs: pageDelay,
@@ -602,6 +607,38 @@ function setupIpcHandlers(getMainWindow) {
       // l'échec pour que le renderer puisse l'afficher (sinon bouton silencieux).
       if (errStr) return { success: false, error: errStr };
       return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // 📂 Ouvre le dossier de RÉSULTATS d'une session de scraping précise.
+  // L'utilisateur doit retrouver directement les exports (JSON, TXT, rapport)
+  // de la session — pas seulement un fichier ni le dossier parent global.
+  // Sécurité : le chemin n'est PAS fourni par le renderer. On ne transmet qu'un
+  // identifiant de job (validé au format job-<timestamp>), puis on reconstruit
+  // et on vérifie le chemin côté main (anti path-traversal). Le dossier visé
+  // est <JOBS_DIR>/<jobId>/results ; à défaut, le dossier du job.
+  const JOB_ID_RE = /^job-[a-zA-Z0-9-]+$/;
+  ipcMain.handle('job:openSessionFolder', async (event, jobId) => {
+    try {
+      if (typeof jobId !== 'string' || !JOB_ID_RE.test(jobId) || jobId.includes('..')) {
+        return { success: false, error: 'Identifiant de session invalide.' };
+      }
+      const jobPath = path.join(JOBS_DIR, jobId);
+      const resolved = path.resolve(jobPath);
+      const baseResolved = path.resolve(JOBS_DIR);
+      if (resolved !== baseResolved && !resolved.startsWith(baseResolved + path.sep)) {
+        return { success: false, error: 'Chemin non autorisé.' };
+      }
+      if (!fs.existsSync(jobPath)) {
+        return { success: false, error: 'Le dossier de cette session n\'existe plus (session supprimée ou déplacée).' };
+      }
+      const resultsDir = path.join(jobPath, 'results');
+      const target = fs.existsSync(resultsDir) ? resultsDir : jobPath;
+      const errStr = await FileManager.openFolder(target);
+      if (errStr) return { success: false, error: errStr };
+      return { success: true, path: target };
     } catch (err) {
       return { success: false, error: err.message };
     }

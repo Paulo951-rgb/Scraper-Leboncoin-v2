@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Leboncoin Scraper Pro</title>
+  <title>Vendra</title>
   <link rel="stylesheet" href="styles.css">
   <!-- Content-Security-Policy : restrictions de sécurité pour l'application Electron.
        Les bibliothèques d'interface (Leaflet, Chart.js) sont désormais SERVIES
@@ -46,10 +46,23 @@
     <!-- SIDEBAR -->
     <aside class="sidebar">
       <div class="sidebar-logo">
-        <span class="sidebar-logo-icon">🛒</span>
+        <svg class="sidebar-logo-mark" viewBox="0 0 256 256" width="34" height="34" aria-hidden="true" focusable="false">
+          <defs>
+            <linearGradient id="vendra-mark" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#2f8f83"/>
+              <stop offset="1" stop-color="#123f3a"/>
+            </linearGradient>
+          </defs>
+          <rect x="8" y="8" width="240" height="240" rx="56" fill="url(#vendra-mark)"/>
+          <rect x="60" y="150" width="20" height="50" rx="6" fill="#ffffff" opacity="0.45"/>
+          <rect x="92" y="122" width="20" height="78" rx="6" fill="#ffffff" opacity="0.65"/>
+          <rect x="124" y="94" width="20" height="106" rx="6" fill="#ffffff" opacity="0.85"/>
+          <path d="M118 62 L152 62 L186 148 L160 148 L135 86 L110 148 L84 148 Z" fill="#ffffff"/>
+          <circle cx="196" cy="188" r="16" fill="#f0b429"/>
+        </svg>
         <div class="sidebar-logo-text">
-          <span class="sidebar-logo-title">Leboncoin</span>
-          <span class="sidebar-logo-sub">Scraper Pro</span>
+          <span class="sidebar-logo-title">Vendra</span>
+          <span class="sidebar-logo-sub">Collecte &amp; analyse d'annonces</span>
         </div>
       </div>
 
@@ -57,24 +70,28 @@
 
       <nav class="sidebar-nav">
         <button class="nav-item active" data-tab="tab-scraper">
-          <span class="nav-item-icon">🚀</span>
+          <span class="nav-item-icon"><svg class="nav-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="M12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/></svg></span>
           <span class="nav-item-label">Scraper</span>
         </button>
         <button class="nav-item" data-tab="tab-logs">
-          <span class="nav-item-icon">📜</span>
+          <span class="nav-item-icon"><svg class="nav-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/></svg></span>
           <span class="nav-item-label">Logs</span>
         </button>
         <button class="nav-item" data-tab="tab-history">
-          <span class="nav-item-icon">📁</span>
+          <span class="nav-item-icon"><svg class="nav-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span>
           <span class="nav-item-label">Historique</span>
         </button>
         <button class="nav-item" data-tab="tab-explorer">
-          <span class="nav-item-icon">🔍</span>
+          <span class="nav-item-icon"><svg class="nav-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></span>
           <span class="nav-item-label">Explorateur</span>
         </button>
         <button class="nav-item" data-tab="tab-stats">
-          <span class="nav-item-icon">📊</span>
+          <span class="nav-item-icon"><svg class="nav-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 21h18"/><rect x="5" y="11" width="3.5" height="7" rx="1"/><rect x="10.25" y="6" width="3.5" height="12" rx="1"/><rect x="15.5" y="9" width="3.5" height="9" rx="1"/></svg></span>
           <span class="nav-item-label">Statistiques</span>
+        </button>
+        <button class="nav-item" data-tab="tab-map">
+          <span class="nav-item-icon"><svg class="nav-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M9 4 3.6 6.2A1 1 0 0 0 3 7.1v12.3a.5.5 0 0 0 .7.46L9 18"/><path d="M9 4v14"/><path d="M15 6v14"/><path d="M9 18l6 2 5.4-2.2a1 1 0 0 0 .6-.9V4.6a.5.5 0 0 0-.7-.46L15 6"/><path d="M15 6 9 4"/></svg></span>
+          <span class="nav-item-label">Carte</span>
         </button>
       </nav>
 
@@ -83,23 +100,23 @@
       <div class="sidebar-bottom">
         <span class="help-btn" style="display:none;" aria-hidden="true"></span>
         <button id="toggleWidgetBtn" class="nav-item nav-item-action">
-          <span class="nav-item-icon">🖥️</span>
+          <span class="nav-item-icon"><svg class="nav-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="2.5" y="4" width="19" height="13" rx="2"/><path d="M8 20h8"/><path d="M12 17v3"/></svg></span>
           <span class="nav-item-label">Widget Flottant</span>
         </button>
         <button id="openSettingsModalBtn" class="nav-item nav-item-action">
-          <span class="nav-item-icon">⚙️</span>
+          <span class="nav-item-icon"><svg class="nav-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1.08 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>
           <span class="nav-item-label">Paramètres</span>
         </button>
         <button id="openFaqBtn" class="nav-item nav-item-action" title="Questions fréquentes" aria-label="FAQ">
-          <span class="nav-item-icon">❓</span>
+          <span class="nav-item-icon"><svg class="nav-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2.2-3 4"/><path d="M12 17.5h.01"/></svg></span>
           <span class="nav-item-label">FAQ</span>
         </button>
         <button id="openHelpBtn" class="nav-item nav-item-action" title="Guide d'utilisation" aria-label="Aide">
-          <span class="nav-item-icon">📖</span>
+          <span class="nav-item-icon"><svg class="nav-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 6.5C10.5 5 8.4 4.5 6.5 4.5H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h2.5c1.9 0 4 .5 5.5 2"/><path d="M12 6.5c1.5-1.5 3.6-2 5.5-2H20a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1h-2.5c-1.9 0-4 .5-5.5 2"/><path d="M12 6.5v13"/></svg></span>
           <span class="nav-item-label">Aide</span>
         </button>
         <button id="openFeedbackBtn" class="nav-item nav-item-action" title="Signaler un problème ou proposer une amélioration" aria-label="Problèmes & Améliorations">
-          <span class="nav-item-icon">💬</span>
+          <span class="nav-item-icon"><svg class="nav-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M21 12a8 8 0 0 1-8 8H7l-4 3v-6.5A8 8 0 0 1 11 4h2a8 8 0 0 1 8 8z"/></svg></span>
           <span class="nav-item-label">Feedback</span>
         </button>
       </div>
@@ -194,21 +211,9 @@
             </div>
           </div>
 
-          <!-- PROXIES -->
-          <div class="card subcard">
-            <h3>🌐 Configuration Proxy Rotatif (Optionnel)</h3>
-            <div class="form-group">
-              <label for="proxyUrl">Serveur Proxy (HTTP / SOCKS5) :</label>
-              <input type="text" id="proxyUrl" placeholder="http://user:pass@proxy.example.com:8080">
-            </div>
-          </div>
-
-          <div class="form-row checkboxes">
-            <label class="checkbox-label">
-              <input type="checkbox" id="noDesc">
-              Ignorer les descriptions (Mode Ultra-Rapide)
-            </label>
-          </div>
+          <!-- PROXY ROTATIF : section supprimée (le scraping utilise les
+               paramètres réseau normaux ; le backoff/circuit breaker et le
+               respect des limites du site sont conservés côté moteur). -->
 
           <div class="actions">
             <button id="startBtn" class="btn btn-primary">🚀 Lancer le scraping</button>
@@ -292,13 +297,14 @@
                 <tr>
                   <th>Date de Session</th>
                   <th>Annonces</th>
+                  <th>Statut</th>
                   <th>Fichiers Générés</th>
                   <th>Actions</th>
                 </tr>
               </thead>
               <tbody id="historyTableBody">
                 <tr>
-                  <td colspan="4" class="text-center">Chargement de l'historique...</td>
+                  <td colspan="5" class="text-center">Chargement de l'historique...</td>
                 </tr>
               </tbody>
             </table>
@@ -517,19 +523,6 @@
             </div>
           </div>
 
-          <!-- 🗺️ CARTE GEOGRAPHIQUE INTERACTIVE LEAFLET (DANS L'ONGLET STATISTIQUES) -->
-          <div class="card subcard">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-              <h3>🗺️ Carte Géographique des Annonces (France)</h3>
-              <label class="checkbox-label" style="font-size:0.8rem; margin:0;">
-                <input type="checkbox" id="mapHandDeliveryOnly" checked>
-                🤝 Remise en main propre uniquement
-              </label>
-            </div>
-            <div id="leafletMap" class="leaflet-map" style="height: 350px;"></div>
-            <p id="mapStatus" class="map-status hidden"></p>
-          </div>
-
           <div class="charts-grid" style="margin-top:15px;">
             <div class="chart-box">
               <canvas id="priceDistChart"></canvas>
@@ -547,6 +540,38 @@
         </div>
       </section>
 
+      <!-- PAGE CARTE (onglet indépendant) -->
+      <section id="tab-map" class="tab-content">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Carte</h1>
+            <p class="page-subtitle">Localisation des annonces scrapées (par commune)</p>
+          </div>
+        </div>
+
+        <div class="map-toolbar">
+          <select id="mapSessionSelect" class="filter-select" style="max-width:260px;">
+            <option value="ALL">Tous les scrapings combinés</option>
+          </select>
+          <label class="checkbox-label" style="margin:0;">
+            <input type="checkbox" id="mapHandDeliveryOnly" checked>
+            Remise en main propre uniquement
+          </label>
+          <label class="map-price-label">Prix min
+            <input type="number" id="mapMinPrice" class="filter-input filter-input-small" placeholder="0" min="0">
+          </label>
+          <label class="map-price-label">Prix max
+            <input type="number" id="mapMaxPrice" class="filter-input filter-input-small" placeholder="∞" min="0">
+          </label>
+          <button class="btn btn-secondary btn-small" id="mapRecenterBtn" title="Recentrer la carte sur les annonces affichées">Recentrer</button>
+        </div>
+
+        <div class="map-wrapper">
+          <div id="leafletMap" class="leaflet-map"></div>
+          <p id="mapStatus" class="map-status hidden"></p>
+        </div>
+      </section>
+
     </main>
   </div>
 
@@ -560,19 +585,9 @@
       <div class="form-group text-left">
         <label for="cfgTheme" style="font-size:0.8rem; color:var(--text-muted); display:block; margin-bottom:5px;">Thème de l'interface :</label>
         <select id="cfgTheme" style="width:100%;">
-          <option value="theme-dark">🌙 Sombre (Par défaut)</option>
-          <option value="theme-light">☀️ Clair</option>
-          <option value="theme-oled">⚫ OLED (Noir Pur)</option>
-          <option value="theme-violet">🟣 Violet Doux</option>
-          <option value="theme-green">💚 Vert Émeraude</option>
-          <option value="theme-sunset">🌅 Sunset</option>
-          <option value="theme-carbon">🏎️ Carbon</option>
-          <option value="theme-rose">🌸 Rose</option>
-          <option value="theme-amber">🍯 Amber</option>
-          <option value="theme-mint">🌿 Mint</option>
-          <option value="theme-slate">🧊 Slate</option>
-          <option value="theme-crimson">🔴 Crimson</option>
-          <option value="theme-nordic">❄️ Nordic</option>
+          <option value="theme-dark">Sombre</option>
+          <option value="theme-light">Clair</option>
+          <option value="theme-graphite">Graphite</option>
         </select>
       </div>
 
@@ -816,6 +831,7 @@
   <script src="scraperModule.js"></script>
   <script src="explorerModule.js"></script>
   <script src="statsModule.js"></script>
+  <script src="mapModule.js"></script>
   <script src="historyModule.js"></script>
   <script src="app.js"></script>
 </body>

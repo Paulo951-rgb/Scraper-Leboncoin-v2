@@ -1,8 +1,8 @@
-# 🛒 Leboncoin Scraper Pro
+# Vendra
 
 Application de bureau **Electron** pour scraper, explorer et analyser des annonces [Leboncoin.fr](https://www.leboncoin.fr) : capture automatisée des résultats de recherche, extraction structurée des annonces, enrichissement des descriptions, statistiques et carte géographique.
 
-> **Leboncoin Scraper Pro** est un outil d'automatisation et de structuration de données destiné à faciliter le traitement de données auxquelles l'utilisateur est autorisé à accéder et à traiter. L'utilisateur reste responsable du respect des conditions d'utilisation, des droits applicables et de la réglementation concernant les données collectées. Ce logiciel ne fournit aucune autorisation d'accès ou de réutilisation des données de sites tiers.
+> **Vendra** est un outil d'automatisation et de structuration de données destiné à faciliter le traitement de données auxquelles l'utilisateur est autorisé à accéder et à traiter. L'utilisateur reste responsable du respect des conditions d'utilisation, des droits applicables et de la réglementation concernant les données collectées. Ce logiciel ne fournit aucune autorisation d'accès ou de réutilisation des données de sites tiers.
 
 ---
 
@@ -25,7 +25,7 @@ Application de bureau **Electron** pour scraper, explorer et analyser des annonc
 
 ## 🎯 Présentation
 
-**Leboncoin Scraper Pro** est une application desktop construite avec **Electron** (code multiplateforme) qui :
+**Vendra** est une application desktop construite avec **Electron** (code multiplateforme) qui :
 
 1. **Capture** les résultats d'une recherche Leboncoin (Chromium piloté par Playwright).
 2. **Extrait** les annonces à partir du trafic réseau capturé (fichier `.har`).
@@ -73,11 +73,11 @@ L'utilisateur choisit parmi **3 profils de données** au moment du scraping :
 ### Export & visualisation
 - 📄 Export **JSON** (avec checksum SHA-256) et **TXT** lisible.
 - 🔍 **Explorateur d'annonces** — filtres (mot-clé, prix, type de remise, type vendeur, note, likes, catégorie, ville), tri, vue tableau/grille, fiche détaillée (photos, description, vendeur, dates).
-- 📊 **Statistiques** — cartes colorées (Total, Prix Moyen/Min/Max, Livraison, Main Propre, Pro/Particulier) + 4 graphiques (Distribution des prix, Vendeurs, Top 10 Villes, Modes de Transaction) + carte Leaflet.
-- 🗺️ **Carte interactive** (Leaflet) — répartition géographique avec filtre « remise main propre », géocodage via API Gouv France (cache + timeout 10s). Déduplication des annonces par id.
-- 📁 **Historique** complet des jobs avec suppression.
+- 📊 **Statistiques** — cartes colorées (Total, Prix Moyen/Médian/Min/Max, Livraison, Main Propre, Pro/Particulier) + 4 graphiques (Distribution des prix, Vendeurs, Top 10 Villes, Modes de Transaction). Onglet indépendant.
+- 🗺️ **Carte interactive** (Leaflet) — onglet **Carte** dédié, plein écran, filtre « remise main propre », géocodage via API Gouv France (cache borné + timeout 10s). Déduplication des annonces par id, marqueurs cliquables (fiche + annonce).
+- 📁 **Historique** complet des jobs, avec **ouverture directe du dossier de résultats** de chaque session et suppression.
 - 🖥️ **Widget flottant** always-on-top (progression temps réel).
-- 🎨 **13 thèmes visuels**.
+- 🎨 **3 thèmes visuels** : Sombre, Clair, Graphite.
 - 📶 **Mode hors-ligne** — badge de connectivité, scraping désactivé mais historique consultable.
 - 📜 **Logs rotatifs** (un fichier par jour, rétention configurable) + console en direct avec mode normal/debug, auto-scroll, copie, vidage, compteur.
 - ❓ **Système d'aide intégré** — FAQ (accordéon), guide d'utilisation pas à pas et formulaire de feedback, accessibles depuis l'en-tête.
@@ -90,16 +90,16 @@ L'utilisateur choisit parmi **3 profils de données** au moment du scraping :
 Aucune connaissance technique requise. Vous n'avez **pas besoin de Node.js, npm ou d'un terminal**.
 
 ### Windows
-1. Téléchargez le fichier `.exe` d'installation (ou la version portable) depuis la page **GitHub Releases** du dépôt (`Releases` → dernière version → `Leboncoin Scraper Pro Setup x.x.x.exe`).
+1. Téléchargez le fichier `.exe` d'installation (ou la version portable) depuis la page **GitHub Releases** du dépôt (`Releases` → dernière version → `Vendra Setup x.x.x.exe`).
 2. Double-cliquez sur le `.exe` et suivez l'assistant d'installation (choix du dossier, raccourci bureau/menu démarrer).
-3. Lancez **Leboncoin Scraper Pro** depuis le raccourci créé.
+3. Lancez **Vendra** depuis le raccourci créé.
 4. Au premier lancement, un écran d'information légal s'affiche : lisez-le et acceptez-le.
 5. Le navigateur Chromium est **intégré à l'installeur** (aucun téléchargement au premier lancement). L'application vérifie sa présence et affiche un bandeau si le fichier est absent (installation incomplète).
 
 > **Note** : les installeurs sont produits pour **Windows x64 uniquement**. Aucun build macOS ou Linux n'est fourni par la configuration actuelle (`electron-builder --win`). Sur Windows ARM64, l'émulation x64 de Windows 11 est nécessaire.
 
 ### Version portable
-La version portable (`Leboncoin-Scraper-Pro-Portable-x.x.x.exe`) est un **exécutable autonome** : il n'y a rien à décompresser ni à installer. Double-cliquez simplement dessus pour lancer l'application. Les données sont alors écrites dans un dossier `output/` à côté de l'exécutable.
+La version portable (`Vendra-Portable-x.x.x.exe`) est un **exécutable autonome** : il n'y a rien à décompresser ni à installer. Double-cliquez simplement dessus pour lancer l'application. Les données sont alors écrites dans un dossier `output/` à côté de l'exécutable.
 
 > Le démarrage d'un exécutable portable (~260 Mo) peut prendre quelques secondes : l'archive embarquée est décompressée dans un dossier temporaire au premier lancement.
 
@@ -107,13 +107,13 @@ La version portable (`Leboncoin-Scraper-Pro-Portable-x.x.x.exe`) est un **exécu
 Chaque fichier `.exe` publié est accompagné de son empreinte SHA-256. Sous PowerShell :
 
 ```powershell
-Get-FileHash ".\Leboncoin Scraper Pro Setup 1.0.0.exe" -Algorithm SHA256
+Get-FileHash ".\Vendra Setup 1.0.0.exe" -Algorithm SHA256
 ```
 
 Comparez la valeur obtenue avec celle publiée dans les notes de version.
 
 ### Emplacement des données
-- **Version installée** : `Documents/Leboncoin Scraper Pro/`
+- **Version installée** : `Documents/Vendra/`
 - **Version portable / dev** : dossier `output/` à côté de l'exécutable.
 
 ---
@@ -128,7 +128,7 @@ Comparez la valeur obtenue avec celle publiée dans les notes de version.
 
 ```bash
 git clone <repo-url>
-cd leboncoin-scraper-app
+cd vendra
 npm install
 npx playwright install chromium
 ```
@@ -177,13 +177,14 @@ npm start
 |---|---|
 | 🚀 **Scraper** | Configuration du scraping (URL, pages, profil, options) + presets 1-clic + progression temps réel. La politique de performance (Ultra rapide) est fixe et affichée en lecture seule. |
 | 📜 **Logs** | Console de logs en direct (info/warn/error/debug) avec mode normal/debug, auto-scroll, copie, vidage, compteur. |
-| 📁 **Historique** | Liste des scrapings passés + accès aux fichiers (JSON/TXT) + suppression. |
+| 📁 **Historique** | Liste des scrapings passés + **ouverture du dossier de résultats** de la session + suppression. |
 | 🔍 **Explorateur** | Filtres (mot-clé, prix, type de remise, type vendeur, note, likes, catégorie, ville), tri, vue tableau/grille, fiche détaillée. |
-| 📊 **Statistiques** | Cartes colorées + 4 graphiques + carte Leaflet. |
+| 📊 **Statistiques** | Cartes colorées + 4 graphiques (sessions sélectionnables). |
+| 🗺️ **Carte** | Carte interactive Leaflet plein écran, filtres, marqueurs cliquables. |
 
 ### Paramètres
 
-- **Thème** : 13 thèmes (aperçu temps réel).
+- **Thème** : 3 thèmes (Sombre, Clair, Graphite) avec aperçu temps réel.
 - **Mode de performance** : **⚡ Ultra rapide** (fixe, affiché en lecture seule) — 25 tâches parallèles max, délai nominal 400 ms entre les pages. Non modifiable.
 - **Mode de capture** : invisible (headless) ou visible (sauf CAPTCHA qui bascule toujours en visible).
 - **Données vendeur** : exclusion systématique des champs vendeur.
@@ -235,7 +236,7 @@ Architecture standard **Electron** (main + renderer) avec un **sous-processus** 
 ## 📁 Structure du projet
 
 ```
-leboncoin-scraper-app/
+vendra/
 ├── package.json                          # Métadonnées, dépendances, scripts
 ├── test/
 │   └── regression.test.js                # Suite de non-régression (suite de non-régression)
@@ -286,9 +287,10 @@ leboncoin-scraper-app/
         ├── logsModule.js                # Onglet Logs (console temps réel)
         ├── historyModule.js            # Onglet Historique (jobs)
         ├── explorerModule.js           # Onglet Explorateur (table, filtres, modal)
-        ├── statsModule.js              # Onglet Stats (graphiques, carte)
+        ├── statsModule.js              # Onglet Statistiques (cartes + graphiques)
+        ├── mapModule.js                # Onglet Carte (Leaflet, géocodage, clusters)
         ├── helpModule.js                # Module d'aide (FAQ + guide + feedback)
-        ├── styles.css                    # Habillage + 13 thèmes + stat-cards
+        ├── styles.css                    # Habillage + 3 thèmes (Sombre/Clair/Graphite)
         └── vendor/                       # Bibliothèques locales (Leaflet, Chart.js) — hors CDN
 ```
 
@@ -313,10 +315,8 @@ Chaque annonce normalisée (dans `annonces.json`) :
   "vendeurNote": 4.8,
   "nombreAvis": 27,
   "vendeurUrlProfil": "https://www.leboncoin.fr/u/123456.htm",
-  "vendeurAncienneteJours": 120,
   "likes": 5,
   "datePublication": "2026-08-01T10:00:00Z",
-  "dateModification": null,
   "dateScraping": "2026-08-01T12:30:00Z",
   "etat": "Très bon état",
   "photosCount": 4,
@@ -341,7 +341,7 @@ Remplace les anciens champs `livraison` / `mainPropre` par une seule valeur cano
 
 | Profil | Description | Champs |
 |---|---|---|
-| **Défaut** | Scraping rapide et léger | 13 champs essentiels (id, title, url, prix, ville, codePostal, deliveryType, datePublication, dateScraping, vendeurNom, vendeurType, photosCount, description) |
+| **Défaut** | Scraping rapide et léger | Champs essentiels (id, title, url, prix, ville, codePostal, deliveryType, datePublication, dateScraping, vendeurNom, vendeurType, photosCount, **photosUrls**, description) |
 | **Maximum** | Toutes les données disponibles | Tous les champs exportables (~23 champs) |
 | **Personnalisé** | Choix de l'utilisateur | Sélection granulaire par catégorie |
 
@@ -363,8 +363,8 @@ npm run dist
 ```
 
 Produit dans `dist/` :
-- `Leboncoin Scraper Pro Setup x.x.x.exe` — installeur NSIS (choix du dossier, raccourcis).
-- `Leboncoin-Scraper-Pro-Portable-x.x.x.exe` — version portable autonome.
+- `Vendra Setup x.x.x.exe` — installeur NSIS (choix du dossier, raccourcis).
+- `Vendra-Portable-x.x.x.exe` — version portable autonome.
 
 ### Vérifier un build
 

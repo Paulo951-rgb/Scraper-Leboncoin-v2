@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Suite de tests de non-régression — Leboncoin Scraper Pro
+ * Suite de tests de non-régression — Vendra
  * Couvre : diagnostics.js, pipeline, modules principaux, exportFields, sécurité.
  * Exécuter : node test/regression.test.js
  */
@@ -391,7 +391,7 @@ console.log('\n[3g] Enrichissement : moteur historique restauré');
 // --- 4. Corrections renderer + main ---
 console.log('\n[4] Corrections renderer + main');
 const rendererDir = path.join(__dirname, '..', 'src/renderer');
-const rendererFiles = ['appState.js', 'utils.js', 'logsModule.js', 'scraperModule.js', 'explorerModule.js', 'statsModule.js', 'historyModule.js', 'app.js'];
+const rendererFiles = ['appState.js', 'utils.js', 'logsModule.js', 'scraperModule.js', 'explorerModule.js', 'statsModule.js', 'mapModule.js', 'historyModule.js', 'app.js'];
 const appCode = rendererFiles.map((f) => fs.readFileSync(path.join(rendererDir, f), 'utf8')).join('\n');
 const preloadCode = fs.readFileSync(path.join(__dirname, '..', 'src/main/preload.js'), 'utf8');
 const ipcCode = fs.readFileSync(path.join(__dirname, '..', 'src/main/core/ipcHandlers.js'), 'utf8');
@@ -1267,12 +1267,14 @@ console.log('\n[10b] dataProfiles (3 profils)');
   assert(ALL_FIELD_KEYS.every((k) => maxFields.includes(k)),
     'getProfileFields(maximum): contient toutes les clés');
 
-  // getProfileFields : profil custom avec champs valides
+  // getProfileFields : profil custom avec champs valides. Les champs techniques
+  // essentiels (photos) sont TOUJOURS garantis (l'explorateur en a besoin).
   const customFields = dp.getProfileFields('custom', ['id', 'title', 'prix']);
-  assert(Array.isArray(customFields) && customFields.length === 3,
-    'getProfileFields(custom, [3 champs]): renvoie 3 champs');
-  assert(customFields.includes('id') && customFields.includes('title') && customFields.includes('prix'),
-    'getProfileFields(custom): champs personnalisés conservés');
+  assert(Array.isArray(customFields) && customFields.includes('id')
+    && customFields.includes('title') && customFields.includes('prix'),
+    'getProfileFields(custom, [3 champs]): champs demandés conservés');
+  assert(customFields.includes('photosUrls') && customFields.includes('photosCount'),
+    'getProfileFields(custom): champs photos essentiels garantis (explorateur)');
 
   // getProfileFields : profil custom sans champs → fallback sur DEFAULT
   const customEmpty = dp.getProfileFields('custom', []);
@@ -1283,7 +1285,7 @@ console.log('\n[10b] dataProfiles (3 profils)');
 
   // getProfileFields : profil custom avec champs invalides → filtrés
   const customInvalid = dp.getProfileFields('custom', ['id', 'fakeField', 'title']);
-  assert(customInvalid.length === 2 && customInvalid.includes('id') && customInvalid.includes('title'),
+  assert(customInvalid.includes('id') && customInvalid.includes('title') && !customInvalid.includes('fakeField'),
     'getProfileFields(custom): champs invalides filtrés (seuls les valides sont conservés)');
 
   // getProfileFields : profil inconnu → fallback sur DEFAULT
@@ -1576,11 +1578,9 @@ const rtAd = {
   prix: 350, city: 'Lyon', zipcode: '69000',
   vendeurNom: 'Jean', vendeurType: 'particulier', vendeurId: 'u1',
   vendeurNote: 4.8, nombreAvis: 27, vendeurUrlProfil: 'https://www.leboncoin.fr/u1',
-  vendeurAncienneteJours: 365,
   livraison: true, mainPropre: false, deliveryType: 'livraison',
   likes: 12,
   datePublication: '2026-09-10T10:00:00Z',
-  dateModification: null,
   dateScraping: '2026-09-14T12:00:00Z',
   etat: 'Très bon état',
   photosCount: 5, photosUrls: ['https://img.lbc.fr/1.jpg', 'https://img.lbc.fr/2.jpg'],
@@ -1918,8 +1918,8 @@ console.log('\n[18d] Export field-key compatibility (non-régression)');
   // Annonce au format RÉEL produit par normalizeAd() (city/zipcode/nombreAvis…).
   const modelAd = {
     id: '42', title: 'GPU', url: 'https://www.leboncoin.fr/ad/42.htm', prix: 250,
-    city: 'Lyon', zipcode: '69001',
-    vendeurNom: 'Jean', vendeurType: 'particulier', nombreAvis: 12, vendeurAncienneteJours: 400,
+    city: 'Lyon', zipcode: '69001', ville: 'Lyon', codePostal: '69001',
+    vendeurNom: 'Jean', vendeurType: 'particulier', nombreAvis: 12,
     deliveryType: 'livraison',
     datePublication: '2026-01-01T10:00:00.000Z', dateScraping: '2026-01-02T10:00:00.000Z',
     photosCount: 2, photosUrls: ['a.jpg', 'b.jpg'], description: 'bon état', likes: 5,
@@ -1929,14 +1929,14 @@ console.log('\n[18d] Export field-key compatibility (non-régression)');
   assert(json.ville === 'Lyon', 'export JSON: ville présent depuis city (modèle réel)');
   assert(json.codePostal === '69001', 'export JSON: codePostal présent depuis zipcode (modèle réel)');
   assert(json.dateScraping === '2026-01-02T10:00:00.000Z', 'export JSON: date ISO brute préservée (non formatée)');
-  assert(Array.isArray(json.photosUrls) === false, 'export JSON: photosUrls formaté/brut selon get (pas de crash)');
+  assert(Array.isArray(json.photosUrls) && json.photosUrls.length === 2,
+    'export JSON: photosUrls conservées en tableau dans le profil Défaut (explorateur)');
 
   const maxJson = filterAdByFields(modelAd, getProfileFields('maximum'));
-  // Profil Maximum = dump brut du modèle (clés city/zipcode/nombreAvis/
-  // vendeurAncienneteJours). Les profils Défaut/Personnalisé utilisent les clés
-  // d'export (ville/codePostal/vendeurNbAvis/vendeurAnciennete).
+  // Profil Maximum = dump brut du modèle (clés city/zipcode/nombreAvis).
   assert(maxJson.nombreAvis === 12, 'export JSON: profil Maximum conserve le modèle brut (nombreAvis)');
-  assert(maxJson.vendeurAncienneteJours === 400, 'export JSON: profil Maximum conserve le modèle brut (vendeurAncienneteJours)');
+  assert(!('vendeurAncienneteJours' in maxJson) && !('dateModification' in maxJson),
+    'export JSON: ancienneté vendeur et date modification supprimées du modèle');
 
   const txt = toReadableBlock(modelAd, 0, getProfileFields('default'));
   assert(txt.includes('Lyon'), 'export TXT: ville affichée');
@@ -2180,13 +2180,13 @@ console.log('\n[26] Contrat IPC preload ↔ main');
 })();
 
 // ═══════════════════════════════════════════════════════════════════════════
-// [27] CARTE (statsModule) — logique pure de sélection et validation coords
+// [27] CARTE (mapModule) — logique pure de sélection et validation coords
 // ═══════════════════════════════════════════════════════════════════════════
-console.log('\n[27] Carte statsModule (logique pure)');
+console.log('\n[27] Carte mapModule (logique pure)');
 (() => {
   const vm = require('vm');
   const repoRoot = path.join(__dirname, '..');
-  const code = fs.readFileSync(path.join(repoRoot, 'src/renderer/statsModule.js'), 'utf8');
+  const code = fs.readFileSync(path.join(repoRoot, 'src/renderer/mapModule.js'), 'utf8');
 
   const fakeEl = {
     textContent: '', innerHTML: '', value: 'ALL', checked: true, style: {},
@@ -2197,23 +2197,27 @@ console.log('\n[27] Carte statsModule (logique pure)');
   const sandbox = {
     window: windowObj,
     document: { getElementById: () => fakeEl, querySelectorAll: () => [] },
-    localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
+    localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {}, length: 0, key: () => null },
     escapeHtml: (s) => String(s == null ? '' : s),
     escapePath: (s) => String(s == null ? '' : s),
+    cityOf: (a) => (a && (a.city || a.ville)) || '',
+    zipOf: (a) => (a && (a.zipcode || a.codePostal)) || '',
+    locationLabel: (a) => (a && (a.city || a.ville)) || 'Inconnue',
     console: { log() {}, warn() {}, error() {} },
     setTimeout, clearTimeout, fetch: async () => { throw new Error('no net'); },
     AbortController,
     // Globals fournis par app.js/appState.js en exécution réelle.
-    statsSessionSelect: fakeEl,
+    mapSessionSelect: fakeEl,
     populateSessionDropdown: () => {},
   };
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(code, sandbox);
 
-  const { computeMapPoints, isValidLatLng, _deliveryTypeOf } = windowObj;
+  const { computeMapPoints, isValidLatLng, _deliveryTypeOf, clusterMarkers } = windowObj;
   assert(typeof computeMapPoints === 'function', 'carte: computeMapPoints exposé');
   assert(typeof isValidLatLng === 'function', 'carte: isValidLatLng exposé');
+  assert(typeof clusterMarkers === 'function', 'carte: clusterMarkers exposé');
 
   // Déduplication par id (une annonce présente dans 2 sessions n'apparaît qu'une fois)
   const ads = [
@@ -2257,12 +2261,29 @@ console.log('\n[27] Carte statsModule (logique pure)');
   assert(isValidLatLng([48.85, 181]) === false, 'carte: longitude hors bornes rejetée');
   assert(isValidLatLng(['48.85', '2.35']) === false, 'carte: chaînes numériques rejetées');
 
+  // Regroupement (clusterMarkers) : logique pure de grille, testable sans Leaflet.
+  assert(clusterMarkers([], 0.25).length === 0, 'carte: cluster sur liste vide → 0 groupe');
+  const one = clusterMarkers([{ lat: 45.7, lng: 4.8, ads: [{ id: 'x' }] }], 0.25);
+  assert(one.length === 1 && one[0].ads.length === 1, 'carte: 1 point → 1 groupe');
+  const twoFar = clusterMarkers([
+    { lat: 45.7, lng: 4.8, ads: [{ id: 'a' }] },
+    { lat: 48.8, lng: 2.3, ads: [{ id: 'b' }] },
+  ], 0.25);
+  assert(twoFar.length === 2, 'carte: 2 points éloignés → 2 groupes');
+  const twoNear = clusterMarkers([
+    { lat: 45.70, lng: 4.80, ads: [{ id: 'a' }] },
+    { lat: 45.71, lng: 4.81, ads: [{ id: 'b' }] },
+  ], 0.25);
+  assert(twoNear.length === 1 && twoNear[0].ads.length === 2, 'carte: 2 points proches → 1 groupe');
+  assert(clusterMarkers([{ lat: 45.7, lng: 4.8, ads: [] }], 0).length === 1, 'carte: cellSize 0 → pas de regroupement');
+
   // Le module ne doit pas écrire dans le conteneur Leaflet (détruirait la carte) :
   // l'état passe par mapStatus, et les marqueurs par un L.layerGroup.
   assert(!/mapEl\.innerHTML/.test(code), 'carte: ne détruit pas le conteneur #leafletMap (pas d\'innerHTML dessus)');
   assert(/mapMarkerLayer\.clearLayers\(\)/.test(code), 'carte: calque de marqueurs vidé à chaque rendu (anti-doublons)');
   assert(/L\.layerGroup\(\)/.test(code), 'carte: marqueurs dans un L.layerGroup');
   assert(/getElementById\('mapStatus'\)/.test(code), 'carte: messages d\'état via #mapStatus');
+  assert(/GEO_CACHE_MAX/.test(code) && /trimGeoCache/.test(code), 'carte: cache géocodage borné (pas de croissance illimitée)');
 
   // Fiabilité hors ligne : Leaflet/Chart.js sont embarqués localement, plus de
   // CDN public au chargement de l'interface (l'UI ne dépend plus d'un
@@ -2316,7 +2337,9 @@ console.log('\n[28] Distribution Windows (packaging)');
   assert(build.nsis.uninstallerIcon === 'build/icon.ico', 'dist: NSIS icône de désinstalleur');
   assert(build.npmRebuild === false, 'dist: pas de rebuild natif (aucun module natif)');
   assert(String(build.portable.artifactName).includes('Portable'), 'dist: artefact portable nommé');
-  assert(/^Leboncoin-Scraper-Pro-Portable-\$\{version\}\.exe$/.test(build.portable.artifactName), 'dist: artefact portable versionné');
+  assert(/^Vendra-Portable-\$\{version\}\.exe$/.test(build.portable.artifactName), 'dist: artefact portable versionné (Vendra)');
+  assert(build.productName === 'Vendra', 'dist: productName = Vendra (cohérent app/installeur/raccourcis)');
+  assert(build.appId === 'com.vendra.app', 'dist: appId = com.vendra.app');
   assert(build.directories.output === 'dist', 'dist: sortie → dist/');
   assert(build.directories.buildResources === 'build', 'dist: resources de build → build/');
 
@@ -2615,8 +2638,13 @@ console.log('\n[32] Audit global : correctifs');
   assert(!threw, 'exportFields: toReadableBlock(null) ne jette pas');
 
   // 32.7 logs dev → ./output/logs (cohérent avec jobs/secrets), pas Documents.
-  assert(/app\.isPackaged\s*\?\s*path\.join\(app\.getPath\('documents'\)[^)]*\)\s*:\s*null/.test(loggerCode),
-    'logger: dossier de logs dev = ./output/logs (pas Documents)');
+  // La source packagée est BASE_OUT_DIR (constants.js) : le dossier Documents
+  // n'est jamais construit en dur ici (sinon un renommage du dossier de données
+  // laisserait les logs dans un dossier orphelin).
+  assert(/app\.isPackaged\s*\?\s*require\('\.\.\/config\/constants'\)\.BASE_OUT_DIR\s*:\s*null/.test(loggerCode),
+    'logger: dossier de logs dev = ./output/logs (pas Documents), packagé via BASE_OUT_DIR');
+  assert(/base \? path\.join\(base, 'logs'\) : LOG_DIR_DEV/.test(loggerCode),
+    'logger: repli LOG_DIR_DEV (./output/logs) hors Electron');
 
   console.log('\n[32] OK');
 }
@@ -2988,8 +3016,8 @@ console.log('\n[36] Fixtures HAR (résultats, doublons, 403, page vide, détail)
     'fixtures: page détail → livraison + note vendeur enrichies');
   assert(parsed.nombreAvis === 12 && parsed.urlProfil === 'https://www.leboncoin.fr/profil/111',
     'fixtures: page détail → nombre d\'avis + URL profil extraits (auparavant perdus)');
-  assert(typeof parsed.ancienneteJours === 'number' && parsed.ancienneteJours > 0,
-    'fixtures: page détail → ancienneté vendeur calculée');
+  assert(parsed.ancienneteJours == null,
+    'fixtures: page détail → ancienneté vendeur non exposée (champ retiré du modèle d\'export)');
 
   // 36.6 Page de détail sans __NEXT_DATA__ → enrichissement vide SANS crash.
   const noNext = fs.readFileSync(path.join(fixturesDir, 'detail-page-no-nextdata.html'), 'utf8');
@@ -3188,7 +3216,7 @@ console.log('\n[37b] UX jsdom (toasts, bandeau erreur, askConfirm)');
   assert(/id="toastContainer"/.test(indexHtml), 'ux: index.html contient #toastContainer');
   assert(/id="scrapeErrorBanner"/.test(indexHtml), 'ux: index.html contient #scrapeErrorBanner');
   assert(/id="askModal"/.test(indexHtml), 'ux: index.html contient #askModal');
-  const rendererFilesUx = ['utils.js', 'scraperModule.js', 'historyModule.js', 'logsModule.js', 'explorerModule.js', 'statsModule.js', 'app.js'];
+  const rendererFilesUx = ['utils.js', 'scraperModule.js', 'historyModule.js', 'logsModule.js', 'explorerModule.js', 'statsModule.js', 'mapModule.js', 'app.js'];
   const uxCodeRaw = rendererFilesUx.map((f) => fs.readFileSync(path.join(repoRoot, 'src/renderer', f), 'utf8')).join('\n');
   // On retire les commentaires ligne/bloc avant de chercher les appels natifs,
   // sinon les mentions « alert() » dans les commentaires déclenchent un faux positif.
@@ -3273,7 +3301,7 @@ console.log('\n[37c] Sécurité jsdom (actions déléguées, CSP)');
 
   // 37c.7 Statique : plus aucun handler inline dans le renderer (on ignore les
   // commentaires, qui peuvent mentionner « onclick= » à titre explicatif).
-  const files = ['utils.js', 'scraperModule.js', 'historyModule.js', 'logsModule.js', 'explorerModule.js', 'statsModule.js', 'app.js'];
+  const files = ['utils.js', 'scraperModule.js', 'historyModule.js', 'logsModule.js', 'explorerModule.js', 'statsModule.js', 'mapModule.js', 'app.js'];
   const code = files.map((f) => fs.readFileSync(path.join(repoRoot, 'src/renderer', f), 'utf8')).join('\n')
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/(^|\s)\/\/[^\n]*/g, '$1');
@@ -3521,6 +3549,23 @@ console.log('\n[38] Modules main (settings, logger, fileManager, storageCleaner,
   assert(openBad.success === false && /non autorisé/i.test(openBad.error),
     'ipcHandlers: file:openFolder hors BASE_OUT_DIR → refusé (path-traversal)');
 
+  // job:openSessionFolder — ouvre le dossier de résultats d'une session.
+  // Le renderer ne fournit qu'un ID (jamais un chemin) : les ID malformés ou
+  // tentant une traversée doivent être rejetés AVANT tout accès disque.
+  assert(typeof handlers['job:openSessionFolder'] === 'function',
+    'ipcHandlers: handler job:openSessionFolder enregistré');
+  const sfBad1 = await handlers['job:openSessionFolder']({}, '../etc');
+  assert(sfBad1.success === false, 'ipcHandlers: sessionFolder rejette « .. »');
+  const sfBad2 = await handlers['job:openSessionFolder']({}, 'job-../x');
+  assert(sfBad2.success === false, 'ipcHandlers: sessionFolder rejette un ID non conforme');
+  const sfBad3 = await handlers['job:openSessionFolder']({}, '/etc/passwd');
+  assert(sfBad3.success === false, 'ipcHandlers: sessionFolder rejette un chemin absolu');
+  const sfBad4 = await handlers['job:openSessionFolder']({}, 42);
+  assert(sfBad4.success === false, 'ipcHandlers: sessionFolder rejette un ID non-string');
+  const sfMissing = await handlers['job:openSessionFolder']({}, 'job-2026-01-01T00-00-00');
+  assert(sfMissing.success === false && /n'existe plus|existe/i.test(sfMissing.error),
+    'ipcHandlers: sessionFolder session absente → message explicite');
+
   const extOk = await handlers['shell:openExternal']({}, 'https://www.leboncoin.fr/');
   assert(extOk.success === true, 'ipcHandlers: openExternal http/https autorisé');
   const extBad = await handlers['shell:openExternal']({}, 'javascript:alert(1)');
@@ -3660,21 +3705,21 @@ console.log('\n[38] OK');
 console.log('\n[39] Bugs corrigés (fuite vendeur, fusion, widget, rétention HAR, deliveryType, require)');
 {
   // 39.1 Fuite de données vendeur en profil Maximum (excludeSellerData).
-  // Avant : nombreAvis et vendeurAncienneteJours n'étaient pas dans
-  // SELLER_FIELD_KEYS → ils fuitaient malgré « Données vendeur » désactivé.
+  // Avant : nombreAvis n'était pas dans SELLER_FIELD_KEYS → il fuyait malgré
+  // « Données vendeur » désactivé.
   {
     const { filterAdByFields } = require('../src/main/services/exporting/exportFields');
     const ad = {
       id: '1', title: 't', url: 'u', prix: 10, city: 'Lyon', zipcode: '69000',
       vendeurNom: 'Bob', vendeurType: 'pro', vendeurId: '42', vendeurNote: 4.5,
-      nombreAvis: 12, vendeurUrlProfil: 'https://p', vendeurAncienneteJours: 300,
+      nombreAvis: 12, vendeurUrlProfil: 'https://p',
       deliveryType: 'livraison', likes: 3, description: 'd',
     };
     const out = filterAdByFields(ad, null, { excludeSellerData: true });
     const leaked = Object.keys(out).filter((k) => /vendeur|avis|anciennete/i.test(k));
     assert(leaked.length === 0, `export: profil Maximum sans données vendeur → aucune fuite (${leaked.join(',') || 'aucune'})`);
-    assert(!('nombreAvis' in out) && !('vendeurAncienneteJours' in out),
-      'export: nombreAvis et vendeurAncienneteJours exclus (clés du modèle)');
+    assert(!('nombreAvis' in out),
+      'export: nombreAvis exclu (clé du modèle vendeur)');
   }
 
   // 39.2 Fusion : un tableau vide ne doit pas écraser une liste déjà extraite.
@@ -3802,8 +3847,8 @@ console.log('\n[40] Extraction des données manquantes (vendeur, détail, fusion
   assert(parsed.note === 4.5, '40: détail → note vendeur');
   assert(parsed.nombreAvis === 12, `40: détail → nombre d'avis (obtenu ${parsed.nombreAvis})`);
   assert(parsed.urlProfil === 'https://www.leboncoin.fr/profil/abc', '40: détail → URL profil');
-  assert(typeof parsed.ancienneteJours === 'number' && parsed.ancienneteJours > 0,
-    `40: détail → ancienneté calculée en jours (obtenu ${parsed.ancienneteJours})`);
+  assert(parsed.ancienneteJours == null,
+    '40: détail → ancienneté non exposée (champ retiré du modèle d\'export)');
   assert(parsed.vendeurNom === 'Vendeur Complet' && parsed.vendeurType === 'pro' && parsed.vendeurId === 'u1',
     '40: détail → nom/type/id vendeur');
   assert(parsed.etat === 'Neuf' && parsed.livraison === true,
@@ -3814,15 +3859,13 @@ console.log('\n[40] Extraction des données manquantes (vendeur, détail, fusion
   const searchAd = {
     id: '111', title: 'Velo', description: 'Description liste.', prix: 100,
     vendeurNom: 'Vendeur Complet', vendeurType: 'pro', vendeurId: 'u1',
-    vendeurNote: null, nombreAvis: null, vendeurUrlProfil: null, vendeurAncienneteJours: null,
+    vendeurNote: null, nombreAvis: null, vendeurUrlProfil: null,
     livraison: null, mainPropre: null, deliveryType: 'inconnu', etat: null,
   };
   const enriched = applyDetailFields(searchAd, parsed);
   assert(enriched === true, '40: applyDetailFields signale un enrichissement');
   assert(searchAd.nombreAvis === 12 && searchAd.vendeurUrlProfil === 'https://www.leboncoin.fr/profil/abc',
     '40: détail complète nombre d\'avis + URL profil absents de la recherche');
-  assert(searchAd.vendeurAncienneteJours === parsed.ancienneteJours,
-    '40: détail complète l\'ancienneté vendeur');
   assert(searchAd.vendeurNote === 4.5 && searchAd.etat === 'Neuf',
     '40: détail complète note + état');
   assert(searchAd.deliveryType === 'livraison',
@@ -3871,11 +3914,11 @@ console.log('\n[40] Extraction des données manquantes (vendeur, détail, fusion
   const phZero = adFields.extractPhotos({ images: { urls: [] } });
   assert(phZero.count === 0 && phZero.urls.length === 0, '40: photos = 0 → count 0 (pas null)');
 
-  // 40.8 Annonce sans date de modification accessible → null (jamais confondue
-  // avec la date de publication).
+  // 40.8 dateModification n'est plus un champ du modèle exporté (retiré). La
+  // date de publication reste extraite séparément.
   const dates = adFields.extractDates({ first_publication_date: '2024-05-01T00:00:00Z' });
   assert(dates.publication === '2024-05-01T00:00:00Z' && dates.modification === null,
-    '40: dateModification null si absente (pas = datePublication)');
+    '40: date de publication extraite ; date de modification non exposée (null)');
 
   // 40.9 Photos : déduplication sans perte, toutes les URL uniques conservées.
   const ph = adFields.extractPhotos({ images: { urls: ['https://a.jpg', 'https://b.jpg', 'https://a.jpg'] } });
@@ -3901,8 +3944,9 @@ console.log('\n[40] Extraction des données manquantes (vendeur, détail, fusion
     '40: profil Défaut conserve les champs essentiels');
   assert(maxOut.nombreAvis === 12 && maxOut.vendeurUrlProfil === 'https://www.leboncoin.fr/profil/abc',
     '40: profil Maximum expose les nouvelles données vendeur');
-  assert(maxFields.length === ALL_FIELD_KEYS.length && ALL_FIELD_KEYS.includes('vendeurAnciennete'),
-    '40: profil Maximum = toutes les clés d\'export (dont vendeurAnciennete)');
+  assert(maxFields.length === ALL_FIELD_KEYS.length && !ALL_FIELD_KEYS.includes('vendeurAnciennete')
+    && !ALL_FIELD_KEYS.includes('dateModification'),
+    '40: profil Maximum = toutes les clés d\'export (sans ancienneté ni date modification)');
   assert(custOut.id === '111' && custOut.vendeurNote === 4.5 && custOut.vendeurNbAvis === 12
     && !('title' in custOut),
     '40: profil Personnalisé → uniquement les champs choisis (vendeurNbAvis traduit depuis nombreAvis)');
@@ -4128,8 +4172,13 @@ console.log('\n[42] Exports JSON/TXT (contenu réel)');
   const cus = runHar(payload, ['--profile-id', 'custom', '--profile-fields', 'id,title,prix'], 'cus');
   const cusAds = cus.jsonRaw ? JSON.parse(cus.jsonRaw) : null;
   const cusRich = cusAds && cusAds.find((a) => a.id === 'rich-1');
-  assert(cusRich && Object.keys(cusRich).sort().join(',') === 'id,prix,title',
-    `42: profil Personnalisé → exactement id,prix,title (obtenu ${cusRich ? Object.keys(cusRich).sort().join(',') : 'null'})`);
+  // Le profil Personnalisé garantit TOUJOURS les champs photos essentiels
+  // (l'explorateur en a besoin) en plus des champs choisis.
+  assert(cusRich && ['id', 'prix', 'title', 'photosCount', 'photosUrls']
+    .every((k) => k in cusRich) && Object.keys(cusRich).length === 5,
+    `42: profil Personnalisé → champs demandés + photos (obtenu ${cusRich ? Object.keys(cusRich).sort().join(',') : 'null'})`);
+  assert(cusRich && !('vendeurNom' in cusRich) && !('description' in cusRich),
+    '42: profil Personnalisé → champs non demandés absents');
 
   // 42.6 TXT : lisible, labels alignés, accents + valeurs présentes.
   assert(max.txtRaw && /===== ANNONCE 1 =====/.test(max.txtRaw), '42: TXT contient l\'en-tête d\'annonce');
@@ -4341,6 +4390,216 @@ console.log('\n[44] Sécurité anti-SSRF (harCapturer)');
   assert(/isSafeFetchDestination\(checkUrl\)/.test(pipeSrc), '[44] pipeline: contrôle anti-SSRF des sous-requêtes d\'enrichissement');
 }
 console.log('\n[44] OK');
+
+// --- 45. Vendra : champs essentiels, migration de dossier, localisation, bornes ---
+// Verrouille les invariants de la refonte « Vendra » : photos garanties dans
+// TOUS les profils, compat de localisation (ville/city), migration du dossier de
+// données sans perte, et bornes anti-DoS de l'historique d'annonces.
+console.log('\n[45] Vendra (profils/photos, localisation, migration, bornes)');
+{
+  // 45.1 Les URL de photos sont GARANTIES dans les 3 profils.
+  const exf = require('../src/main/services/exporting/exportFields');
+  const dp = require('../src/main/services/exporting/dataProfiles');
+  assert(Array.isArray(exf.ESSENTIAL_FIELD_KEYS) && exf.ESSENTIAL_FIELD_KEYS.includes('photosUrls'),
+    '[45] ESSENTIAL_FIELD_KEYS contient photosUrls');
+  const custom = dp.getProfileFields('custom', ['id', 'title']);
+  assert(Array.isArray(custom) && custom.includes('photosUrls'),
+    '[45] profil Personnalisé → photosUrls ajouté automatiquement (sans case Photos)');
+  const def = dp.getProfileFields('default');
+  assert(def.includes('photosUrls'), '[45] profil Défaut → photosUrls présent');
+  const max = dp.getProfileFields('maximum');
+  assert(!max || max === null || max.includes('photosUrls') || exf.ALL_FIELD_KEYS.includes('photosUrls'),
+    '[45] profil Maximum → photosUrls couvert (toutes les clés)');
+  // ensureEssentialFields ne duplique pas et préserve l'ordre.
+  const ensured = exf.ensureEssentialFields(['id', 'photosUrls']);
+  assert(ensured.filter((k) => k === 'photosUrls').length === 1,
+    '[45] ensureEssentialFields ne duplique pas une clé déjà présente');
+  assert(exf.ensureEssentialFields(null) === null,
+    '[45] ensureEssentialFields(null) → null (toutes les clés)');
+
+  // 45.2 filterAdByFields conserve les photos même en sélection réduite.
+  const adPhotos = { id: '1', title: 't', photosCount: 3, photosUrls: ['a.jpg', 'b.jpg'] };
+  const outPhotos = exf.filterAdByFields(adPhotos, ['id']);
+  assert(Array.isArray(outPhotos.photosUrls) && outPhotos.photosUrls.length === 2,
+    '[45] filterAdByFields garde photosUrls malgré une sélection réduite');
+
+  // 45.3 Localisation : city/ville et zipcode/codePostal résolus par les helpers.
+  const { JSDOM } = require('jsdom');
+  const dom = new JSDOM('<!doctype html><html><body></body></html>', { runScripts: 'outside-only' });
+  const utilsSrc = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/utils.js'), 'utf8');
+  dom.window.eval(utilsSrc + '\n;window.__loc = { cityOf, zipOf, locationLabel };');
+  const { cityOf, zipOf, locationLabel } = dom.window.__loc;
+  assert(cityOf({ ville: 'Lyon' }) === 'Lyon', '[45] cityOf lit la clé d\'export `ville`');
+  assert(cityOf({ city: 'Paris' }) === 'Paris', '[45] cityOf lit la clé du modèle `city`');
+  assert(cityOf({ location: { city: 'Nantes' } }) === 'Nantes', '[45] cityOf lit location.city (ancien JSON)');
+  assert(cityOf({}) === '', '[45] cityOf → \'\' si ville absente (jamais inventée)');
+  assert(cityOf(null) === '', '[45] cityOf(null) ne jette pas');
+  assert(zipOf({ codePostal: '69001' }) === '69001', '[45] zipOf lit `codePostal`');
+  assert(zipOf({ zipcode: '75001' }) === '75001', '[45] zipOf lit `zipcode`');
+  assert(locationLabel({ ville: 'Lyon', codePostal: '69001' }) === 'Lyon (69001)',
+    '[45] locationLabel ville + CP');
+  assert(locationLabel({ ville: 'Lyon' }) === 'Lyon', '[45] locationLabel ville seule');
+  assert(locationLabel({ codePostal: '69001' }) === '69001', '[45] locationLabel CP seul');
+  assert(locationLabel({}) === 'Inconnue', '[45] locationLabel → Inconnue si rien');
+  dom.window.close();
+
+  // 45.4 Migration du dossier de données : legacy conservé, nouveau chemin résolu.
+  const constSrc = fs.readFileSync(path.join(__dirname, '..', 'src/main/config/constants.js'), 'utf8');
+  assert(/LEGACY_DIR_NAME\s*=\s*'Leboncoin Scraper Pro'/.test(constSrc),
+    '[45] constants: dossier historique conservé pour la migration');
+  assert(/APP_DIR_NAME\s*=\s*'Vendra'/.test(constSrc),
+    '[45] constants: nouveau dossier = Vendra');
+  assert(/fs\.renameSync\(legacy, target\)/.test(constSrc),
+    '[45] constants: migration par rename (aucune copie/suppression)');
+  assert(/APP_NAME:\s*'Vendra'/.test(constSrc), '[45] constants: APP_NAME = Vendra');
+
+  // 45.4b Cohérence de marque dans package.json + migration userData Electron.
+  const pkgJson = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
+  assert(pkgJson.name === 'vendra', '[45] package.json: name = vendra');
+  assert(pkgJson.productName === 'Vendra', '[45] package.json: productName = Vendra');
+  assert(pkgJson.build && pkgJson.build.nsis && pkgJson.build.nsis.shortcutName === 'Vendra',
+    '[45] package.json: raccourci NSIS = Vendra (cohérent app/installeur)');
+  const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'src/main/main.js'), 'utf8');
+  assert(/function migrateUserDataDir\(\)/.test(mainSrc),
+    '[45] main.js: migrateUserDataDir présent (préférences conservées au renommage)');
+  assert(/renameSync\(legacy, target\)/.test(mainSrc),
+    '[45] main.js: migration userData par rename (aucune copie/suppression)');
+  assert(/if \(fs\.existsSync\(target\)\) return;/.test(mainSrc),
+    '[45] main.js: migration userData n\'écrase jamais un dossier existant');
+
+  // 45.5 Bornes anti-DoS de buildAdHistory (entrée énorme → pas d\'explosion).
+  const { buildAdHistory } = require('../src/main/services/jobs/jobHistory');
+  const bigAds = Array.from({ length: 100 }, (_, i) => ({ id: 'same', prix: i + 1, title: 'x' }));
+  const hist = buildAdHistory([{ id: 'job-2026-01-01T00-00-00', date: '01/01/2026 à 00:00', ads: bigAds }]);
+  assert(hist.length === 1 && hist[0].sessions <= 32,
+    `[45] buildAdHistory borne les occurrences par annonce (${hist[0].sessions} ≤ 32)`);
+  assert(buildAdHistory(null).length === 0, '[45] buildAdHistory(null) → [] (pas de crash)');
+  assert(buildAdHistory('pas un tableau').length === 0, '[45] buildAdHistory(non-tableau) → []');
+
+  // 45.6 Le renderer n\'affiche plus les champs retirés (ancienneté, date modif.).
+  const explorerSrc = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/explorerModule.js'), 'utf8');
+  assert(!/vendeurAncienneteJours|dateModification/.test(explorerSrc),
+    '[45] explorer: ni ancienneté vendeur ni date de modification affichées');
+  assert(!exf.ALL_FIELD_KEYS.includes('vendeurAnciennete'),
+    '[45] exportFields: vendeurAnciennete retiré des clés exportables');
+  assert(!exf.ALL_FIELD_KEYS.includes('dateModification'),
+    '[45] exportFields: dateModification retiré des clés exportables');
+  assert(!exf.SELLER_FIELD_KEYS.has('vendeurAnciennete'),
+    '[45] exportFields: vendeurAnciennete retiré des clés vendeur');
+}
+console.log('\n[45] OK');
+
+// --- 46. Explorateur : fiche détaillée + localisation (DOM jsdom réel) ---
+// Reproduit le bug signalé (« la fiche détaillée ne s'affiche pas / localisation
+// Inconnue ») sur des annonces au FORMAT D'EXPORT (clés ville/codePostal, comme
+// dans annonces.json) — c'est le format réellement lu par l'explorateur.
+console.log('\n[46] Explorateur (fiche détaillée + localisation, jsdom)');
+{
+  const { JSDOM } = require('jsdom');
+  const repoRoot = path.join(__dirname, '..');
+
+  const html = `<!doctype html><html><body>
+    <div id="adsTableContainer"><table><tbody id="adsTableBody"></tbody></table></div>
+    <div id="adsGridContainer" class="hidden"></div>
+    <span id="filteredAdsCount"></span>
+    <button id="viewTableBtn"></button><button id="viewGridBtn"></button>
+    <input id="filterKeyword"><input id="filterPriceMin"><input id="filterPriceMax">
+    <select id="filterTagSelect"><option value="ALL">ALL</option></select>
+    <select id="sortSelect"><option value="DEFAULT">DEFAULT</option></select>
+    <select id="filterDeliveryType"><option value="tous">tous</option></select>
+    <select id="filterSellerType"><option value="ALL">ALL</option></select>
+    <input id="filterMinRating"><input id="filterMinLikes">
+    <select id="filterEtat"><option value="ALL">ALL</option></select>
+    <select id="sessionSelect"><option value="ALL">ALL</option></select>
+    <div id="adDetailModal" class="hidden">
+      <h3 id="modalAdTitle"></h3>
+      <button id="closeDetailModalBtn"></button>
+      <img id="mainGalleryImg"><div id="galleryThumbnails"></div>
+      <span id="modalDealBadge"></span><button id="modalStarBtn"></button>
+      <span id="modalPrice"></span><span id="modalCity"></span>
+      <span id="modalSeller"></span><span id="modalDate"></span>
+      <div id="modalDescription"></div>
+      <button id="modalOpenLeboncoinBtn"></button>
+      <span id="modalSellerRating"><span class="modal-extra-val">-</span></span>
+      <span id="modalDeliveryType"><span class="modal-extra-val">-</span></span>
+      <span id="modalLikes"><span class="modal-extra-val">-</span></span>
+      <span id="modalDateScraping"><span class="modal-extra-val">-</span></span>
+      <span id="modalTypeVendeur"><span class="modal-extra-val">-</span></span>
+      <span id="modalEtat"><span class="modal-extra-val">-</span></span>
+    </div>
+    <div id="toastContainer"></div>
+  </body></html>`;
+
+  const dom = new JSDOM(html, { runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://app.local/' });
+  const { window } = dom;
+  window.api = { getHistory: async () => [], openExternal: () => {}, openFolder: async () => ({ success: true }) };
+  window.confirm = () => true;
+
+  const utilsSrc = fs.readFileSync(path.join(repoRoot, 'src/renderer/utils.js'), 'utf8');
+  const appStateSrc = fs.readFileSync(path.join(repoRoot, 'src/renderer/appState.js'), 'utf8');
+  const explorerSrc = fs.readFileSync(path.join(repoRoot, 'src/renderer/explorerModule.js'), 'utf8');
+  // Ordre de chargement réel (index.html) : utils → appState → explorerModule.
+  // Les `let` d'appState (allJobsCache, includeSellerData) sont dans la portée de
+  // CET eval : on expose des setters qui écrivent dans la même portée (une
+  // affectation depuis un autre window.eval créerait un global masquant).
+  window.eval(utilsSrc + '\n' + appStateSrc + '\n' + explorerSrc
+    + '\n;window.__setCache = (v) => { allJobsCache = v; };'
+    + '\n;window.__setSeller = (v) => { includeSellerData = v; };');
+
+  // Annonce au FORMAT D'EXPORT : ville/codePostal (et non city/zipcode).
+  const exportAd = {
+    id: '2831923847', title: 'PC portable Gamer', url: 'https://www.leboncoin.fr/ad/2831923847.htm',
+    prix: 450, ville: 'Lyon', codePostal: '69001', deliveryType: 'livraison',
+    vendeurNom: 'Jean D.', vendeurType: 'particulier', vendeurNote: 4.8, vendeurNbAvis: 27,
+    vendeurUrlProfil: 'https://www.leboncoin.fr/u/1.htm', likes: 5,
+    datePublication: '2026-08-01T10:00:00Z', dateScraping: '2026-08-01T12:30:00Z',
+    etat: 'Très bon état', photosCount: 2, photosUrls: ['https://img/1.jpg', 'https://img/2.jpg'],
+    description: 'Bonjour, PC en excellent état, très bonnes performances.',
+  };
+  window.__setCache([{ id: 'job-2026-08-01T12-00-00', date: '01/08/2026 à 12:00', adsCount: 1, ads: [exportAd] }]);
+  window.__setSeller(true);
+
+  assert(typeof window.openAdDetail === 'function', '[46] openAdDetail exposé');
+  window.openAdDetail('2831923847');
+
+  const $ = (id) => window.document.getElementById(id);
+  const modal = $('adDetailModal');
+  assert(!modal.classList.contains('hidden'), '[46] la fiche détaillée s\'ouvre (modal visible)');
+  assert($('modalAdTitle').textContent === 'PC portable Gamer', '[46] titre affiché');
+  assert($('modalPrice').textContent === '450', '[46] prix affiché');
+  // Bug localisation : ville présente (clé d'export `ville`) → NE DOIT PAS être « Inconnue ».
+  assert($('modalCity').textContent === 'Lyon (69001)',
+    `[46] localisation ville+CP depuis clés d'export (obtenu "${$('modalCity').textContent}")`);
+  assert(!/Inconnue/.test($('modalCity').textContent), '[46] la ville n\'est pas « Inconnue » alors qu\'elle existe');
+  assert(/Jean D\./.test($('modalSeller').textContent), '[46] vendeur affiché');
+  assert(/excellent état/.test($('modalDescription').textContent), '[46] description affichée');
+  assert(/4\.8/.test($('modalSellerRating').querySelector('.modal-extra-val').textContent),
+    '[46] note vendeur affichée');
+  assert(/27/.test($('modalSellerRating').querySelector('.modal-extra-val').textContent),
+    '[46] nombre d\'avis affiché (note + avis)');
+  assert($('modalDeliveryType').querySelector('.modal-extra-val').textContent === 'Livraison uniquement',
+    '[46] type de remise affiché');
+  assert($('modalLikes').querySelector('.modal-extra-val').textContent === '5', '[46] likes affichés');
+  assert($('galleryThumbnails').children.length === 2, '[46] galerie : 2 vignettes photo');
+  assert($('mainGalleryImg').getAttribute('src') === 'https://img/1.jpg', '[46] photo principale = 1re URL');
+
+  // Annonce sans ville → « Inconnue » honnête (jamais inventée).
+  const noCityAd = { id: 'X1', title: 'Sans ville', url: 'u', prix: 10, description: 'd' };
+  window.__setCache([{ id: 'j2', date: '02/08/2026', adsCount: 1, ads: [noCityAd] }]);
+  window.openAdDetail('X1');
+  assert($('modalCity').textContent === 'Inconnue', '[46] ville absente → « Inconnue » (jamais inventée)');
+  assert($('mainGalleryImg').getAttribute('src') && /data:image\/svg/.test($('mainGalleryImg').getAttribute('src')),
+    '[46] aucune photo → placeholder local (pas d\'URL fictive)');
+
+  // Annonce absente → la modal reste fermée (pas de fiche vide trompeuse).
+  $('adDetailModal').classList.add('hidden');
+  window.openAdDetail('INEXISTANT');
+  assert($('adDetailModal').classList.contains('hidden'), '[46] annonce introuvable → modal reste fermée');
+
+  dom.window.close();
+}
+console.log('\n[46] OK');
+
 
 console.log(`\n=== RÉSULTAT : ${pass} réussis, ${fail} échoués ===`);
 process.exit(fail > 0 ? 1 : 0);

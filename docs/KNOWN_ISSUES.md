@@ -1,4 +1,4 @@
-# Problèmes connus — Leboncoin Scraper Pro
+# Problèmes connus — Vendra
 
 *Mis à jour : 2026-10-10*
 

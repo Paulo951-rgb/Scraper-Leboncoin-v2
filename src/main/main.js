@@ -26,6 +26,40 @@ if (process.env.NODE_ENV === 'production' || app.isPackaged) {
 }
 
 /**
+ * Migration du dossier userData d'Electron après le renommage « Vendra ».
+ *
+ * Electron dérive userData du nom de l'application : l'ancienne version
+ * utilisait « Leboncoin Scraper Pro » (packagée) / « leboncoin-scraper-app »
+ * (dev), la nouvelle utilise « Vendra » / « vendra ». Sans migration, les
+ * préférences utilisateur (user-settings.json), les favoris, presets et le
+ * thème (localStorage) seraient perdus au premier lancement après mise à jour.
+ *
+ * On RENOMME l'ancien dossier vers le nouveau (aucune copie, aucune
+ * suppression) UNIQUEMENT si le nouveau n'existe pas encore. En cas d'échec
+ * (dossier verrouillé, droits), on continue sans migration : la compatibilité
+ * prime, l'application reste fonctionnelle avec des réglages par défaut.
+ */
+function migrateUserDataDir() {
+  try {
+    const target = app.getPath('userData');
+    if (fs.existsSync(target)) return;
+    const parent = path.dirname(target);
+    const legacyNames = ['Leboncoin Scraper Pro', 'leboncoin-scraper-app'];
+    for (const name of legacyNames) {
+      const legacy = path.join(parent, name);
+      if (legacy !== target && fs.existsSync(legacy)) {
+        fs.renameSync(legacy, target);
+        console.log('[Vendra] userData migré : ' + legacy + ' -> ' + target);
+        return;
+      }
+    }
+  } catch (err) {
+    console.warn('[Vendra] Migration userData impossible (non bloquant) : ' + err.message);
+  }
+}
+migrateUserDataDir();
+
+/**
  * Vérifie que le Chromium embarqué (Chrome for Testing) est présent et
  * exécutable, et renvoie un diagnostic clair en cas d'absence. Empêche le
  * message cryptique « Executable doesn't exist » au premier chromium.launch().
@@ -131,7 +165,7 @@ function createWindow() {
     height: 750,
     minWidth: 900,
     minHeight: 650,
-    title: 'Leboncoin Scraper Pro',
+    title: 'Vendra',
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),

@@ -50,7 +50,6 @@ const DEFAULT_FIELDS = [
   { key: 'vendeurNote',         label: 'Vendeur (note)',          get: (a) => a.vendeurNote ?? null, fmt: (v) => v != null ? `${v}/5` : 'null' },
   { key: 'vendeurNbAvis',       label: 'Vendeur (nb avis)',       get: (a) => a.nombreAvis ?? null },
   { key: 'vendeurUrlProfil',    label: 'Vendeur (URL profil)',    get: (a) => a.vendeurUrlProfil ?? null },
-  { key: 'vendeurAnciennete',   label: 'Vendeur (ancienneté, jours)', get: (a) => a.vendeurAncienneteJours ?? null },
 
   // ─── TRANSACTION ─────────────────────────────────────────────────────────
   { key: 'deliveryType', label: 'Type de remise',              get: (a) => a.deliveryType ?? null, fmt: (v) => v || 'null' },
@@ -58,7 +57,6 @@ const DEFAULT_FIELDS = [
   // ─── STATS / DATES ───────────────────────────────────────────────────────
   { key: 'likes',              label: 'Likes',            get: (a) => a.likes ?? null },
   { key: 'datePublication',    label: 'Date publication', get: (a) => _fmtDate(a.datePublication) },
-  { key: 'dateModification',   label: 'Date modification', get: (a) => _fmtDate(a.dateModification) },
   { key: 'dateScraping',       label: 'Date scraping',     get: (a) => _fmtDate(a.dateScraping) },
 
   // ─── PRODUIT / ÉTAT ──────────────────────────────────────────────────────
@@ -92,7 +90,7 @@ const FIELD_CATEGORIES = [
   {
     id: 'vendeur',
     label: 'Vendeur',
-    keys: ['vendeurNom', 'vendeurType', 'vendeurId', 'vendeurNote', 'vendeurNbAvis', 'vendeurUrlProfil', 'vendeurAnciennete'],
+    keys: ['vendeurNom', 'vendeurType', 'vendeurId', 'vendeurNote', 'vendeurNbAvis', 'vendeurUrlProfil'],
   },
   {
     id: 'transaction',
@@ -102,7 +100,7 @@ const FIELD_CATEGORIES = [
   {
     id: 'dates',
     label: 'Dates',
-    keys: ['datePublication', 'dateModification', 'dateScraping'],
+    keys: ['datePublication', 'dateScraping'],
   },
   {
     id: 'stats',
@@ -127,18 +125,25 @@ const FIELD_CATEGORIES = [
 ];
 
 // Clés des champs vendeur (pour exclusion optionnelle).
-// On liste à la fois les clés d'export (`vendeurNbAvis`, `vendeurAnciennete`)
-// ET les clés du modèle `normalizeAd` (`nombreAvis`, `vendeurAncienneteJours`).
-// BUG corrigé : en profil Maximum, `filterAdByFields` opère sur l'objet du modèle
-// (fields=null → parcours de Object.keys(ad)), donc seules les clés du modèle
-// sont présentes. Sans `nombreAvis`/`vendeurAncienneteJours` ici, ces deux champs
-// vendeur FUYAIENT malgré « Données vendeur » désactivé (violation RGPD : nombre
-// d'avis et ancienneté du compte vendeur sont des données du vendeur).
+// On liste à la fois les clés d'export (`vendeurNbAvis`) ET les clés du modèle
+// `normalizeAd` (`nombreAvis`). En profil Maximum, `filterAdByFields` opère sur
+// l'objet du modèle (fields=null → parcours de Object.keys(ad)), donc seules les
+// clés du modèle sont présentes. Sans `nombreAvis` ici, ce champ vendeur
+// FUYAIT malgré « Données vendeur » désactivé (violation RGPD : nombre d'avis
+// et note du compte vendeur sont des données du vendeur).
 const SELLER_FIELD_KEYS = new Set([
   'vendeurNom', 'vendeurType', 'vendeurId', 'vendeurNote', 'vendeurNbAvis',
-  'vendeurUrlProfil', 'vendeurAnciennete',
-  'nombreAvis', 'vendeurAncienneteJours',
+  'vendeurUrlProfil',
+  'nombreAvis',
 ]);
+
+// Champs TECHNIQUES essentiels, garantis dans TOUS les profils (Défaut,
+// Maximum, Personnalisé). Les URL de photos sont indispensables à l'affichage
+// de l'explorateur (galerie + vignettes) : elles ne doivent PAS disparaître
+// parce que l'utilisateur a choisi un profil léger ou n'a pas coché la
+// catégorie « Photos ». Règle appliquée de façon CENTRALISÉE (ensureEssentialFields)
+// pour que les trois profils se comportent identiquement.
+const ESSENTIAL_FIELD_KEYS = ['photosCount', 'photosUrls'];
 
 // Liste complète des clés pour faciliter les UI « Tout sélectionner ».
 const ALL_FIELD_KEYS = DEFAULT_FIELDS.map((f) => f.key);
@@ -183,12 +188,11 @@ function _formatValue(fieldDef, value) {
 // ─────────────────────────────────────────────────────────────────────────────
 //
 // HISTORIQUE DU BUG : le modèle produit par normalizeAd() nomme ses champs
-// `city`, `zipcode`, `nombreAvis`, `vendeurAncienneteJours`. Les champs
-// exportables utilisent des clés « métier » : `ville`, `codePostal`,
-// `vendeurNbAvis`, `vendeurAnciennete`. filterAdByFields faisait une simple
-// copie `out[key] = ad[key]` → `ad['ville']` n'existe pas (le modèle expose
-// `city`), donc ces champs étaient SILENCIEUSEMENT supprimés des exports JSON
-// en profils Défaut et Personnalisé.
+// `city`, `zipcode`, `nombreAvis`. Les champs exportables utilisent des clés
+// « métier » : `ville`, `codePostal`, `vendeurNbAvis`. filterAdByFields faisait
+// une simple copie `out[key] = ad[key]` → `ad['ville']` n'existait pas (le
+// modèle expose `city`), donc ces champs étaient SILENCIEUSEMENT supprimés des
+// exports JSON en profils Défaut et Personnalisé.
 //
 // On distingue deux résolutions :
 //   - _resolveRawFieldValue : valeur BRUTE du modèle (JSON), sans formatage,
@@ -200,8 +204,25 @@ const MODEL_KEY_FOR_EXPORT = {
   ville: 'city',
   codePostal: 'zipcode',
   vendeurNbAvis: 'nombreAvis',
-  vendeurAnciennete: 'vendeurAncienneteJours',
 };
+
+/**
+ * Garantit que les champs techniques essentiels (URLs des photos) figurent dans
+ * une liste de champs d'export, quel que soit le profil choisi. Centralise la
+ * règle pour que Défaut / Maximum / Personnalisé se comportent identiquement :
+ * l'explorateur a TOUJOURS besoin des URL d'images, ce n'est pas un champ
+ * optionnel. Les clés essentielles déjà présentes ne sont pas dupliquées.
+ * @param {string[]|null} fields
+ * @returns {string[]|null} liste enrichie (null reste null = « toutes les clés »)
+ */
+function ensureEssentialFields(fields) {
+  if (!fields || !Array.isArray(fields) || fields.length === 0) return fields;
+  const out = fields.slice();
+  for (const k of ESSENTIAL_FIELD_KEYS) {
+    if (!out.includes(k)) out.push(k);
+  }
+  return out;
+}
 
 // Valeur brute du modèle pour une clé d'export : essaie le nom canonique du
 // modèle, puis la clé d'export elle-même (rétro-compat fixtures/anciens exports).
@@ -253,9 +274,12 @@ function filterAdByFields(ad, fields, options) {
     return out;
   }
 
-  let selectedKeys = fields;
+  // Les champs techniques essentiels (URLs des photos) sont TOUJOURS conservés,
+  // quel que soit le profil (Défaut / Personnalisé). L'explorateur en a besoin
+  // pour afficher vignettes et galerie : ce n'est pas un champ optionnel.
+  let selectedKeys = ensureEssentialFields(fields);
   if (excludeSeller) {
-    selectedKeys = fields.filter((k) => !SELLER_FIELD_KEYS.has(k));
+    selectedKeys = selectedKeys.filter((k) => !SELLER_FIELD_KEYS.has(k));
   }
 
   if (selectedKeys.length >= ALL_FIELD_KEYS.length && ALL_FIELD_KEYS.every((k) => selectedKeys.includes(k))) {
@@ -266,7 +290,7 @@ function filterAdByFields(ad, fields, options) {
   // Résout chaque clé sélectionnée vers la valeur BRUTE du modèle (JSON non
   // formaté). Sans cette traduction, les clés d'export sans homonyme exact dans
   // le modèle (`ville`→`city`, `codePostal`→`zipcode`, `vendeurNbAvis`→
-  // `nombreAvis`, `vendeurAnciennete`→`vendeurAncienneteJours`) étaient perdues.
+  // `nombreAvis`) étaient perdues.
   for (const key of selectedKeys) {
     const value = _resolveRawFieldValue(key, ad);
     if (value !== undefined && value !== null) out[key] = value;
@@ -289,7 +313,7 @@ function filterAdByFields(ad, fields, options) {
  */
 function toReadableBlock(ad, index, fields, options) {
   if (!ad || typeof ad !== 'object') ad = {};
-  let selectedKeys = (Array.isArray(fields) && fields.length > 0) ? fields : ALL_FIELD_KEYS;
+  let selectedKeys = (Array.isArray(fields) && fields.length > 0) ? ensureEssentialFields(fields) : ALL_FIELD_KEYS;
   if (options && options.excludeSellerData) {
     selectedKeys = selectedKeys.filter((k) => !SELLER_FIELD_KEYS.has(k));
   }
@@ -319,6 +343,8 @@ module.exports = {
   FIELD_CATEGORIES,
   FIELDS_BY_KEY,
   SELLER_FIELD_KEYS,
+  ESSENTIAL_FIELD_KEYS,
+  ensureEssentialFields,
   filterAdByFields,
   toReadableBlock,
 };

@@ -30,8 +30,10 @@ function _getLogDir() {
   // (constants.js BASE_OUT_DIR, secretStore) — et NON dans Documents, ce qui
   // éparpillait les artefacts de dev hors du projet.
   try {
+    // Source unique : BASE_OUT_DIR (constants.js). En dev elle vaut
+    // ./output ; en version packagée le dossier Documents migré.
     const base = app && app.isPackaged
-      ? path.join(app.getPath('documents'), 'Leboncoin Scraper Pro')
+      ? require('../config/constants').BASE_OUT_DIR
       : null;
     _logDir = base ? path.join(base, 'logs') : LOG_DIR_DEV;
   } catch {

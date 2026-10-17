@@ -33,11 +33,12 @@ let _fallbackWarned = false;
 
 function _getSecretsPath() {
   if (_secretsPath) return _secretsPath;
+  // Source unique : BASE_OUT_DIR (constants.js) — évite qu'un renommage du
+  // dossier de données (ex. « Leboncoin Scraper Pro » → « Vendra ») laisse les
+  // secrets dans un dossier orphelin.
   let base;
   try {
-    base = app && app.isPackaged
-      ? path.join(app.getPath('documents'), 'Leboncoin Scraper Pro')
-      : path.join(process.cwd(), 'output');
+    base = require('../config/constants').BASE_OUT_DIR;
   } catch {
     base = path.join(process.cwd(), 'output');
   }

@@ -2,7 +2,7 @@
 
 ## 1. Finalité du logiciel
 
-**Leboncoin Scraper Pro** est un outil technique d'automatisation et de structuration de données. Il permet de capturer, organiser et exporter des informations publiquement accessibles sur des sites web, puis d'appliquer des analyses locales (statistiques, carte géographique) sur ces données.
+**Vendra** est un outil technique d'automatisation et de structuration de données. Il permet de capturer, organiser et exporter des informations publiquement accessibles sur des sites web, puis d'appliquer des analyses locales (statistiques, carte géographique) sur ces données.
 
 Ce logiciel ne fournit aucun contenu propre : il ne fait que traiter des données auxquelles l'utilisateur accède lui-même.
 

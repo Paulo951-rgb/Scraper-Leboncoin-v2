@@ -1,10 +1,10 @@
 {
-  "name": "leboncoin-scraper-app",
+  "name": "vendra",
   "version": "1.0.0",
-  "description": "Application de scraping Leboncoin semi-automatisée",
+  "description": "Vendra — collecte et analyse locales d'annonces (Electron + Playwright)",
   "main": "src/main/main.js",
-  "productName": "Leboncoin Scraper Pro",
-  "appId": "com.leboncoin.scraper.pro",
+  "productName": "Vendra",
+  "appId": "com.vendra.app",
   "scripts": {
     "start": "electron --max-old-space-size=8192 .",
     "test": "node test/regression.test.js",
@@ -31,8 +31,8 @@
     "jsdom": "^30.1.2"
   },
   "build": {
-    "appId": "com.leboncoin.scraper.pro",
-    "productName": "Leboncoin Scraper Pro",
+    "appId": "com.vendra.app",
+    "productName": "Vendra",
     "npmRebuild": false,
     "directories": {
       "output": "dist",
@@ -78,13 +78,13 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Leboncoin Scraper Pro",
+      "shortcutName": "Vendra",
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
       "deleteAppDataOnUninstall": false
     },
     "portable": {
-      "artifactName": "Leboncoin-Scraper-Pro-Portable-${version}.exe"
+      "artifactName": "Vendra-Portable-${version}.exe"
     }
   }
 }

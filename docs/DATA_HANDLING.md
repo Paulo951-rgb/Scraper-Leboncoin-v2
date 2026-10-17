@@ -1,6 +1,6 @@
 # Gestion des données — Transparence et minimisation
 
-Ce document détaille les catégories de données traitées par **Leboncoin Scraper Pro**, leur finalité, leur persistance et les options de contrôle dont dispose l'utilisateur.
+Ce document détaille les catégories de données traitées par **Vendra**, leur finalité, leur persistance et les options de contrôle dont dispose l'utilisateur.
 
 ## Principes
 
@@ -15,8 +15,8 @@ Ce document détaille les catégories de données traitées par **Leboncoin Scra
 |-----------|-------------|------------|--------------|----------|
 | Informations annonce (titre, prix, URL, localisation, dates, photos, description) | Analyse, export, statistiques | Oui (JSON, TXT) | Oui (profil Personnalisé) | Disque local (`output/jobs/`) |
 | Prix | Statistiques, filtres | Oui | Oui (profil Personnalisé) | Disque local |
-| Description | Export TXT | Oui | Oui (case « Ignorer les descriptions » + profil Personnalisé) | Disque local |
-| Données vendeur (nom, ID, type, note, avis, URL profil, ancienneté) | Identification, filtres, statistiques, export | Oui | Oui (paramètre « Données vendeur » dans les réglages) | Disque local |
+| Description | Export TXT | Oui | Oui (profil Personnalisé) | Disque local |
+| Données vendeur (nom, ID, type, note, avis, URL profil) | Identification, filtres, statistiques, export | Oui | Oui (paramètre « Données vendeur » dans les réglages) | Disque local |
 | Données brutes HAR (capture réseau complète) | Diagnostic, reprise de scraping, intégrité | Non (fichier technique `.har`) | Oui (nettoyage automatique paramétrable) | Disque local, nettoyé après X jours |
 | Favoris et filtres utilisateur | Interface, rappel entre sessions | Non | Oui (effacement localStorage) | localStorage (navigateur intégré) |
 
@@ -50,9 +50,9 @@ L'utilisateur sélectionne uniquement les champs qu'il souhaite conserver, organ
 - **Identification** : id, title, url
 - **Prix** : prix
 - **Localisation** : ville, codePostal
-- **Vendeur** : vendeurNom, vendeurType, vendeurId, vendeurNote, vendeurNbAvis, vendeurUrlProfil, vendeurAnciennete
+- **Vendeur** : vendeurNom, vendeurType, vendeurId, vendeurNote, vendeurNbAvis, vendeurUrlProfil
 - **Transaction** : deliveryType
-- **Dates** : datePublication, dateModification, dateScraping
+- **Dates** : datePublication, dateScraping
 - **Statistiques** : likes
 - **Produit** : etat
 - **Photos** : photosCount, photosUrls
@@ -69,13 +69,12 @@ Un paramètre dédié permet d'exclure systématiquement les champs identifiés 
 - Note du vendeur
 - Nombre d'avis
 - URL du profil vendeur
-- Ancienneté du vendeur
 
 Dans l'interface, les informations vendeur sont également masquées lorsque cette option est activée.
 
 ## Descriptions
 
-L'utilisateur peut choisir d'ignorer les descriptions lors du scraping (case « Ignorer les descriptions » dans le formulaire de recherche). Cela accélère le traitement et réduit la quantité de texte conservé.
+Les descriptions sont récupérées automatiquement pour chaque annonce (enrichissement parallèle respectant la politique de scraping fixe). Le mode Personnalisé permet de ne pas les conserver à l'export si elles ne sont pas nécessaires. L'option « Ignorer les descriptions » a été retirée de l'interface.
 
 ## Formats d'export
 

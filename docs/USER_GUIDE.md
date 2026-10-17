@@ -1,6 +1,6 @@
-# Guide Utilisateur — Leboncoin Scraper Pro
+# Guide Utilisateur — Vendra
 
-Ce guide vous accompagne pas à pas dans l'utilisation de **Leboncoin Scraper Pro**, l'outil de scraping desktop pour [Leboncoin.fr](https://www.leboncoin.fr).
+Ce guide vous accompagne pas à pas dans l'utilisation de **Vendra**, l'outil de scraping desktop pour [Leboncoin.fr](https://www.leboncoin.fr).
 
 ---
 
@@ -11,17 +11,17 @@ Ce guide vous accompagne pas à pas dans l'utilisation de **Leboncoin Scraper Pr
 2. Double-cliquez sur le `.exe` et suivez l'assistant :
    - Choisissez le dossier d'installation.
    - Un raccourci bureau et une entrée dans le menu démarrer sont créés automatiquement.
-3. Lancez **Leboncoin Scraper Pro** depuis le raccourci.
+3. Lancez **Vendra** depuis le raccourci.
 
 > Aucun prérequis : vous n'avez pas besoin d'installer Node.js, npm ou quoi que ce soit d'autre. Le navigateur Chromium est embarqué dans l'installeur.
 
 ### Version portable
-La version portable (`Leboncoin-Scraper-Pro-Portable-x.x.x.exe`) ne nécessite aucune installation :
+La version portable (`Vendra-Portable-x.x.x.exe`) ne nécessite aucune installation :
 1. Décompressez l'archive dans un dossier de votre choix.
 2. Lancez l'exécutable.
 
 ### Emplacement des données
-- **Version installée** : `Documents/Leboncoin Scraper Pro/`
+- **Version installée** : `Documents/Vendra/`
 - **Version portable / dev** : dossier `output/` à côté de l'exécutable.
 
 ---
@@ -56,8 +56,6 @@ L'application vérifie automatiquement la présence du navigateur Chromium (néc
 5. (Optionnel) Ajustez les **options** :
    - **Mode de performance** : **⚡ Ultra rapide** (fixe, non modifiable) — 25 tâches parallèles max, délai nominal 400 ms entre les pages.
    - **Mode de capture** : invisible (headless) ou visible.
-   - **Ignorer les descriptions** : pour accélérer le scraping.
-   - **Proxy** : si vous utilisez un proxy HTTP.
 6. Cliquez sur **« Lancer le scraping »**.
 
 ### Progression
@@ -120,8 +118,8 @@ Après un scraping, ouvrez l'onglet **Explorateur** (icône 🔍 dans la sidebar
 Cliquez sur une annonce pour ouvrir la fiche détaillée :
 - Photos (carrousel).
 - Description complète.
-- Informations vendeur (nom, type, note, avis, profil, ancienneté).
-- Dates (publication, modification, scraping).
+- Informations vendeur (nom, type, note, avis, profil).
+- Dates (publication, scraping).
 - Type de remise (`deliveryType`).
 - Likes, état déclaré, nombre de photos.
 
@@ -130,7 +128,7 @@ Cliquez sur une annonce pour ouvrir la fiche détaillée :
 ## 6. Statistiques
 
 ### Onglet Statistiques
-Ouvrez l'onglet **Stats** (icône 📊 dans la sidebar) pour visualiser les statistiques du job courant.
+Ouvrez l'onglet **Statistiques** pour visualiser les statistiques. Vous pouvez sélectionner une ou plusieurs sessions ; les indicateurs sont calculés à partir des annonces réellement disponibles (les prix ou villes inconnus ne sont pas comptés comme zéro).
 
 ### Cartes
 - **Total** d'annonces
@@ -145,11 +143,20 @@ Ouvrez l'onglet **Stats** (icône 📊 dans la sidebar) pour visualiser les stat
 - **Top 10 Villes** (barres)
 - **Modes de transaction** (camembert — basé sur `deliveryType`)
 
-### Carte interactive
-- **Carte Leaflet** avec marqueurs pour chaque annonce géolocalisée.
-- Filtre « Remise en main propre uniquement ».
-- Géocodage via l'API Gouv France (cache LocalStorage, timeout 10s).
-- Déduplication des annonces par id.
+---
+
+## 6 bis. Carte
+
+Ouvrez l'onglet **Carte** (sidebar) pour explorer géographiquement les annonces.
+
+- **Carte Leaflet plein écran** : la carte occupe la majeure partie de l'espace disponible et s'adapte à la taille de la fenêtre (redimensionnement recalculé à l'ouverture de l'onglet).
+- **Marqueurs cliquables** : chaque marqueur affiche un résumé (titre, prix, localisation) avec un lien vers l'annonce et un accès à la fiche détaillée.
+- **Filtres** : par session et par type de remise (remise en main propre).
+- **Regroupement** : les marqueurs proches sont regroupés quand le nombre d'annonces le justifie.
+- **Recentrage** : un bouton permet de recadrer la carte sur les annonces disponibles.
+- **Localisation honnête** : une annonce n'est placée que si sa ville peut être géocodée de façon fiable. La position correspond au **centre de la ville**, pas à l'adresse exacte. Les annonces sans ville connue ne sont pas inventées.
+- Géocodage via l'API Gouv France, avec cache borné et timeout (aucun géocodage répété à chaque ouverture).
+
 
 ---
 
@@ -175,7 +182,7 @@ Dans les **Paramètres**, vous pouvez activer :
 Ouvrez les **Paramètres** (icône ⚙️ dans l'en-tête) pour configurer l'application.
 
 ### Thème
-13 thèmes disponibles (aperçu temps réel) : Dark, Light, OLED, Violet, Green, Sunset, Carbon, Rose, Amber, Mint, Slate, Crimson, Nordic.
+3 thèmes disponibles (aperçu temps réel) : **Sombre**, **Clair** et **Graphite**. Le thème choisi est mémorisé entre les sessions.
 
 ### Mode de performance (fixe)
 Le logiciel fonctionne **toujours** en mode **⚡ Ultra rapide** : jusqu'à **25 tâches parallèles** et un **délai nominal de 400 ms** entre deux pages de recherche successives. Cette configuration est **appliquée automatiquement et n'est pas modifiable** (elle est affichée en lecture seule dans les Paramètres).
@@ -207,12 +214,12 @@ Deux formats d'export sont générés automatiquement à la fin de chaque job :
 
 ### Filtrage par profil
 Le contenu des exports dépend du **profil** choisi au moment du scraping :
-- **Profil Défaut** : 13 champs essentiels.
+- **Profil Défaut** : champs essentiels (les URL des photos sont toujours incluses).
 - **Profil Maximum** : toutes les données disponibles.
 - **Profil Personnalisé** : uniquement les champs sélectionnés.
 
 ### Exclusion vendeur
-Si l'option « Données vendeur » est désactivée dans les paramètres, les champs vendeur (nom, ID, type, note, avis, URL profil, ancienneté) sont **exclus** de tous les exports, quel que soit le profil.
+Si l'option « Données vendeur » est désactivée dans les paramètres, les champs vendeur (nom, ID, type, note, avis, URL profil) sont **exclus** de tous les exports, quel que soit le profil.
 
 ### Où trouver les fichiers
 - Onglet **Historique** → cliquez sur le bouton « Ouvrir le dossier » du job.

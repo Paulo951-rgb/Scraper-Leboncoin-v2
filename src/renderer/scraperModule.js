@@ -64,10 +64,6 @@ if (chromiumWarningRetryBtn) {
 }
 refreshChromiumCheck(); // vérification initiale
 
-// Proxy
-proxyUrl.value = localStorage.getItem('proxy-url') || '';
-proxyUrl.addEventListener('change', (e) => localStorage.setItem('proxy-url', e.target.value));
-
 // ─── Profil de données (Défaut / Maximum / Personnalisé) + sélection des champs ──
 // Le profil Défaut récupère les champs essentiels (rapide et léger).
 // Le profil Maximum récupère toutes les données disponibles techniquement.
@@ -87,11 +83,9 @@ const EXPORT_FIELDS = [
   { key: 'vendeurNote', label: 'Vendeur (note)' },
   { key: 'vendeurNbAvis', label: 'Vendeur (nb avis)' },
   { key: 'vendeurUrlProfil', label: 'Vendeur (URL profil)' },
-  { key: 'vendeurAnciennete', label: 'Vendeur (ancienneté)' },
   { key: 'deliveryType', label: 'Type de remise' },
   { key: 'likes', label: 'Likes' },
   { key: 'datePublication', label: 'Date publication' },
-  { key: 'dateModification', label: 'Date modification' },
   { key: 'dateScraping', label: 'Date scraping' },
   { key: 'etat', label: 'État déclaré' },
   { key: 'photosCount', label: 'Nombre de photos' },
@@ -221,16 +215,13 @@ function renderPresets() {
     .join('');
 }
 
-// Capture l'intégralité de la configuration de recherche (URL + pages + limite
-// + options + proxy) afin qu'un preset soit réellement une restauration « 1-clic »
-// de la recherche, et pas seulement URL + pages.
+// Capture l'intégralité de la configuration de recherche (URL + pages + limite)
+// afin qu'un preset soit réellement une restauration « 1-clic » de la recherche.
 function collectSearchConfig() {
   return {
     searchUrl: document.getElementById('searchUrl').value.trim(),
     pages: document.getElementById('pages').value,
     limit: document.getElementById('limit').value,
-    noDesc: document.getElementById('noDesc').checked,
-    proxyUrl: proxyUrl.value.trim(),
   };
 }
 
@@ -241,11 +232,6 @@ function applySearchConfig(cfg) {
   if (cfg.searchUrl) document.getElementById('searchUrl').value = cfg.searchUrl;
   if (cfg.pages != null) document.getElementById('pages').value = cfg.pages;
   if (cfg.limit != null) document.getElementById('limit').value = cfg.limit;
-  if (cfg.noDesc != null) document.getElementById('noDesc').checked = cfg.noDesc;
-  if (cfg.proxyUrl != null) {
-    proxyUrl.value = cfg.proxyUrl;
-    localStorage.setItem('proxy-url', cfg.proxyUrl);
-  }
 }
 
 // Enregistrement d'un preset : `window.prompt()` n'est PAS supporté par Electron
@@ -301,8 +287,6 @@ window.loadPreset = (i) => {
     searchUrl: p.searchUrl || p.url,
     pages: p.pages,
     limit: p.limit,
-    noDesc: p.noDesc,
-    proxyUrl: p.proxyUrl,
   });
 };
 
@@ -471,8 +455,6 @@ startBtn.addEventListener('click', () => {
     searchUrl,
     pages: document.getElementById('pages').value,
     limit: document.getElementById('limit').value,
-    noDesc: document.getElementById('noDesc').checked,
-    proxyUrl: proxyUrl.value.trim() || undefined,
     // Profil de données (Défaut / Maximum / Personnalisé) + champs sélectionnés.
     // Le main process applique ce profil à TOUS les exports : JSON, TXT.
     profileId: getSelectedProfile(),
