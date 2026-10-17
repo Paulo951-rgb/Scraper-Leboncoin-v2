@@ -332,7 +332,7 @@ openCompareModalBtn.addEventListener('click', () => {
     .map((a) => {
       const sellerName = includeSellerData ? (a.vendeurNom || a.seller || 'Particulier') : 'Masqué';
       const priceText = a.prix != null ? a.prix + ' €' : (a.price != null ? a.price + ' €' : '-');
-      const thumb = (a.photosUrls && a.photosUrls[0]) || (a.images && a.images[0]) || noPhotoUrl();
+      const thumb = sanitizeImageUrl((a.photosUrls && a.photosUrls[0]) || (a.images && a.images[0])) || noPhotoUrl();
       return `
       <div class="compare-col">
         <img src="${escapeHtml(thumb)}" style="width:100%; height:140px; object-fit:cover; border-radius:6px;">
@@ -401,12 +401,16 @@ closeSettingsModalBtn.addEventListener('click', () => settingsModal.classList.ad
 // Aperçu du thème en temps réel quand on change dans la modale
 cfgTheme.addEventListener('change', () => {
   document.body.className = cfgTheme.value;
+  // Notifie les modules qui figent des couleurs à la construction (Chart.js) :
+  // sans ce signal, les graphiques conservaient la palette de l'ancien thème.
+  document.dispatchEvent(new CustomEvent('themechange', { detail: { theme: cfgTheme.value } }));
 });
 
 saveSettingsBtn.addEventListener('click', async () => {
   const theme = cfgTheme.value;
   localStorage.setItem('app-theme', theme);
   document.body.className = theme;
+  document.dispatchEvent(new CustomEvent('themechange', { detail: { theme } }));
 
   await window.api.saveConfig({
     headless: cfgHeadless.checked,
@@ -428,6 +432,7 @@ resetSettingsBtn.addEventListener('click', async () => {
   if (!ok) return;
   localStorage.setItem('app-theme', 'theme-dark');
   document.body.className = 'theme-dark';
+  document.dispatchEvent(new CustomEvent('themechange', { detail: { theme: 'theme-dark' } }));
   await window.api.saveConfig({
     headless: true,
     includeSellerData: true,

@@ -440,6 +440,15 @@
 
           <div id="adsGridContainer" class="ads-grid-container hidden"></div>
 
+          <!-- Pagination : l'explorateur construisait TOUTES les lignes d'un coup
+               (20 000 annonces → 405 000 nœuds DOM, ~17 s de gel). On n'affiche
+               qu'une page à la fois pour garder l'interface fluide. -->
+          <div id="explorerPagination" class="explorer-pagination hidden">
+            <button id="pagePrevBtn" class="btn btn-secondary btn-small" type="button">‹ Précédent</button>
+            <span id="pageInfo" class="text-muted font-small"></span>
+            <button id="pageNextBtn" class="btn btn-secondary btn-small" type="button">Suivant ›</button>
+          </div>
+
         </div>
       </section>
 

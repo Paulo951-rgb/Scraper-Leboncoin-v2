@@ -5,6 +5,11 @@ let allJobsCache = [];
 let includeSellerData = true;
 let isOffline = false;
 let viewMode = localStorage.getItem('explorer-view') || 'table';
+// Pagination de l'explorateur : on ne construit qu'une tranche de lignes à la
+// fois (une session de 20 000 annonces générait 405 000 nœuds DOM et ~17 s de
+// gel). 500 lignes par page garde le DOM sous ~10 000 nœuds.
+const EXPLORER_PAGE_SIZE = 500;
+let explorerPage = 1;
 let compareSet = new Set();
 let starredAds = new Set();
 let mapInstance = null;

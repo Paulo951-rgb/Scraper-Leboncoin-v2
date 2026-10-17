@@ -151,8 +151,12 @@ body.theme-light {
   --card-bg-hover: #f7f8fa;
   --text-color: #1b1f26;
   --text-muted: #565e6b;
-  --primary-color: #2b7a70;
-  --primary-hover: #22655d;
+  /* Primaire assombri : #2b7a70 ne donnait que 4.27:1 sur le fond d'en-tête de
+     tableau (--bg-secondary) — sous le seuil WCAG AA de 4.5:1 pour du texte de
+     12px. #256b62 monte à 5.24:1 sur l'en-tête et 6.25:1 pour le texte blanc
+     sur bouton. */
+  --primary-color: #256b62;
+  --primary-hover: #1d5850;
   --primary-contrast: #ffffff;
   --danger-color: #c0392f;
   --danger-hover: #a32f27;
@@ -1106,6 +1110,19 @@ input::placeholder { color: var(--text-muted); opacity: 0.7; }
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
   gap: var(--space-4);
+}
+/* Pagination de l'explorateur : garde le DOM borné quelle que soit la taille
+   de la session (cf. EXPLORER_PAGE_SIZE). */
+.explorer-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  padding: var(--space-4) 0 var(--space-1);
+}
+.explorer-pagination .btn[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 .ad-card {
   background-color: var(--bg-secondary);

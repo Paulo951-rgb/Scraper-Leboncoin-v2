@@ -318,7 +318,8 @@ styles.css                   habillage + 3 thèmes (Sombre/Clair/Graphite) + com
 ## Tests
 - `node test/regression.test.js` → suite de non-régression (syntaxe + stubs Electron).
   Sections : logique métier, rendu, sécurité, `[27]` carte (logique pure), `[28]` distribution/packaging,
-  `[29]` CI Windows (workflow + `verify-dist.js`).
+  `[29]` CI Windows (workflow + `verify-dist.js`), `[46]` fiche détaillée (openAdDetail),
+  `[47]` pagination explorateur (DOM borné + navigation), `[48]` `sanitizeImageUrl` (anti-SSRF renderer).
 - Le test stub `electron` : BrowserWindow a `webContents.send` mais PAS `isDestroyed`.
 - Avant tout commit : `node --check` sur les fichiers modifiés + lancer la suite.
 
@@ -415,6 +416,28 @@ Sans Wine, `-c.win.signAndEditExecutable=false` permet de produire `dist/win-unp
 (dossier app lançable) mais PAS l'installeur ni le portable.
 
 ## Pièges corrigés (à ne PAS réintroduire)
+- **Diagnostic « images: 0 »** : `summarizeAds` (utils/diagnostics.js) DOIT compter
+  `photosUrls` (clé du modèle `normalizeAd`), pas seulement `a.images` (clé des
+  objets BRUTS d'avant normalisation). Lire `a.images` affichait « images: 0 »
+  sur des annonces dont les photos étaient correctement extraites → faux
+  diagnostic de panne. Accepter les deux clés.
+- **Pagination de l'explorateur (NE PAS la retirer)** : `renderExplorerAds` DOIT
+  ne construire qu'une tranche de `EXPLORER_PAGE_SIZE` (500) lignes via
+  `filtered.slice(startIdx, startIdx + PAGE_SIZE)`. Construire TOUTES les lignes
+  d'un `innerHTML` gelait l'interface ~17 s et créait ~405 000 nœuds DOM sur une
+  session de 20 000 annonces (mesuré au harnais CDP ; ~0,5 s et 11 193 nœuds
+  après). `explorerPage` revient à 1 à chaque changement de filtre/session.
+  Test : `regression.test.js` section `[47]`.
+- **Graphiques Chart.js et thème** : ne JAMAIS figer les couleurs des graphiques
+  (Tailwind `#38bdf8`/`#8b5cf6`) ni omettre la couleur des ticks (axes noirs sur
+  fond sombre). Lire la palette depuis les variables CSS (`--primary-color`,
+  `--text-muted`, `--text-color`, `--border-color`) au moment du rendu et
+  reconstruire au signal `themechange` (dispatché par scraperModule au changement
+  de thème). Libellés SANS emoji (identité = icônes vectorielles).
+- **Contraste WCAG thème Clair** : `--primary-color` du thème clair doit rester
+  ≤ #256b62 (ratio ≥ 4,5:1 sur `--bg-secondary` pour les en-têtes de tableau de
+  12px). #2b7a70 ne donnait que 4,27:1. Vérifier avec un calcul de luminance
+  relatif, pas à l'œil.
 - **Contrôle anti-SSRF du chemin Playwright (NE PAS le retirer)** : le commit de
   base avait retiré `isSafeFetchDestination`/`_installNetworkGuard` de
   `harCapturer` (« moteur historique »), alors que la documentation
