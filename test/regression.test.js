@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Suite de tests de non-régression — Leboncoin Scraper Pro
+ * Suite de tests de non-régression — Vendra
  * Couvre : diagnostics.js, pipeline, modules principaux, exportFields, sécurité.
  * Exécuter : node test/regression.test.js
  */
@@ -2337,7 +2337,9 @@ console.log('\n[28] Distribution Windows (packaging)');
   assert(build.nsis.uninstallerIcon === 'build/icon.ico', 'dist: NSIS icône de désinstalleur');
   assert(build.npmRebuild === false, 'dist: pas de rebuild natif (aucun module natif)');
   assert(String(build.portable.artifactName).includes('Portable'), 'dist: artefact portable nommé');
-  assert(/^Leboncoin-Scraper-Pro-Portable-\$\{version\}\.exe$/.test(build.portable.artifactName), 'dist: artefact portable versionné');
+  assert(/^Vendra-Portable-\$\{version\}\.exe$/.test(build.portable.artifactName), 'dist: artefact portable versionné (Vendra)');
+  assert(build.productName === 'Vendra', 'dist: productName = Vendra (cohérent app/installeur/raccourcis)');
+  assert(build.appId === 'com.vendra.app', 'dist: appId = com.vendra.app');
   assert(build.directories.output === 'dist', 'dist: sortie → dist/');
   assert(build.directories.buildResources === 'build', 'dist: resources de build → build/');
 
@@ -2636,8 +2638,13 @@ console.log('\n[32] Audit global : correctifs');
   assert(!threw, 'exportFields: toReadableBlock(null) ne jette pas');
 
   // 32.7 logs dev → ./output/logs (cohérent avec jobs/secrets), pas Documents.
-  assert(/app\.isPackaged\s*\?\s*path\.join\(app\.getPath\('documents'\)[^)]*\)\s*:\s*null/.test(loggerCode),
-    'logger: dossier de logs dev = ./output/logs (pas Documents)');
+  // La source packagée est BASE_OUT_DIR (constants.js) : le dossier Documents
+  // n'est jamais construit en dur ici (sinon un renommage du dossier de données
+  // laisserait les logs dans un dossier orphelin).
+  assert(/app\.isPackaged\s*\?\s*require\('\.\.\/config\/constants'\)\.BASE_OUT_DIR\s*:\s*null/.test(loggerCode),
+    'logger: dossier de logs dev = ./output/logs (pas Documents), packagé via BASE_OUT_DIR');
+  assert(/base \? path\.join\(base, 'logs'\) : LOG_DIR_DEV/.test(loggerCode),
+    'logger: repli LOG_DIR_DEV (./output/logs) hors Electron');
 
   console.log('\n[32] OK');
 }
@@ -3542,6 +3549,23 @@ console.log('\n[38] Modules main (settings, logger, fileManager, storageCleaner,
   assert(openBad.success === false && /non autorisé/i.test(openBad.error),
     'ipcHandlers: file:openFolder hors BASE_OUT_DIR → refusé (path-traversal)');
 
+  // job:openSessionFolder — ouvre le dossier de résultats d'une session.
+  // Le renderer ne fournit qu'un ID (jamais un chemin) : les ID malformés ou
+  // tentant une traversée doivent être rejetés AVANT tout accès disque.
+  assert(typeof handlers['job:openSessionFolder'] === 'function',
+    'ipcHandlers: handler job:openSessionFolder enregistré');
+  const sfBad1 = await handlers['job:openSessionFolder']({}, '../etc');
+  assert(sfBad1.success === false, 'ipcHandlers: sessionFolder rejette « .. »');
+  const sfBad2 = await handlers['job:openSessionFolder']({}, 'job-../x');
+  assert(sfBad2.success === false, 'ipcHandlers: sessionFolder rejette un ID non conforme');
+  const sfBad3 = await handlers['job:openSessionFolder']({}, '/etc/passwd');
+  assert(sfBad3.success === false, 'ipcHandlers: sessionFolder rejette un chemin absolu');
+  const sfBad4 = await handlers['job:openSessionFolder']({}, 42);
+  assert(sfBad4.success === false, 'ipcHandlers: sessionFolder rejette un ID non-string');
+  const sfMissing = await handlers['job:openSessionFolder']({}, 'job-2026-01-01T00-00-00');
+  assert(sfMissing.success === false && /n'existe plus|existe/i.test(sfMissing.error),
+    'ipcHandlers: sessionFolder session absente → message explicite');
+
   const extOk = await handlers['shell:openExternal']({}, 'https://www.leboncoin.fr/');
   assert(extOk.success === true, 'ipcHandlers: openExternal http/https autorisé');
   const extBad = await handlers['shell:openExternal']({}, 'javascript:alert(1)');
@@ -4366,6 +4390,216 @@ console.log('\n[44] Sécurité anti-SSRF (harCapturer)');
   assert(/isSafeFetchDestination\(checkUrl\)/.test(pipeSrc), '[44] pipeline: contrôle anti-SSRF des sous-requêtes d\'enrichissement');
 }
 console.log('\n[44] OK');
+
+// --- 45. Vendra : champs essentiels, migration de dossier, localisation, bornes ---
+// Verrouille les invariants de la refonte « Vendra » : photos garanties dans
+// TOUS les profils, compat de localisation (ville/city), migration du dossier de
+// données sans perte, et bornes anti-DoS de l'historique d'annonces.
+console.log('\n[45] Vendra (profils/photos, localisation, migration, bornes)');
+{
+  // 45.1 Les URL de photos sont GARANTIES dans les 3 profils.
+  const exf = require('../src/main/services/exporting/exportFields');
+  const dp = require('../src/main/services/exporting/dataProfiles');
+  assert(Array.isArray(exf.ESSENTIAL_FIELD_KEYS) && exf.ESSENTIAL_FIELD_KEYS.includes('photosUrls'),
+    '[45] ESSENTIAL_FIELD_KEYS contient photosUrls');
+  const custom = dp.getProfileFields('custom', ['id', 'title']);
+  assert(Array.isArray(custom) && custom.includes('photosUrls'),
+    '[45] profil Personnalisé → photosUrls ajouté automatiquement (sans case Photos)');
+  const def = dp.getProfileFields('default');
+  assert(def.includes('photosUrls'), '[45] profil Défaut → photosUrls présent');
+  const max = dp.getProfileFields('maximum');
+  assert(!max || max === null || max.includes('photosUrls') || exf.ALL_FIELD_KEYS.includes('photosUrls'),
+    '[45] profil Maximum → photosUrls couvert (toutes les clés)');
+  // ensureEssentialFields ne duplique pas et préserve l'ordre.
+  const ensured = exf.ensureEssentialFields(['id', 'photosUrls']);
+  assert(ensured.filter((k) => k === 'photosUrls').length === 1,
+    '[45] ensureEssentialFields ne duplique pas une clé déjà présente');
+  assert(exf.ensureEssentialFields(null) === null,
+    '[45] ensureEssentialFields(null) → null (toutes les clés)');
+
+  // 45.2 filterAdByFields conserve les photos même en sélection réduite.
+  const adPhotos = { id: '1', title: 't', photosCount: 3, photosUrls: ['a.jpg', 'b.jpg'] };
+  const outPhotos = exf.filterAdByFields(adPhotos, ['id']);
+  assert(Array.isArray(outPhotos.photosUrls) && outPhotos.photosUrls.length === 2,
+    '[45] filterAdByFields garde photosUrls malgré une sélection réduite');
+
+  // 45.3 Localisation : city/ville et zipcode/codePostal résolus par les helpers.
+  const { JSDOM } = require('jsdom');
+  const dom = new JSDOM('<!doctype html><html><body></body></html>', { runScripts: 'outside-only' });
+  const utilsSrc = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/utils.js'), 'utf8');
+  dom.window.eval(utilsSrc + '\n;window.__loc = { cityOf, zipOf, locationLabel };');
+  const { cityOf, zipOf, locationLabel } = dom.window.__loc;
+  assert(cityOf({ ville: 'Lyon' }) === 'Lyon', '[45] cityOf lit la clé d\'export `ville`');
+  assert(cityOf({ city: 'Paris' }) === 'Paris', '[45] cityOf lit la clé du modèle `city`');
+  assert(cityOf({ location: { city: 'Nantes' } }) === 'Nantes', '[45] cityOf lit location.city (ancien JSON)');
+  assert(cityOf({}) === '', '[45] cityOf → \'\' si ville absente (jamais inventée)');
+  assert(cityOf(null) === '', '[45] cityOf(null) ne jette pas');
+  assert(zipOf({ codePostal: '69001' }) === '69001', '[45] zipOf lit `codePostal`');
+  assert(zipOf({ zipcode: '75001' }) === '75001', '[45] zipOf lit `zipcode`');
+  assert(locationLabel({ ville: 'Lyon', codePostal: '69001' }) === 'Lyon (69001)',
+    '[45] locationLabel ville + CP');
+  assert(locationLabel({ ville: 'Lyon' }) === 'Lyon', '[45] locationLabel ville seule');
+  assert(locationLabel({ codePostal: '69001' }) === '69001', '[45] locationLabel CP seul');
+  assert(locationLabel({}) === 'Inconnue', '[45] locationLabel → Inconnue si rien');
+  dom.window.close();
+
+  // 45.4 Migration du dossier de données : legacy conservé, nouveau chemin résolu.
+  const constSrc = fs.readFileSync(path.join(__dirname, '..', 'src/main/config/constants.js'), 'utf8');
+  assert(/LEGACY_DIR_NAME\s*=\s*'Leboncoin Scraper Pro'/.test(constSrc),
+    '[45] constants: dossier historique conservé pour la migration');
+  assert(/APP_DIR_NAME\s*=\s*'Vendra'/.test(constSrc),
+    '[45] constants: nouveau dossier = Vendra');
+  assert(/fs\.renameSync\(legacy, target\)/.test(constSrc),
+    '[45] constants: migration par rename (aucune copie/suppression)');
+  assert(/APP_NAME:\s*'Vendra'/.test(constSrc), '[45] constants: APP_NAME = Vendra');
+
+  // 45.4b Cohérence de marque dans package.json + migration userData Electron.
+  const pkgJson = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
+  assert(pkgJson.name === 'vendra', '[45] package.json: name = vendra');
+  assert(pkgJson.productName === 'Vendra', '[45] package.json: productName = Vendra');
+  assert(pkgJson.build && pkgJson.build.nsis && pkgJson.build.nsis.shortcutName === 'Vendra',
+    '[45] package.json: raccourci NSIS = Vendra (cohérent app/installeur)');
+  const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'src/main/main.js'), 'utf8');
+  assert(/function migrateUserDataDir\(\)/.test(mainSrc),
+    '[45] main.js: migrateUserDataDir présent (préférences conservées au renommage)');
+  assert(/renameSync\(legacy, target\)/.test(mainSrc),
+    '[45] main.js: migration userData par rename (aucune copie/suppression)');
+  assert(/if \(fs\.existsSync\(target\)\) return;/.test(mainSrc),
+    '[45] main.js: migration userData n\'écrase jamais un dossier existant');
+
+  // 45.5 Bornes anti-DoS de buildAdHistory (entrée énorme → pas d\'explosion).
+  const { buildAdHistory } = require('../src/main/services/jobs/jobHistory');
+  const bigAds = Array.from({ length: 100 }, (_, i) => ({ id: 'same', prix: i + 1, title: 'x' }));
+  const hist = buildAdHistory([{ id: 'job-2026-01-01T00-00-00', date: '01/01/2026 à 00:00', ads: bigAds }]);
+  assert(hist.length === 1 && hist[0].sessions <= 32,
+    `[45] buildAdHistory borne les occurrences par annonce (${hist[0].sessions} ≤ 32)`);
+  assert(buildAdHistory(null).length === 0, '[45] buildAdHistory(null) → [] (pas de crash)');
+  assert(buildAdHistory('pas un tableau').length === 0, '[45] buildAdHistory(non-tableau) → []');
+
+  // 45.6 Le renderer n\'affiche plus les champs retirés (ancienneté, date modif.).
+  const explorerSrc = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/explorerModule.js'), 'utf8');
+  assert(!/vendeurAncienneteJours|dateModification/.test(explorerSrc),
+    '[45] explorer: ni ancienneté vendeur ni date de modification affichées');
+  assert(!exf.ALL_FIELD_KEYS.includes('vendeurAnciennete'),
+    '[45] exportFields: vendeurAnciennete retiré des clés exportables');
+  assert(!exf.ALL_FIELD_KEYS.includes('dateModification'),
+    '[45] exportFields: dateModification retiré des clés exportables');
+  assert(!exf.SELLER_FIELD_KEYS.has('vendeurAnciennete'),
+    '[45] exportFields: vendeurAnciennete retiré des clés vendeur');
+}
+console.log('\n[45] OK');
+
+// --- 46. Explorateur : fiche détaillée + localisation (DOM jsdom réel) ---
+// Reproduit le bug signalé (« la fiche détaillée ne s'affiche pas / localisation
+// Inconnue ») sur des annonces au FORMAT D'EXPORT (clés ville/codePostal, comme
+// dans annonces.json) — c'est le format réellement lu par l'explorateur.
+console.log('\n[46] Explorateur (fiche détaillée + localisation, jsdom)');
+{
+  const { JSDOM } = require('jsdom');
+  const repoRoot = path.join(__dirname, '..');
+
+  const html = `<!doctype html><html><body>
+    <div id="adsTableContainer"><table><tbody id="adsTableBody"></tbody></table></div>
+    <div id="adsGridContainer" class="hidden"></div>
+    <span id="filteredAdsCount"></span>
+    <button id="viewTableBtn"></button><button id="viewGridBtn"></button>
+    <input id="filterKeyword"><input id="filterPriceMin"><input id="filterPriceMax">
+    <select id="filterTagSelect"><option value="ALL">ALL</option></select>
+    <select id="sortSelect"><option value="DEFAULT">DEFAULT</option></select>
+    <select id="filterDeliveryType"><option value="tous">tous</option></select>
+    <select id="filterSellerType"><option value="ALL">ALL</option></select>
+    <input id="filterMinRating"><input id="filterMinLikes">
+    <select id="filterEtat"><option value="ALL">ALL</option></select>
+    <select id="sessionSelect"><option value="ALL">ALL</option></select>
+    <div id="adDetailModal" class="hidden">
+      <h3 id="modalAdTitle"></h3>
+      <button id="closeDetailModalBtn"></button>
+      <img id="mainGalleryImg"><div id="galleryThumbnails"></div>
+      <span id="modalDealBadge"></span><button id="modalStarBtn"></button>
+      <span id="modalPrice"></span><span id="modalCity"></span>
+      <span id="modalSeller"></span><span id="modalDate"></span>
+      <div id="modalDescription"></div>
+      <button id="modalOpenLeboncoinBtn"></button>
+      <span id="modalSellerRating"><span class="modal-extra-val">-</span></span>
+      <span id="modalDeliveryType"><span class="modal-extra-val">-</span></span>
+      <span id="modalLikes"><span class="modal-extra-val">-</span></span>
+      <span id="modalDateScraping"><span class="modal-extra-val">-</span></span>
+      <span id="modalTypeVendeur"><span class="modal-extra-val">-</span></span>
+      <span id="modalEtat"><span class="modal-extra-val">-</span></span>
+    </div>
+    <div id="toastContainer"></div>
+  </body></html>`;
+
+  const dom = new JSDOM(html, { runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://app.local/' });
+  const { window } = dom;
+  window.api = { getHistory: async () => [], openExternal: () => {}, openFolder: async () => ({ success: true }) };
+  window.confirm = () => true;
+
+  const utilsSrc = fs.readFileSync(path.join(repoRoot, 'src/renderer/utils.js'), 'utf8');
+  const appStateSrc = fs.readFileSync(path.join(repoRoot, 'src/renderer/appState.js'), 'utf8');
+  const explorerSrc = fs.readFileSync(path.join(repoRoot, 'src/renderer/explorerModule.js'), 'utf8');
+  // Ordre de chargement réel (index.html) : utils → appState → explorerModule.
+  // Les `let` d'appState (allJobsCache, includeSellerData) sont dans la portée de
+  // CET eval : on expose des setters qui écrivent dans la même portée (une
+  // affectation depuis un autre window.eval créerait un global masquant).
+  window.eval(utilsSrc + '\n' + appStateSrc + '\n' + explorerSrc
+    + '\n;window.__setCache = (v) => { allJobsCache = v; };'
+    + '\n;window.__setSeller = (v) => { includeSellerData = v; };');
+
+  // Annonce au FORMAT D'EXPORT : ville/codePostal (et non city/zipcode).
+  const exportAd = {
+    id: '2831923847', title: 'PC portable Gamer', url: 'https://www.leboncoin.fr/ad/2831923847.htm',
+    prix: 450, ville: 'Lyon', codePostal: '69001', deliveryType: 'livraison',
+    vendeurNom: 'Jean D.', vendeurType: 'particulier', vendeurNote: 4.8, vendeurNbAvis: 27,
+    vendeurUrlProfil: 'https://www.leboncoin.fr/u/1.htm', likes: 5,
+    datePublication: '2026-08-01T10:00:00Z', dateScraping: '2026-08-01T12:30:00Z',
+    etat: 'Très bon état', photosCount: 2, photosUrls: ['https://img/1.jpg', 'https://img/2.jpg'],
+    description: 'Bonjour, PC en excellent état, très bonnes performances.',
+  };
+  window.__setCache([{ id: 'job-2026-08-01T12-00-00', date: '01/08/2026 à 12:00', adsCount: 1, ads: [exportAd] }]);
+  window.__setSeller(true);
+
+  assert(typeof window.openAdDetail === 'function', '[46] openAdDetail exposé');
+  window.openAdDetail('2831923847');
+
+  const $ = (id) => window.document.getElementById(id);
+  const modal = $('adDetailModal');
+  assert(!modal.classList.contains('hidden'), '[46] la fiche détaillée s\'ouvre (modal visible)');
+  assert($('modalAdTitle').textContent === 'PC portable Gamer', '[46] titre affiché');
+  assert($('modalPrice').textContent === '450', '[46] prix affiché');
+  // Bug localisation : ville présente (clé d'export `ville`) → NE DOIT PAS être « Inconnue ».
+  assert($('modalCity').textContent === 'Lyon (69001)',
+    `[46] localisation ville+CP depuis clés d'export (obtenu "${$('modalCity').textContent}")`);
+  assert(!/Inconnue/.test($('modalCity').textContent), '[46] la ville n\'est pas « Inconnue » alors qu\'elle existe');
+  assert(/Jean D\./.test($('modalSeller').textContent), '[46] vendeur affiché');
+  assert(/excellent état/.test($('modalDescription').textContent), '[46] description affichée');
+  assert(/4\.8/.test($('modalSellerRating').querySelector('.modal-extra-val').textContent),
+    '[46] note vendeur affichée');
+  assert(/27/.test($('modalSellerRating').querySelector('.modal-extra-val').textContent),
+    '[46] nombre d\'avis affiché (note + avis)');
+  assert($('modalDeliveryType').querySelector('.modal-extra-val').textContent === 'Livraison uniquement',
+    '[46] type de remise affiché');
+  assert($('modalLikes').querySelector('.modal-extra-val').textContent === '5', '[46] likes affichés');
+  assert($('galleryThumbnails').children.length === 2, '[46] galerie : 2 vignettes photo');
+  assert($('mainGalleryImg').getAttribute('src') === 'https://img/1.jpg', '[46] photo principale = 1re URL');
+
+  // Annonce sans ville → « Inconnue » honnête (jamais inventée).
+  const noCityAd = { id: 'X1', title: 'Sans ville', url: 'u', prix: 10, description: 'd' };
+  window.__setCache([{ id: 'j2', date: '02/08/2026', adsCount: 1, ads: [noCityAd] }]);
+  window.openAdDetail('X1');
+  assert($('modalCity').textContent === 'Inconnue', '[46] ville absente → « Inconnue » (jamais inventée)');
+  assert($('mainGalleryImg').getAttribute('src') && /data:image\/svg/.test($('mainGalleryImg').getAttribute('src')),
+    '[46] aucune photo → placeholder local (pas d\'URL fictive)');
+
+  // Annonce absente → la modal reste fermée (pas de fiche vide trompeuse).
+  $('adDetailModal').classList.add('hidden');
+  window.openAdDetail('INEXISTANT');
+  assert($('adDetailModal').classList.contains('hidden'), '[46] annonce introuvable → modal reste fermée');
+
+  dom.window.close();
+}
+console.log('\n[46] OK');
+
 
 console.log(`\n=== RÉSULTAT : ${pass} réussis, ${fail} échoués ===`);
 process.exit(fail > 0 ? 1 : 0);

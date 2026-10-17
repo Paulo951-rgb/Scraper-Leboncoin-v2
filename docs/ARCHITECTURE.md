@@ -63,7 +63,8 @@ L'UI est organisée en **sidebar** + modules :
 - `logsModule.js` — onglet Logs (console temps réel, filtrage, auto-scroll).
 - `historyModule.js` — onglet Historique (jobs, ouverture dossier, suppression).
 - `explorerModule.js` — onglet Explorateur (table, grille, filtres, tri, fiche détaillée).
-- `statsModule.js` — onglet Stats (cartes, graphiques, carte Leaflet).
+- `statsModule.js` — onglet Statistiques (cartes + 4 graphiques ; sélection de sessions).
+- `mapModule.js` — onglet Carte (Leaflet plein écran, géocodage API Gouv, clusters, marqueurs cliquables).
 - `helpModule.js` — module d'aide (FAQ, guide, feedback).
 - `utils.js` — utilitaires (escapeHtml, escapePath, formatage).
 
@@ -110,10 +111,8 @@ Chaque annonce normalisée (dans `annonces.json`) :
   "vendeurNote": 4.8,
   "nombreAvis": 27,
   "vendeurUrlProfil": "https://www.leboncoin.fr/u/123456.htm",
-  "vendeurAncienneteJours": 120,
   "likes": 5,
   "datePublication": "2026-08-01T10:00:00Z",
-  "dateModification": null,
   "dateScraping": "2026-08-01T12:30:00Z",
   "etat": "Très bon état",
   "photosCount": 4,
@@ -121,6 +120,12 @@ Chaque annonce normalisée (dans `annonces.json`) :
   "description": "Texte complet..."
 }
 ```
+
+> Note : `vendeurAncienneteJours` et `dateModification` ne font plus partie du
+> modèle d'export utilisateur (retirés des profils, de l'interface et des
+> statistiques). L'ancienneté du compte reste calculée en interne pour le
+> diagnostic mais n'est jamais écrite dans `annonces.json`/`annonces.txt`. Des
+> fichiers plus anciens contenant ces clés restent lisibles sans erreur.
 
 ### Champ `deliveryType`
 
@@ -138,8 +143,8 @@ Valeurs canoniques :
 
 | Profil | Description | Champs |
 |---|---|---|
-| **Défaut** | Scraping rapide et léger | 13 champs essentiels |
-| **Maximum** | Toutes les données disponibles | ~23 champs |
+| **Défaut** | Scraping rapide et léger | champs essentiels (dont photosUrls, toujours incluses) |
+| **Maximum** | Toutes les données disponibles | tous les champs exportables |
 | **Personnalisé** | Choix de l'utilisateur | Sélection granulaire par catégorie |
 
 ### Convention

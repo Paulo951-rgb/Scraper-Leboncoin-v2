@@ -1,42 +1,76 @@
 #!/usr/bin/env python3
-"""Génère build/icon.ico (multi-résolutions) pour Leboncoin Scraper Pro.
+"""Génère build/icon.ico (multi-résolutions) et build/icon.png pour Vendra.
 
-Icône : carré arrondi dégradé orange (couleur Leboncoin) avec un graphique de
-barres (annonces) et une loupe. Rejouable : `python3 tools/generate-icon.py`.
+Identité : badge arrondi dégradé teal, trois barres de données ascendantes et un
+chevron « V » (monogramme Vendra). Le rendu reproduit fidèlement build/logo.svg
+afin que l'icône d'application, celle de l'installeur Windows et le logo de
+l'interface partagent la même identité.
 
-Dépendance : Pillow (`pip install pillow`). Utilisé pour régénérer l'icône sans
-outil graphique externe ; le résultat versionné est build/icon.ico.
+Rejouable : `python3 tools/generate-icon.py`.
+Dépendance : Pillow (`pip install pillow`).
 """
 import os
 from PIL import Image, ImageDraw
 
 SIZE = 256
-ORANGE = (255, 110, 20)
-ORANGE_DARK = (214, 82, 10)
-RADIUS = 48
+RADIUS = 56
+
+# Dégradé du badge : teal clair -> teal profond (cohérent avec logo.svg).
+BG_TOP = (47, 143, 131)
+BG_BOTTOM = (18, 63, 58)
+ACCENT = (240, 180, 41)
 
 
-def build_image():
-    img = Image.new('RGBA', (SIZE, SIZE), (0, 0, 0, 0))
+def _chevron_points(cx, top_y, half_top, bottom_y, half_bottom, notch):
+    """Points d'un chevron « V » épais (pointe vers le bas)."""
+    return [
+        (cx - half_top, top_y),
+        (cx - half_top + notch, top_y),
+        (cx, bottom_y),
+        (cx + half_top - notch, top_y),
+        (cx + half_top, top_y),
+        (cx + half_bottom, bottom_y + (bottom_y - top_y) * 0.55),
+        (cx, bottom_y + (bottom_y - top_y) * 0.95),
+        (cx - half_bottom, bottom_y + (bottom_y - top_y) * 0.55),
+    ]
+
+
+def build_image(size=SIZE):
+    # Supersampling x4 : lisse les bords du chevron et des barres (l'icône est
+    # utilisée jusqu'à 16x16 dans la barre des tâches).
+    ss = 4
+    big = size * ss
+    img = Image.new('RGBA', (big, big), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
 
-    for y in range(SIZE):
-        t = y / (SIZE - 1)
-        color = tuple(int(ORANGE[i] * (1 - t) + ORANGE_DARK[i] * t) for i in range(3))
-        d.line([(0, y), (SIZE, y)], fill=(*color, 255))
+    for y in range(big):
+        t = y / (big - 1)
+        color = tuple(int(BG_TOP[i] * (1 - t) + BG_BOTTOM[i] * t) for i in range(3))
+        d.line([(0, y), (big, y)], fill=(*color, 255))
 
-    mask = Image.new('L', (SIZE, SIZE), 0)
-    ImageDraw.Draw(mask).rounded_rectangle([0, 0, SIZE - 1, SIZE - 1], radius=RADIUS, fill=255)
+    mask = Image.new('L', (big, big), 0)
+    ImageDraw.Draw(mask).rounded_rectangle(
+        [0, 0, big - 1, big - 1], radius=RADIUS * ss, fill=255)
     img.putalpha(mask)
 
     d = ImageDraw.Draw(img)
-    for (x0, y0, x1, y1) in [(60, 150, 84, 200), (96, 120, 120, 200), (132, 90, 156, 200)]:
-        d.rounded_rectangle([x0, y0, x1, y1], radius=6, fill=(255, 255, 255, 210))
+    # Barres de données ascendantes.
+    bars = [(60, 150, 20, 50, 0.45), (92, 122, 20, 78, 0.65), (124, 94, 20, 106, 0.85)]
+    for (x, y, w, h, alpha) in bars:
+        d.rounded_rectangle(
+            [x * ss, y * ss, (x + w) * ss, (y + h) * ss],
+            radius=6 * ss, fill=(255, 255, 255, int(255 * alpha)))
 
-    cx, cy, rr = 168, 150, 44
-    d.ellipse([cx - rr, cy - rr, cx + rr, cy + rr], outline=(255, 255, 255, 255), width=12)
-    d.line([(cx + 30, cy + 30), (cx + 52, cy + 52)], fill=(255, 255, 255, 255), width=14)
-    return img
+    # Chevron « V » (monogramme).
+    d.polygon(
+        [(px * ss, py * ss) for (px, py) in _chevron_points(135, 62, 51, 148, 26, 26)],
+        fill=(255, 255, 255, 255))
+
+    # Point d'accent.
+    cx, cy, r = 196, 188, 16
+    d.ellipse([(cx - r) * ss, (cy - r) * ss, (cx + r) * ss, (cy + r) * ss], fill=(*ACCENT, 255))
+
+    return img.resize((size, size), Image.LANCZOS)
 
 
 def main():

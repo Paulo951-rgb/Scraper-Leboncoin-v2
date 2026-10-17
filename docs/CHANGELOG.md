@@ -1,7 +1,66 @@
-# Changelog — Leboncoin Scraper Pro
+# Changelog — Vendra
 
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/). Les entrées
 décrivent des modifications vérifiées (code + tests).
+
+## [Non publié] — Refonte produit « Vendra » — 2026-10-17
+
+### Ajouté
+
+- **Identité « Vendra »** : nom produit, logo SVG (barres + accent), icône
+  d'application multi-résolutions régénérée, titre de fenêtre, sidebar et
+  écran d'information. Nom cohérent dans `package.json` (name/productName/appId/
+  shortcutName), l'installeur et la version portable (`Vendra-Portable-<version>.exe`).
+- **Migration du dossier de données** : `Documents/Leboncoin Scraper Pro` →
+  `Documents/Vendra` par `rename` atomique (`resolvePackagedBaseDir`), sans copie
+  ni suppression ; repli sur l'ancien dossier si le renommage échoue.
+- **Migration du dossier userData Electron** : les préférences, favoris, presets
+  et thème sont conservés après le renommage de l'application (`migrateUserDataDir`
+  dans `main.js`).
+- **Onglet Carte indépendant** (`mapModule.js`) : Leaflet plein écran,
+  `invalidateSize()` à l'ouverture (fin des cartes grises), filtres session +
+  remise main propre, clusters, bouton de recentrage, marqueurs cliquables.
+- **Historique — « Ouvrir le dossier »** : chaque session ouvre son dossier de
+  résultats (`job:openSessionFolder`), chemin reconstruit et vérifié côté main.
+- **Trois thèmes** : Sombre (neutre, sans dominante bleue), Clair (contrasté),
+  Graphite (premium). Choix mémorisé.
+- **Icônes de navigation vectorielles** (SVG `currentColor`) en remplacement des
+  emojis dans la sidebar.
+
+### Modifié
+
+- **Récupération systématique des URL de photos** dans les **trois** profils
+  (`ESSENTIAL_FIELD_KEYS` + `ensureEssentialFields`) : l'explorateur dispose
+  toujours des vignettes/galerie, sans téléchargement massif sur disque
+  (chargement à la demande, `loading="lazy"`).
+- **Champs retirés** des exports et de l'interface : `vendeurAnciennete` /
+  `vendeurAncienneteJours` et `dateModification`. Les anciens JSON restent
+  lisibles (aucune erreur), mais ces champs ne sont plus proposés.
+- **Onglet Statistiques** : la carte en est retirée (onglet dédié), sélection de
+  sessions, médiane correcte pour un nombre pair de valeurs, valeurs inconnues
+  non comptées comme zéro.
+- **Onglet Scraper simplifié** : suppression de la section « Configuration proxy
+  rotatif » et de l'option « Ignorer les descriptions » (contrôles, état et
+  logique dédiée retirés). Les protections anti-débit (backoff, circuit breaker)
+  restent actives.
+
+### Corrigé
+
+- **Fiche détaillée (Explorateur)** : la ville s'affichait « Inconnue » alors
+  qu'elle existait (désalignement de clés `city`/`ville`). Résolu par
+  `cityOf`/`zipOf`/`locationLabel` (`utils.js`) ; la fiche affiche désormais
+  ville + code postal, photos, description et informations vendeur.
+- **Nombre d'avis vendeur dans la fiche détaillée** : la fiche lisait la clé du
+  modèle (`nombreAvis`) alors que `annonces.json` écrit la clé d'export
+  (`vendeurNbAvis`) → la note s'affichait SANS le nombre d'avis. La fiche lit
+  désormais les deux clés.
+- **Localisation honnête** : aucune ville inventée ; absence → « Inconnue ».
+- **Bornes anti-DoS** de `buildAdHistory` (historique d'annonces) : un
+  `annonces.json` énorme/corrompu ne fait plus exploser la mémoire du main.
+- **`job:openSessionFolder`** : le handler ne reçoit qu'un identifiant de session
+  (jamais un chemin), le valide (`job-<id>`) et vérifie le chemin reconstruit
+  côté main avant tout accès disque (anti path-traversal) ; message explicite si
+  la session n'existe plus.
 
 ## [Non publié] — Politique de scraping fixe + fiabilité des exports — 2026-10-17
 

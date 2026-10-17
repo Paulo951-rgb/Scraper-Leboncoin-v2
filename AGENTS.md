@@ -1,4 +1,4 @@
-# AGENTS.md — Leboncoin Scraper Pro
+# AGENTS.md — Vendra
 
 Repository knowledge for AI agents working on this codebase.
 
@@ -182,16 +182,16 @@ Structure produite par `normalizeAd()` (sans aucune dépendance IA) :
 | PRIX | prix (nombre) | `prix` est un nombre, PAS un objet |
 | LOCALISATION | city, zipcode | |
 | TRANSACTION | deliveryType | Champ unifié (les_deux / livraison / main_propre / aucun / inconnu) |
-| VENDEUR | vendeurNom, vendeurType, vendeurId, vendeurNote, nombreAvis, vendeurUrlProfil, vendeurAncienneteJours | note=null si pas dispo |
+| VENDEUR | vendeurNom, vendeurType, vendeurId, vendeurNote, nombreAvis, vendeurUrlProfil | note=null si pas dispo ; `vendeurAncienneteJours` extrait en interne mais NON exporté/affiché |
 | STATS | likes | 0 ≠ null |
-| DATES | datePublication, dateModification, dateScraping | scraping=ISO au moment de l'extraction |
+| DATES | datePublication, dateScraping | scraping=ISO au moment de l'extraction ; `dateModification` retiré des exports/UI |
 | PRODUIT | etat | État déclaré UNIQUEMENT (extrait des attributs structurés) |
 | PHOTOS | photosCount, photosUrls | |
 | DESCRIPTION | description | Toujours une string (jamais un objet) |
 
 **Convention** : tout champ non trouvé est `null` (jamais `0`, jamais `''`, jamais une valeur inventée).
 
-**Champs SUPPRIMÉS (ne doivent plus apparaître nulle part)** : `livraison`, `mainPropre` (remplacés par `deliveryType`), `negociable`, `facture`, `garantie`, `echangeAccepte`, `urgent`, `vues`, `marque`, `modele`, `couleur`, `taille`, `capacite`, `annee`, `matiere`, `reference`, `etatDetecte`, `etatInferre`, `detection{}`, `prix.valeur` (remplacé par prix simple), `prix.devise` séparé, `prix.original`, `prix.negociable`, `adAnalysis` (IA supprimée), `marketAnalysis` (IA supprimée), `vision` (IA supprimée).
+**Champs SUPPRIMÉS (ne doivent plus apparaître nulle part)** : `livraison`, `mainPropre` (remplacés par `deliveryType`), `negociable`, `facture`, `garantie`, `echangeAccepte`, `urgent`, `vues`, `marque`, `modele`, `couleur`, `taille`, `capacite`, `annee`, `matiere`, `reference`, `etatDetecte`, `etatInferre`, `detection{}`, `prix.valeur` (remplacé par prix simple), `prix.devise` séparé, `prix.original`, `prix.negociable`, `adAnalysis` (IA supprimée), `marketAnalysis` (IA supprimée), `vision` (IA supprimée), `vendeurAnciennete` (clé d'export retirée), `dateModification` (clé d'export retirée).
 
 ## Architecture (src/main/)
 ```
@@ -232,9 +232,10 @@ scraperModule.js             onglet Scraper (URL, pages, profil, presets, option
 logsModule.js                onglet Logs (console temps réel, filtrage)
 historyModule.js            onglet Historique (jobs, ouverture, suppression)
 explorerModule.js           onglet Explorateur (table, grille, filtres, tri, fiche)
-statsModule.js              onglet Stats (cartes, graphiques, carte Leaflet)
+statsModule.js               onglet Statistiques (cartes + 4 graphiques, sessions sélectionnables)
+mapModule.js                 onglet Carte (Leaflet, géocodage API Gouv, clusters, marqueurs)
 helpModule.js               module d'aide (FAQ, guide, feedback)
-styles.css                   habillage + 13 thèmes + stat-cards
+styles.css                   habillage + 3 thèmes (Sombre/Clair/Graphite) + composants
 ```
 
 > **Note** : l'ancien répertoire `services/ai/` (adAnalyzer, marketValueAnalyzer, promptGenerator, promptTemplates, aiCache, ollamaHealth, providers/, search/) a été **entièrement supprimé**. L'ancien module `aiStudioModule.js` (renderer) a été supprimé. L'ancien `excelExporter.js` (infrastructure) a été supprimé.
@@ -256,6 +257,63 @@ styles.css                   habillage + 13 thèmes + stat-cards
 - `constants.js` et `logger.js` et `secretStore.js` require('electron') au
   top-level → NE JAMAIS les require depuis le pipeline sous-processus (fork), qui
   n'a pas accès à `app`.
+
+
+## Identité « Vendra » et dossier de données (migration)
+- Nom produit : **Vendra** (`APP_NAME`, `productName`, `appId: com.vendra.app`).
+  Cohérence exigée entre `package.json`, la fenêtre, l'installeur et les raccourcis.
+- Dossier de données packagé : `Documents/Vendra` (dev : `./output`). La migration
+  depuis l'ancien dossier `Documents/Leboncoin Scraper Pro` est faite par
+  `resolvePackagedBaseDir()` (`config/constants.js`) via un `rename` atomique —
+  AUCUNE copie, AUCUNE suppression. Si le rename échoue (dossier verrouillé), on
+  continue d'utiliser l'ancien emplacement : la compatibilité prime. `BASE_OUT_DIR`
+  est la source unique (jobs, secrets, logs) pour qu'un renommage ne laisse pas de
+  secrets orphelins.
+
+## Récupération des photos dans TOUS les profils (règle centralisée)
+- Les URL de photos (`photosUrls`) sont un champ TECHNIQUE essentiel à
+  l'explorateur (vignettes + galerie) : elles ne doivent JAMAIS dépendre du profil.
+- `ESSENTIAL_FIELD_KEYS` + `ensureEssentialFields(fields)` (`exporting/exportFields.js`)
+  garantissent `photosCount`/`photosUrls` dans Défaut, Maximum ET Personnalisé.
+  `getProfileFields` (dataProfiles) et `filterAdByFields`/`toReadableBlock` appliquent
+  la règle → ne pas revenir à un filtrage sec qui laisserait les photos disparaître.
+- Les images sont chargées à la DEMANDE depuis leur URL distante (`loading="lazy"`,
+  `decoding="async"`) : aucun téléchargement massif sur disque, aucun cache disque.
+- États visuels gérés : chargement (`.img-loading`), erreur/URL expirée
+  (`.img-error` → placeholder local), aucune image (placeholder). Ne jamais
+  substituer de données fictives.
+
+## Localisation : compatibilité des clés (ville/city, codePostal/zipcode)
+- Le modèle `normalizeAd` expose `city`/`zipcode` ; les clés d'EXPORT sont
+  `ville`/`codePostal`. `filterAdByFields` traduit via `MODEL_KEY_FOR_EXPORT`.
+- Côté renderer, `cityOf(a)` / `zipOf(a)` / `locationLabel(a)` (`utils.js`, chargés
+  avant les modules) résolvent `city ?? ville ?? location.city` (et l'inverse pour le
+  code postal). Sans cela, l'explorateur et la fiche détaillée affichaient
+  « Inconnue » alors que la ville existait. `locationLabel` n'invente JAMAIS de ville :
+  absence → « Inconnue ».
+
+## Onglets Statistiques et Carte (séparés)
+- `statsModule.js` = cartes + 4 graphiques uniquement (plus de carte). Sélection de
+  sessions (`statsSessionSelect`) ; les prix/villes inconnus ne sont PAS comptés
+  comme zéro ; médiane correcte pour un nombre pair de valeurs.
+- `mapModule.js` = onglet **Carte** indépendant : Leaflet plein écran, `map.invalidateSize()`
+  à l'ouverture de l'onglet (sinon carte grise), filtres session + remise main propre,
+  clusters (`clusterMarkers`), bouton de recentrage, marqueurs cliquables (fiche + annonce).
+  Géocodage API Gouv France, cache localStorage BORNÉ (`GEO_CACHE_MAX`), timeout 10 s.
+  Aucune coordonnée inventée : ville géocodée → position au centre de la ville.
+
+## Historique : ouverture du dossier de résultats
+- Chaque session expose une action « Ouvrir le dossier » (`openSessionFolder(jobId)`).
+- Le renderer ne fournit JAMAIS de chemin : seul un identifiant `job-<...>` est
+  transmis, validé côté main (`job:openSessionFolder`), puis le chemin est
+  reconstruit et vérifié sous `JOBS_DIR` (anti path-traversal). Cible :
+  `<JOBS_DIR>/<jobId>/results`, à défaut le dossier du job. Dossier absent →
+  message explicite (jamais d'ouverture silencieuse ratée).
+
+## Bornes anti-DoS de l'historique d'annonces
+- `buildAdHistory` borne l'entrée (`MAX_JOBS`, `MAX_ADS_PER_JOB`) et les occurrences
+  par annonce (`MAX_OCCURRENCES_PER_AD`) : un `annonces.json` énorme/corrompu ne doit
+  pas faire exploser la mémoire du main process.
 
 ## Tests
 - `node test/regression.test.js` → suite de non-régression (syntaxe + stubs Electron).
@@ -463,6 +521,19 @@ Sans Wine, `-c.win.signAndEditExecutable=false` permet de produire `dist/win-unp
   `vendeurAncienneteJours`) via `MODEL_KEY_FOR_EXPORT`. Ne PAS revenir à une
   copie `out[key] = ad[key]` : ces champs disparaîtraient des exports Défaut et
   Personnalisé.
+- **Fiche détaillée : lire les DEUX clés vendeur** : `annonces.json` contient des
+  clés d'export (`vendeurNote`, `vendeurNbAvis`, `vendeurNom`, `ville`,
+  `codePostal`), pas les clés du modèle (`nombreAvis`, `city`, `zipcode`). La
+  fiche détaillée (`openAdDetail`) doit lire les deux formes : elle lisait
+  seulement `nombreAvis` → la note s'affichait SANS le nombre d'avis. Utiliser
+  `cityOf`/`zipOf`/`locationLabel` (`utils.js`) pour la localisation. Le test
+  `[46]` (jsdom) verrouille ce comportement.
+- **Tests jsdom : `let` de portée eval** : un script injecté par `window.eval`
+  place ses `let` (ex. `allJobsCache` dans `appState.js`) dans la portée de CET
+  eval. Une affectation ultérieure via un AUTRE `window.eval('allJobsCache = …')`
+  crée un global qui MASQUE la liaison lexicale → le module lit toujours
+  l'ancienne valeur (fiche détaillée vide). Exposer des setters dans le même
+  `eval` (cf. section `[46]`).
 - **harCapturer warmup cancel** : si l'utilisateur annule pendant la résolution
   CAPTCHA (fenêtre visible), NE PAS persister `storageState` — la session est
   encore bloquée (cookies anti-bot). Fermer sans `storageState()`.

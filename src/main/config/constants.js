@@ -1,12 +1,44 @@
 'use strict';
 
 const path = require('path');
+const fs = require('fs');
 const { app } = require('electron');
 
+// Nom du dossier de données utilisé par les versions antérieures (avant le
+// renommage « Vendra »). Conservé UNIQUEMENT pour la migration : les données
+// existantes de l'utilisateur ne doivent jamais être perdues ni dupliquées.
+const LEGACY_DIR_NAME = 'Leboncoin Scraper Pro';
+const APP_DIR_NAME = 'Vendra';
+
+/**
+ * Résout le dossier de données utilisateur en version packagée.
+ *
+ * Migre `Documents/Leboncoin Scraper Pro` vers `Documents/Vendra` par un simple
+ * `rename` (aucune copie, aucune suppression) :
+ * - si le nouveau dossier existe déjà, on l'utilise tel quel ;
+ * - si seul l'ancien existe, on le renomme (opération atomique) ;
+ * - si le renommage échoue (dossier verrouillé), on CONTINUE d'utiliser
+ *   l'ancien emplacement : la compatibilité prime sur l'esthétique du chemin.
+ */
+function resolvePackagedBaseDir() {
+  const documents = app.getPath('documents');
+  const target = path.join(documents, APP_DIR_NAME);
+  const legacy = path.join(documents, LEGACY_DIR_NAME);
+  try {
+    if (fs.existsSync(target)) return target;
+    if (fs.existsSync(legacy)) {
+      fs.renameSync(legacy, target);
+      return target;
+    }
+  } catch {
+    return legacy;
+  }
+  return target;
+}
+
 // Définition du dossier de base (Documents pour l'exe, dossier local pour le dev)
-const isPackaged = app.isPackaged;
-const BASE_OUT_DIR = isPackaged 
-  ? path.join(app.getPath('documents'), 'Leboncoin Scraper Pro')
+const BASE_OUT_DIR = app.isPackaged
+  ? resolvePackagedBaseDir()
   : path.join(process.cwd(), 'output');
 
 // 🔑 Chemin unique pour la session globale (Master Session)
@@ -18,7 +50,7 @@ const JOBS_DIR = path.join(BASE_OUT_DIR, 'jobs');
 // (calculé dynamiquement par job dans ipcHandlers), il n'y a pas de RESULTS_DIR global.
 
 module.exports = {
-  APP_NAME: 'Leboncoin Scraper Pro',
+  APP_NAME: 'Vendra',
   BASE_OUT_DIR,
   JOBS_DIR,
   // Note: les valeurs par défaut des réglages utilisateur (vitesse, headless,

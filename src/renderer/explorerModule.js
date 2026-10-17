@@ -447,7 +447,11 @@ window.openAdDetail = (adId) => {
 
   let ratingText = '-';
   const note = targetAd.vendeurNote != null ? targetAd.vendeurNote : targetAd.sellerRating;
-  const nbAvis = targetAd.nombreAvis != null ? targetAd.nombreAvis : null;
+  // Le nombre d'avis est écrit en clé d'export `vendeurNbAvis` dans annonces.json
+  // (le modèle interne utilise `nombreAvis`). Sans lire les deux, la fiche
+  // détaillée d'une annonce exportée affichait la note SANS le nombre d'avis.
+  const nbAvis = targetAd.nombreAvis != null ? targetAd.nombreAvis
+    : (targetAd.vendeurNbAvis != null ? targetAd.vendeurNbAvis : null);
   if (includeSellerData && note != null) {
     ratingText = `${note}/5`;
     if (nbAvis != null) ratingText += ` (${nbAvis} avis)`;

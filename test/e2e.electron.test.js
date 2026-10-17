@@ -183,7 +183,7 @@ async function scenarioPreloadSurface() {
 }
 
 async function main() {
-  console.log('=== TESTS E2E ELECTRON (Leboncoin Scraper Pro) ===');
+  console.log('=== TESTS E2E ELECTRON (Vendra) ===');
   console.log(`Electron : ${ELECTRON_BIN}`);
   await scenarioStartupAndUI();
   await scenarioDomProbe();

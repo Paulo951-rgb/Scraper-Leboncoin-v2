@@ -85,7 +85,7 @@ const FAQ_DATA = [
   },
   {
     q: 'Comment interpréter les statistiques ?',
-    a: `<p>L'onglet <strong>📊 Statistiques & Carte</strong> calcule les statistiques à partir des annonces réellement collectées : total, prix moyen, <strong>prix médian</strong> (souvent plus parlant que la moyenne car il ignore les extrêmes), prix min/max, répartition des modes de remise, vendeurs pro/particulier, top villes.</p>
+    a: `<p>L'onglet <strong>Statistiques</strong> calcule les statistiques à partir des annonces réellement collectées : total, prix moyen, <strong>prix médian</strong> (souvent plus parlant que la moyenne car il ignore les extrêmes), prix min/max, répartition des modes de remise, vendeurs pro/particulier, top villes.</p>
         <p>Les annonces sans prix valide sont ignorées dans les calculs de prix (et comptées séparément). Les statistiques se recalculent après chaque job et lors du changement de session.</p>`
   },
   {
@@ -114,8 +114,8 @@ const FAQ_DATA = [
         <p>Vous pouvez aussi ouvrir une <strong>issue</strong> sur le dépôt GitHub en décrivant : ce que vous faisiez, ce qui s'est passé, et si possible le <code>report.json</code> du job concerné. Pour un diagnostic, joignez l'extrait pertinent de l'onglet <strong>Logs</strong> (jamais de secrets).</p>`
   },
   {
-    q: 'À quoi sert Leboncoin Scraper Pro ?',
-    a: `<p>Leboncoin Scraper Pro est un logiciel de bureau (Windows / macOS / Linux) qui <strong>collecte automatiquement les annonces Leboncoin</strong> à partir d'une URL de recherche, puis les exporte.</p>
+    q: 'À quoi sert Vendra ?',
+    a: `<p>Vendra est un logiciel de bureau (Windows / macOS / Linux) qui <strong>collecte automatiquement les annonces Leboncoin</strong> à partir d'une URL de recherche, puis les exporte.</p>
         <p>Il permet de :</p>
         <ul>
           <li>récupérer des dizaines, voire des centaines d'annonces en quelques minutes ;</li>
@@ -234,21 +234,22 @@ const HELP_SECTIONS = [
   },
   {
     icon: '📊', title: '4. Comprendre les statistiques',
-    body: `<p>Onglet <strong>📊 Statistiques & Carte</strong> :</p>
+    body: `<p>Onglet <strong>Statistiques</strong> (la carte dispose de son propre onglet <strong>Carte</strong>) :</p>
       <ul>
         <li><strong>8 cartes</strong> : Total, Prix Moyen, Prix Médian, Prix Min/Max, Livraison, Répartition remise, Professionnels, Particuliers.</li>
-        <li><strong>3 graphiques</strong> : Distribution des prix, Vendeurs (pro/particulier), Top 10 Villes.</li>
+        <li><strong>4 graphiques</strong> : Distribution des prix, Vendeurs (pro/particulier), Top 10 Villes, Modes de transaction.</li>
         <li>Le sélecteur en haut permet de choisir <strong>une session précise</strong> ou toutes combinées.</li>
       </ul>
       <div class="help-tip">💡 Le prix <strong>médian</strong> est souvent plus parlant que la moyenne (il ignore les prix extrêmes).</div>`
   },
   {
     icon: '🗺️', title: '5. Utiliser la carte',
-    body: `<p>La carte (Leaflet) affiche la <strong>répartition géographique</strong> des annonces en France.</p>
+    body: `<p>L'onglet <strong>Carte</strong> (Leaflet, plein écran) affiche la <strong>répartition géographique</strong> des annonces en France.</p>
       <ul>
         <li>Cochez <strong>« Remise en main propre uniquement »</strong> pour ne voir que les annonces récupérables en personne (main_propre ou les_deux).</li>
-        <li>Les annonces sont <strong>dédupliquées par id</strong> (pas de doublons si plusieurs sessions).</li>
-        <li>Le géocodage (ville → coordonnées) utilise l'API gouvernementale, avec un cache et un timeout de 10 s.</li>
+        <li>Les annonces sont <strong>dédupliquées par id</strong> (pas de doublons si plusieurs sessions) et regroupées quand elles sont proches.</li>
+        <li>Le géocodage (ville → coordonnées) utilise l'API gouvernementale, avec un cache borné et un timeout de 10 s.</li>
+        <li>Un bouton permet de <strong>recentrer</strong> la carte sur les annonces disponibles.</li>
       </ul>
       <div class="help-warn">⚠️ Seules les annonces avec une ville détectée peuvent être positionnées.</div>`
   },
@@ -269,7 +270,7 @@ const HELP_SECTIONS = [
         <li><strong>JSON / TXT</strong> — formats lisibles pour réutilisation.</li>
         <li>Les fichiers <code>.har</code> sont nettoyés automatiquement (Paramètres → rétention).</li>
       </ul>
-      <p>L'onglet <strong>📁 Historique Jobs</strong> liste tous les scrapings passés, avec accès aux fichiers et suppression.</p>`
+      <p>L'onglet <strong>Historique</strong> liste tous les scrapings passés ; le bouton <strong>« Ouvrir le dossier »</strong> d'une session ouvre directement son dossier de résultats (JSON, TXT, rapport).</p>`
   },
   {
     icon: '🛡️', title: '8. Données et responsabilités',

@@ -40,7 +40,6 @@ const modalConfirmBtn = document.getElementById('modalConfirmBtn');
 const adDetailModal = document.getElementById('adDetailModal');
 const compareModal = document.getElementById('compareModal');
 const settingsModal = document.getElementById('settingsModal');
-const proxyUrl = null; // section proxy rotatif supprimée de l'interface
 
 // ─── Favoris : chargement initial depuis localStorage ───────────────────────
 try {

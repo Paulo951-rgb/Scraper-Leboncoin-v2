@@ -1,6 +1,6 @@
-# FAQ — Leboncoin Scraper Pro
+# FAQ — Vendra
 
-Questions fréquentes sur l'utilisation de **Leboncoin Scraper Pro**.
+Questions fréquentes sur l'utilisation de **Vendra**.
 
 ---
 
@@ -17,7 +17,7 @@ Leboncoin détecte les activités robotiques (navigation rapide, nombreuses requ
 Plusieurs causes possibles :
 
 1. **CAPTCHA non résolu** : si une fenêtre captcha est restée ouverte trop longtemps (timeout 10 min), le scraping s'arrête. Relancez-le.
-2. **Erreurs 403/429** : Leboncoin limite temporairement les requêtes. Le logiciel réduit automatiquement la concurrence et applique un backoff (le `Retry-After` est respecté) ; patientez quelques minutes avant de relancer, ou utilisez un proxy.
+2. **Erreurs 403/429** : Leboncoin limite temporairement les requêtes. Le logiciel réduit automatiquement la concurrence et applique un backoff (le `Retry-After` est respecté) ; patientez quelques minutes avant de relancer.
 3. **3 blocages consécutifs** : après 3 blocages 403/429 pendant l'enrichissement des descriptions, le scraping s'arrête automatiquement et **sauvegarde** les données déjà collectées. Consultez l'onglet Historique.
 4. **Navigateur Chromium manquant** : un bandeau rouge s'affiche. Réinstallez l'application ou lancez `npx playwright install chromium` (en dev).
 5. **Connexion internet** : vérifiez votre connexion (badge de connectivité dans l'en-tête).
@@ -28,7 +28,6 @@ Plusieurs causes possibles :
 
 Tout champ non trouvé dans la réponse de Leboncoin est `null` (jamais `0`, jamais `''`, jamais une valeur inventée). C'est normal si :
 - le vendeur n'a pas de note (compte récent) ;
-- la date de modification est absente (annonce non modifiée) ;
 - le nombre d'avis n'est pas exposé ;
 - l'état déclaré n'est pas renseigné par le vendeur.
 
@@ -60,7 +59,7 @@ L'application gère ces cas avec les codes d'erreur `AD_DELETED` et `AD_MODIFIED
 
 ## Où sont enregistrées les données ?
 
-- **Version installée** : `Documents/Leboncoin Scraper Pro/`
+- **Version installée** : `Documents/Vendra/`
   - `jobs/job-<timestamp>/results/annonces.json` — données structurées.
   - `jobs/job-<timestamp>/results/annonces.txt` — texte lisible.
   - `jobs/job-<timestamp>/capture.har` — capture réseau brute.
@@ -86,8 +85,8 @@ npm run dist
 ```
 
 Produit dans `dist/` :
-- `Leboncoin Scraper Pro Setup x.x.x.exe` — installeur NSIS.
-- `Leboncoin-Scraper-Pro-Portable-x.x.x.exe` — version portable.
+- `Vendra Setup x.x.x.exe` — installeur NSIS.
+- `Vendra-Portable-x.x.x.exe` — version portable.
 
 ### Packaging local (test)
 ```bash
@@ -122,8 +121,7 @@ Les erreurs **403** (accès refusé) et **429** (trop de requêtes) indiquent qu
 1. **Patienter** : le blocage est temporaire (quelques minutes à quelques heures).
 2. **Ne pas forcer la vitesse** : la politique de performance (Ultra rapide, 25 parallèles max, délai nominal 400 ms) est **fixe et non modifiable**. Le logiciel **réduit automatiquement la concurrence** (÷2 après un 429, −25 % après un 403) et applique un backoff dès qu'il détecte une limitation.
 3. **Réduire le nombre de pages** par job pour limiter les rafales de requêtes.
-4. **Utiliser un proxy** : renseignez un proxy HTTP dans le champ « Proxy » du formulaire de scraping.
-5. **Après 3 blocages consécutifs** : l'enrichissement s'arrête automatiquement et sauvegarde les données collectées. Consultez l'onglet Historique.
+4. **Après 3 blocages consécutifs** : l'enrichissement s'arrête automatiquement et sauvegarde les données collectées. Consultez l'onglet Historique.
 
 ---
 
@@ -132,7 +130,7 @@ Les erreurs **403** (accès refusé) et **429** (trop de requêtes) indiquent qu
 - Le scraping repose sur la structure actuelle de Leboncoin (`__NEXT_DATA__`, endpoints de recherche) : toute évolution du site peut nécessiter une adaptation du parsing.
 - La résolution de captcha est **manuelle** (l'app ouvre une fenêtre visible), mais la détection de résolution est **automatique**.
 - L'enrichissement des descriptions est parallèle (**jusqu'à 25 simultanées**, politique fixe) : en cas de 403/429, la concurrence est réduite automatiquement et l'enrichissement s'arrête après 3 blocages consécutifs.
-- Un blocage IP déjà actif peut nécessiter d'attendre ou d'utiliser un proxy.
+- Un blocage IP déjà actif peut nécessiter d'attendre (le logiciel ne contourne pas les protections anti-abus).
 - Les données sont **100% locales** : aucune analyse par IA, aucune estimation de valeur marché, aucun résumé automatique. L'application scrape, structure et exporte — c'est tout.
 
 ---
@@ -179,7 +177,7 @@ Cette valeur est extraite à partir des attributs structurés de l'annonce et de
 - Idéal pour un aperçu rapide des annonces.
 
 ### Profil Maximum
-- **Toutes les données disponibles** (~23 champs) : tous les champs du profil Défaut + vendeurId, vendeurNote, vendeurNbAvis, vendeurUrlProfil, vendeurAnciennete, likes, dateModification, etat, photosUrls.
+- **Toutes les données disponibles** : tous les champs du profil Défaut + vendeurId, vendeurNote, vendeurNbAvis, vendeurUrlProfil, likes, etat, photosUrls.
 - Scraping **complet**.
 - Idéal pour une sauvegarde exhaustive.
 

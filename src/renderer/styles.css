@@ -1,5 +1,5 @@
 /* =========================================================================
- * Leboncoin Scraper Pro — Premium Desktop Design System
+ * Vendra — Premium Desktop Design System
  * Modern, professional Electron desktop aesthetic (Linear/Notion/Figma style)
  * ========================================================================= */
 
@@ -255,23 +255,26 @@ body {
   padding: var(--space-2) var(--space-1);
   margin-bottom: var(--space-4);
 }
-.sidebar-logo-icon {
-  font-size: 1.5rem;
-  line-height: 1;
+.sidebar-logo-mark {
+  flex-shrink: 0;
+  border-radius: 9px;
+  display: block;
 }
 .sidebar-logo-text {
   display: flex;
   flex-direction: column;
-  line-height: 1.2;
+  line-height: 1.25;
+  min-width: 0;
 }
 .sidebar-logo-title {
-  font-size: 1rem;
+  font-size: 1.05rem;
   font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.01em;
   color: var(--sidebar-text-active);
 }
 .sidebar-logo-sub {
-  font-size: 0.75rem;
-  color: var(--primary-color);
+  font-size: 0.68rem;
+  color: var(--sidebar-text);
   font-weight: var(--font-weight-medium);
 }
 
@@ -311,12 +314,19 @@ body {
   color: var(--primary-contrast);
 }
 .nav-item-icon {
-  font-size: 1.1rem;
-  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
   width: 24px;
-  text-align: center;
+  height: 24px;
+  color: inherit;
+  opacity: 0.92;
 }
+/* Icônes de navigation : SVG vectoriels (currentColor) — plus d'emoji comme
+   identité graphique. Elles suivent la couleur du thème et de l'état actif. */
+.nav-item-icon .nav-icon { display: block; }
+.nav-item.active .nav-item-icon { opacity: 1; }
 .nav-item-label {
   white-space: nowrap;
   overflow: hidden;
@@ -875,6 +885,50 @@ input::placeholder { color: var(--text-muted); opacity: 0.7; }
   border-radius: var(--radius-md);
   border: 1px solid var(--border-color);
   overflow: hidden;
+}
+
+/* Onglet Carte : la carte occupe la majeure partie de l'espace disponible.
+   Le tab-content devient une colonne flex à hauteur contrainte pour que
+   `.map-wrapper` (flex:1) reçoive réellement une hauteur — sinon Leaflet
+   s'initialise sur un conteneur de hauteur nulle (carte grise). */
+#tab-map.active {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.map-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.map-price-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.filter-input-small {
+  width: 90px;
+  padding: var(--space-2);
+}
+
+.map-wrapper {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.map-wrapper .leaflet-map {
+  flex: 1;
+  min-height: 360px;
 }
 
 .map-status {

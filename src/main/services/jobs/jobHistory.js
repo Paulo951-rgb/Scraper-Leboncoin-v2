@@ -24,13 +24,28 @@ const { readWithChecksum } = require('../../utils/integrity');
  */
 function buildAdHistory(allJobs) {
   const byAd = new Map(); // id → array of { jobId, jobDate, ad }
-  for (const job of allJobs) {
+  // Bornes anti-DoS : un annonces.json corrompu ou volontairement énorme ne doit
+  // pas faire exploser la mémoire du processus principal (cette fonction est
+  // appelée sur TOUTES les annonces de TOUTES les sessions). On borne donc
+  // l'entrée, et on tronque les occurrences mémorisées par annonce : seules la
+  // première et la dernière occurrence servent au calcul.
+  const MAX_JOBS = 5000;
+  const MAX_ADS_PER_JOB = 50000;
+  const MAX_OCCURRENCES_PER_AD = 32;
+  const jobs = Array.isArray(allJobs) ? allJobs.slice(0, MAX_JOBS) : [];
+  for (const job of jobs) {
     if (!job || !Array.isArray(job.ads)) continue;
-    for (const a of job.ads) {
+    for (const a of job.ads.slice(0, MAX_ADS_PER_JOB)) {
       if (!a || !a.id) continue;
       const id = String(a.id);
       if (!byAd.has(id)) byAd.set(id, []);
-      byAd.get(id).push({ jobId: job.id, jobDate: job.date || job.id, ad: a });
+      const occ = byAd.get(id);
+      if (occ.length < MAX_OCCURRENCES_PER_AD) {
+        occ.push({ jobId: job.id, jobDate: job.date || job.id, ad: a });
+      } else {
+        // Conserve la plus récente sans faire croître la liste indéfiniment.
+        occ[occ.length - 1] = { jobId: job.id, jobDate: job.date || job.id, ad: a };
+      }
     }
   }
 
