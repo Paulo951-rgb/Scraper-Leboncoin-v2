@@ -251,7 +251,12 @@ function renderExplorerAds() {
     const fullText = `${a.title || ''} ${desc} ${cityOf(a)} ${zipOf(a)} ${a.vendeurNom || a.seller || ''}`.toLowerCase();
     const matchesQuery = !query || fullText.includes(query);
 
-    const price = typeof a.prix === 'number' ? a.prix : (typeof a.price === 'number' ? a.price : parseFloat(a.price) || 0);
+    // Prix : on normalise via priceOf (tolère les chaînes FR historiques).
+    // `parseFloat('1 250 €')` → 1 tronquait le filtre (une annonce à 1 250 €
+    // disparaissait sous un plafond de 1 300 €). Un prix absent retombe sur 0
+    // (comportement historique conservé : inclus par défaut, exclu si minP > 0).
+    const priceNum = priceOf(a);
+    const price = Number.isFinite(priceNum) ? priceNum : 0;
     const matchesPrice = price >= minP && price <= maxP;
 
     const matchesTag = matchesVerdictFilter(a, tagFilter);
@@ -286,9 +291,9 @@ function renderExplorerAds() {
   });
 
   if (sortMode === 'PRICE_ASC') {
-    filtered.sort((a, b) => ((a.prix ?? a.price) || 0) - ((b.prix ?? b.price) || 0));
+    filtered.sort((a, b) => (Number.isFinite(priceOf(a)) ? priceOf(a) : 0) - (Number.isFinite(priceOf(b)) ? priceOf(b) : 0));
   } else if (sortMode === 'PRICE_DESC') {
-    filtered.sort((a, b) => ((b.prix ?? b.price) || 0) - ((a.prix ?? a.price) || 0));
+    filtered.sort((a, b) => (Number.isFinite(priceOf(b)) ? priceOf(b) : 0) - (Number.isFinite(priceOf(a)) ? priceOf(a) : 0));
   } else if (sortMode === 'RATING_DESC') {
     filtered.sort((a, b) => (noteOf(b) ?? -1) - (noteOf(a) ?? -1));
   } else if (sortMode === 'LIKES_DESC') {
@@ -339,7 +344,7 @@ function renderExplorerAds() {
         const sellerChip = includeSellerData ? `<small style="color:var(--text-muted);">${escapeHtml(a.vendeurNom || 'Particulier')}</small>` : '';
         const typeVendeurBadge = includeSellerData ? ((a.vendeurType === 'pro') ? '<span style="background:var(--accent); color:white; padding:1px 5px; border-radius:3px; font-size:0.7rem;">PRO</span>' : '<span style="background:var(--bg-secondary); padding:1px 5px; border-radius:3px; font-size:0.7rem;">PART</span>') : '';
 
-        const priceText = a.prix != null ? a.prix + ' €' : (a.price != null ? a.price + ' €' : '-');
+        const priceText = Number.isFinite(priceOf(a)) ? priceOf(a) + ' €' : '-';
         return `
         <tr>
           <td class="text-center"><input type="checkbox" ${isChecked ? 'checked' : ''} data-action="toggleCompare" data-id="${escapeHtml(String(a.id))}"></td>
@@ -377,7 +382,7 @@ function renderExplorerAds() {
           </div>
           <div class="ad-card-body">
             <div class="ad-card-title">${escapeHtml(a.title || 'Sans titre')}</div>
-            <div class="ad-card-price">${escapeHtml(String(a.prix != null ? a.prix + ' €' : (a.price != null ? a.price + ' €' : '-')))}</div>
+            <div class="ad-card-price">${escapeHtml(Number.isFinite(priceOf(a)) ? priceOf(a) + ' €' : '-')}</div>
             <div class="ad-card-city">📍 ${escapeHtml(locationLabel(a))}</div>
             <div class="ad-card-footer">
               <button class="btn btn-secondary btn-small" style="flex:1;" data-action="openAdDetail" data-id="${escapeHtml(String(a.id))}">👁️ Fiche Détaillée</button>
@@ -465,7 +470,7 @@ window.openAdDetail = (adId) => {
   }
 
   modalAdTitle.textContent = targetAd.title || 'Sans titre';
-  modalPrice.textContent = targetAd.prix != null ? targetAd.prix : (targetAd.price != null ? targetAd.price : '-');
+  modalPrice.textContent = Number.isFinite(priceOf(targetAd)) ? String(priceOf(targetAd)) : '-';
   modalCity.textContent = locationLabel(targetAd);
   const isProSeller = targetAd.vendeurType === 'pro' || targetAd.isPro === true;
   modalSeller.textContent = includeSellerData ? `${targetAd.vendeurNom || targetAd.seller || 'Particulier'}${isProSeller ? ' (Pro)' : ''}` : ' Masqué';

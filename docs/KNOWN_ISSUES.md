@@ -1,9 +1,15 @@
 # Problèmes connus — Vendra
 
-*Mis à jour : 2026-10-10*
+*Mis à jour : 2026-10-17 (2e passe d'audit intégral)*
 
 Cette liste ne contient que des problèmes **non résolus** au terme de l'audit de
 stabilisation. Pour chaque entrée : impact, circonstances, prochaines étapes.
+
+> **2e passe (2026-10-17)** : sept anomalies supplémentaires ont été confirmées et
+> **corrigées** (SSRF renderer IPv4-mappée, perte de HAR à la reprise CAPTCHA,
+> historique de prix tronqué, annulation rapportée « 403 », réglages vendeur/logs
+> différés, filtre/tri de prix de l'explorateur, import inutilisé). Détail :
+> `docs/AUDIT_COMPLET.md` §12. Les entrées ci-dessous restent **ouvertes**.
 
 ---
 
@@ -58,6 +64,10 @@ stabilisation. Pour chaque entrée : impact, circonstances, prochaines étapes.
   - `_installNetworkGuard` intercepte toutes les sous-requêtes (`ctx.route('**/*')`)
     et bloque IP privées/locales et schémas exotiques ;
   - `validateRemoteUrl` est fail-closed si la résolution DNS est vide.
+- **2e passe** : côté **renderer**, `sanitizeImageUrl` (chargement des images
+  d'annonces) laissait passer les IPv4 encapsulées en IPv6 (`::ffff:127.0.0.1`,
+  `::ffff:a9fe:a9fe` = métadonnées cloud, ULA/NAT64 non compressées). Corrigé et
+  couvert par la section `[50]` (`docs/AUDIT_COMPLET.md` §12.1).
 - **Limite résiduelle** : le filtre synchroné ne fait **pas** de résolution DNS
   (impossible dans le callback `route` sans blocage). Un hostname arbitraire
   résolvant vers une IP privée (DNS rebinding) n'est pas détecté sur les

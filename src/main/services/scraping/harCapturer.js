@@ -464,6 +464,13 @@ class HarCapturer extends EventEmitter {
     const resumeHarPath = path.join(targetDir, 'capture-resume.har');
     const activeHarPath = startPage > 1 ? resumeHarPath : outputHarPath;
     const isResume = startPage > 1;
+    // HAR dédié à la reprise après CAPTCHA. Playwright ÉCRASE le fichier d'un
+    // `recordHar` réutilisé par un nouveau contexte (vérifié empiriquement) : si
+    // la reprise écrivait dans `activeHarPath`, toutes les pages déjà capturées
+    // avant le blocage seraient perdues. On écrit donc dans un fichier séparé,
+    // fusionné à la fin (comme la reprise incrémentale).
+    const retryHarPath = path.join(targetDir, 'capture-retry.har');
+    let usedRetryHar = false;
 
     let browser;
     let context;
@@ -613,8 +620,11 @@ class HarCapturer extends EventEmitter {
 
             // Relance le navigateur et le contexte HAR, puis reprend à la page bloquée.
             browser = await chromium.launch(this._launchOptions(true));
+            // HAR séparé : réutiliser activeHarPath écraserait les pages déjà
+            // capturées avant le blocage (Playwright tronque le fichier réutilisé).
+            usedRetryHar = true;
             const retryCtxOpts = this._baseContextOptions({
-              recordHar: { path: activeHarPath, mode: 'full', urlFilter: /recherche|api|items/i },
+              recordHar: { path: retryHarPath, mode: 'full', urlFilter: /recherche|api|items/i },
             });
             if (fs.existsSync(GLOBAL_SESSION_PATH)) {
               retryCtxOpts.storageState = GLOBAL_SESSION_PATH;
@@ -714,6 +724,20 @@ class HarCapturer extends EventEmitter {
           this.emit('log', { level: 'info', message: `🔗 HAR de reprise fusionné : ${merged.sources} source(s), ${merged.entries} entrée(s).` });
         } catch (e) {
           this.emit('log', { level: 'warn', message: `[capture] Fusion HAR impossible : ${e.message} — le HAR de reprise reste séparé (${resumeHarPath}).` });
+        }
+      }
+
+      // Fusionne le HAR de reprise CAPTCHA (pages capturées APRÈS résolution)
+      // avec le HAR principal (pages capturées AVANT le blocage). Sans cette
+      // fusion, la reprise écrasait/écartait les pages déjà collectées.
+      if (usedRetryHar) {
+        try {
+          if (fs.existsSync(retryHarPath)) {
+            const merged = mergeHarFiles([outputHarPath, retryHarPath], outputHarPath);
+            this.emit('log', { level: 'info', message: `🔗 HAR de reprise CAPTCHA fusionné : ${merged.sources} source(s), ${merged.entries} entrée(s).` });
+          }
+        } catch (e) {
+          this.emit('log', { level: 'warn', message: `[capture] Fusion HAR de reprise CAPTCHA impossible : ${e.message} — le HAR reste séparé (${retryHarPath}).` });
         }
       }
 

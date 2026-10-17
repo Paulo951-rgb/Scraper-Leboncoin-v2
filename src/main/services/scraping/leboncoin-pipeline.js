@@ -625,7 +625,10 @@ class DescriptionEnricher {
     this.cancelled = false;
     this._onSigint = () => {
       this.cancelled = true;
-      this.circuit.state = 'stopped';
+      // markCancelled (et non state='stopped' direct) : distingue une annulation
+      // d'un blocage d'accès → stopInfo() reste null, pas d'exit code 3/4 ni de
+      // « succès partiel » mensonger.
+      this.circuit.markCancelled();
       this.logger.warn('⏹️ SIGINT reçu — arrêt de l\'enrichissement, sauvegarde des données partielles.');
     };
     process.once('SIGINT', this._onSigint);

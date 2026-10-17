@@ -4814,6 +4814,147 @@ console.log('\n[49] Audit 2026-10-17 : prix, carte, verrou job, contamination d�
 console.log('\n[49] OK');
 
 
+// ═══════════════════════════════════════════════════════════════════════════
+// [50] Audit intégral 2026-10-17 (2e passe) — anomalies confirmées
+//   50.1 SSRF renderer : sanitizeImageUrl laissait passer les IPv4-mappées
+//   50.2 harCapturer : la reprise après CAPTCHA écrasait le HAR déjà capturé
+//   50.3 buildAdHistory : prix en chaîne FR tronqué par parseFloat
+//   50.4 CircuitBreaker : une annulation était rapportée « access_refused »
+//   50.5 Paramètres : vendeur / rétention logs non appliqués avant redémarrage
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n[50] Audit intégral 2e passe : correctifs');
+{
+  const repoRoot = path.join(__dirname, '..');
+  const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
+
+  // 50.1 — sanitizeImageUrl : SSRF via IPv6 IPv4-mappée / NAT64 / ULA non compressée.
+  {
+    const utilsSrc = read('src/renderer/utils.js');
+    const pure = utilsSrc.split('window.openUrl')[0];
+    const sandbox = {};
+    new Function('exports', pure + '\n;exports.sanitizeImageUrl = sanitizeImageUrl;')(sandbox);
+    const s = sandbox.sanitizeImageUrl;
+    // Images légitimes : conservées.
+    assert(s('https://img.leboncoin.fr/abc_0.jpg') === 'https://img.leboncoin.fr/abc_0.jpg',
+      '[50] image https légitime acceptée');
+    assert(s('http://[2606:4700::1111]/a.jpg') !== null, '[50] IPv6 publique acceptée');
+    // Bypass SSRF historiques : DOIVENT être rejetés.
+    const mustReject = [
+      'http://[::ffff:127.0.0.1]/x.jpg',
+      'http://[::ffff:7f00:1]/x.jpg',
+      'http://[::ffff:a9fe:a9fe]/x.jpg',
+      'http://[::ffff:c0a8:101]/x.jpg',
+      'http://[::ffff:a00:1]/x.jpg',
+      'http://[0:0:0:0:0:0:0:1]/x.jpg',
+      'http://[64:ff9b::7f00:1]/x.jpg',
+      'http://[fc00:0:0:0:0:0:0:1]/x.jpg',
+      'http://[fd00::1]/x.jpg',
+      'http://[fe80::1]/x.jpg',
+      'http://127.0.0.1/x.jpg',
+      'http://169.254.169.254/latest/meta-data/',
+      'http://[::1]/x.jpg',
+    ];
+    let leaked = mustReject.filter((u) => s(u) !== null);
+    assert(leaked.length === 0,
+      `[50] sanitizeImageUrl rejette les IPv4-mappées/ULA/NAT64 (fuites: ${leaked.join(', ') || 'aucune'})`);
+  }
+
+  // 50.2 — harCapturer : HAR de reprise CAPTCHA dédié + fusion.
+  {
+    const harCode = read('src/main/services/scraping/harCapturer.js');
+    assert(/retryHarPath/.test(harCode),
+      '[50] harCapturer : HAR de reprise CAPTCHA dédié (pas de réutilisation du HAR principal)');
+    assert(/recordHar:\s*\{\s*path:\s*retryHarPath/.test(harCode),
+      '[50] harCapturer : le contexte de reprise CAPTCHA écrit dans retryHarPath');
+    assert(/mergeHarFiles\(\[outputHarPath,\s*retryHarPath\]/.test(harCode),
+      '[50] harCapturer : le HAR de reprise CAPTCHA est fusionné dans le HAR principal');
+    // La réutilisation du même chemin reste évitée (Playwright tronque le fichier).
+    assert(!/recordHar:\s*\{\s*path:\s*activeHarPath[^}]*\}\s*\);\s*\n\s*if \(fs\.existsSync\(GLOBAL_SESSION_PATH\)\) \{\s*\n\s*retryCtxOpts/.test(harCode),
+      '[50] harCapturer : plus de recordHar réutilisant activeHarPath sur la reprise CAPTCHA');
+  }
+
+  // 50.3 — buildAdHistory : prix FR en chaîne → nombre correct.
+  {
+    const { buildAdHistory } = require('../src/main/services/jobs/jobHistory');
+    const jobs = [
+      { id: 'job-2026-01-01T10-00-00', date: '01/01/2026 à 10:00', ads: [{ id: 'A1', prix: '1 250 €' }] },
+      { id: 'job-2026-02-01T10-00-00', date: '01/02/2026 à 10:00', ads: [{ id: 'A1', prix: '1 000 €' }] },
+    ];
+    const h = buildAdHistory(jobs).find((x) => x.id === 'A1');
+    assert(h && h.prix && h.prix.initial === 1250, '[50] buildAdHistory : prix initial « 1 250 € » → 1250');
+    assert(h && h.prix && h.prix.actuel === 1000, '[50] buildAdHistory : prix actuel « 1 000 € » → 1000');
+    assert(h && h.prix && h.prix.baisse === 250, '[50] buildAdHistory : baisse détectée 250 (parseFloat donnait 0/NaN)');
+    // Prix numérique (modèle actuel) : inchangé.
+    const jobsNum = [
+      { id: 'job-2026-01-01T10-00-00', date: '01/01/2026 à 10:00', ads: [{ id: 'A2', prix: 500 }] },
+      { id: 'job-2026-02-01T10-00-00', date: '01/02/2026 à 10:00', ads: [{ id: 'A2', prix: 450 }] },
+    ];
+    const h2 = buildAdHistory(jobsNum).find((x) => x.id === 'A2');
+    assert(h2 && h2.prix && h2.prix.baisse === 50, '[50] buildAdHistory : prix numérique toujours correct');
+  }
+
+  // 50.4 — CircuitBreaker : annulation ≠ access_refused.
+  {
+    const { CircuitBreaker } = require('../src/main/services/scraping/circuitBreaker');
+    const cb = new CircuitBreaker({ blockThreshold: 3 });
+    cb.markCancelled();
+    assert(cb.shouldStop() === true, '[50] circuit : annulation → shouldStop() true (arrêt effectif)');
+    assert(cb.stopInfo() === null, '[50] circuit : annulation → stopInfo() null (pas de faux 403/429)');
+    // Le vrai blocage reste rapporté (pas de régression).
+    const cb403 = new CircuitBreaker({ blockThreshold: 1 });
+    cb403.recordBlock(403, 'HTTP_403');
+    assert(cb403.stopInfo() && cb403.stopInfo().reason === 'access_refused',
+      '[50] circuit : blocage 403 toujours rapporté access_refused');
+    const cb429 = new CircuitBreaker({ blockThreshold: 1 });
+    cb429.recordBlock(429, 'HTTP_429');
+    assert(cb429.stopInfo() && cb429.stopInfo().reason === 'rate_limited',
+      '[50] circuit : blocage 429 toujours rapporté rate_limited');
+    // Le pipeline utilise markCancelled sur SIGINT.
+    const pipeCode = read('src/main/services/scraping/leboncoin-pipeline.js');
+    assert(/this\.circuit\.markCancelled\(\)/.test(pipeCode),
+      '[50] pipeline : SIGINT → circuit.markCancelled() (pas state=\'stopped\' direct)');
+    assert(!/this\.circuit\.state\s*=\s*'stopped'/.test(pipeCode),
+      '[50] pipeline : plus d\'affectation directe state=\'stopped\' (source du faux access_refused)');
+  }
+
+  // 50.5 — Paramètres : vendeur + rétention logs appliqués immédiatement.
+  {
+    const scraperCode = read('src/renderer/scraperModule.js');
+    assert(/if \(window\.refreshSellerDataSetting\) await window\.refreshSellerDataSetting\(\)/.test(scraperCode),
+      '[50] scraperModule : saveSettings réapplique la visibilité vendeur (pas d\'attente du redémarrage)');
+    const ipcCode = read('src/main/core/ipcHandlers.js');
+    assert(/logger\.setRetention\(merged\.logRetentionDays\)/.test(ipcCode),
+      '[50] ipcHandlers : config:save applique la rétention des logs immédiatement');
+  }
+
+  // 50.6 — Renderer : priceOf normalise les prix en chaîne FR (filtre/tri/affichage).
+  {
+    const utilsSrc = read('src/renderer/utils.js');
+    const pure = utilsSrc.split('window.openUrl')[0];
+    const sandbox = {};
+    new Function('exports', pure + '\n;exports.priceOf = priceOf;')(sandbox);
+    const p = sandbox.priceOf;
+    assert(p({ prix: 1250 }) === 1250, '[50] priceOf : nombre inchangé');
+    assert(p({ prix: '1 250 €' }) === 1250, '[50] priceOf : « 1 250 € » → 1250 (parseFloat donnait 1)');
+    assert(p({ prix: '1250' }) === 1250, '[50] priceOf : « 1250 » → 1250');
+    assert(p({ price: '1 250 €' }) === 1250, '[50] priceOf : repli sur la clé `price`');
+    assert(p({ prix: '1.299,99 €' }) === 1299.99, '[50] priceOf : « 1.299,99 € » → 1299,99');
+    assert(Number.isNaN(p({})), '[50] priceOf : prix absent → NaN');
+    assert(p({ prix: 0 }) === 0, '[50] priceOf : 0 reste 0 (0 ≠ null)');
+    // L'explorateur consomme bien priceOf (filtre + tri + affichage).
+    const expCode = read('src/renderer/explorerModule.js');
+    assert(/Number\.isFinite\(priceNum\) \? priceNum : 0/.test(expCode),
+      '[50] explorateur : filtre de prix basé sur priceOf (plus de parseFloat tronquant)');
+    assert(/Number\.isFinite\(priceOf\(a\)\) \? priceOf\(a\) : 0/.test(expCode),
+      '[50] explorateur : tri par prix basé sur priceOf');
+    assert(!/a\.prix != null \? a\.prix \+ ' €'/.test(expCode),
+      '[50] explorateur : affichage du prix via priceOf (plus de concaténation brute)');
+  }
+
+  console.log('\n[50] OK');
+}
+
+
 console.log(`\n=== RÉSULTAT : ${pass} réussis, ${fail} échoués ===`);
 process.exit(fail > 0 ? 1 : 0);
 }

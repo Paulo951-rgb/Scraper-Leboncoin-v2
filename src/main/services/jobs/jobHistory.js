@@ -5,6 +5,7 @@ const path = require('path');
 const { AdStats } = require('../analysis/adStats');
 const { JOBS_DIR } = require('../../config/constants');
 const { readWithChecksum } = require('../../utils/integrity');
+const { parsePriceString } = require('../scraping/adFields');
 
 /**
  * Analyse l'historique complet des jobs pour détecter les changements par
@@ -72,8 +73,19 @@ function buildAdHistory(allJobs) {
     const first = occurrences[0];
     const last = occurrences[occurrences.length - 1];
 
-    const priceFirst = typeof (first.ad.prix ?? first.ad.price) === 'number' ? first.ad.prix ?? first.ad.price : parseFloat(first.ad.prix ?? first.ad.price);
-    const priceLast = typeof (last.ad.prix ?? last.ad.price) === 'number' ? last.ad.prix ?? last.ad.price : parseFloat(last.ad.prix ?? last.ad.price);
+    // Prix : le modèle expose un NOMBRE, mais d'anciens jobs (ou un fichier
+    // édité) peuvent contenir une chaîne au format français (« 1 250 € »,
+    // « 1.299,99 »). `parseFloat` seul tronque silencieusement ces formes
+    // (parseFloat('1 250 €') === 1) → aucun changement de prix détecté. On
+    // réutilise parsePriceString (même convention que le pipeline/AdStats).
+    const _priceOf = (ad) => {
+      const raw = ad.prix ?? ad.price;
+      if (typeof raw === 'number') return raw;
+      if (typeof raw === 'string') return parsePriceString(raw);
+      return NaN;
+    };
+    const priceFirst = _priceOf(first.ad);
+    const priceLast = _priceOf(last.ad);
     let priceChange = null;
     if (Number.isFinite(priceFirst) && Number.isFinite(priceLast) && priceFirst !== priceLast) {
       const delta = priceLast - priceFirst;

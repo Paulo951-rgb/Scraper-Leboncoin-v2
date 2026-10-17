@@ -3,6 +3,43 @@
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/). Les entrées
 décrivent des modifications vérifiées (code + tests).
 
+## [Non publié] — Audit intégral, 2e passe — 2026-10-17
+
+### Corrigé
+
+- **Perte de pages HAR à la reprise après CAPTCHA** (`harCapturer.capture`) : la
+  reprise relançait un contexte Playwright avec le **même** chemin `recordHar`,
+  que Playwright **tronque** → les pages capturées avant le blocage étaient
+  perdues (sonde Playwright réelle : « page1 PERDUE »). HAR de reprise dédié
+  (`capture-retry.har`) puis **fusion** dans le HAR principal. Test `[50]`.
+- **Annulation d'enrichissement rapportée « accès refusé (403) »**
+  (`circuitBreaker.stopInfo`, `leboncoin-pipeline` SIGINT) : l'arrêt volontaire
+  forçait `state='stopped'` sans drapeau, donc `stopInfo()` renvoyait
+  `access_refused` et pouvait fixer un code de sortie 3. Ajout de
+  `markCancelled()` + `cancelled` ; `stopInfo()` renvoie `null` sur annulation.
+  Les vrais 403/429 restent rapportés. Test `[50]`.
+- **SSRF renderer** (`utils.sanitizeImageUrl`) : les IPv4 encapsulées en IPv6
+  (`::ffff:127.0.0.1`, `::ffff:a9fe:a9fe`, …), les ULA (`fc00::/7`), link-local
+  (`fe80::/10`) et NAT64 (`64:ff9b::/96`) non compressées passaient le filtre.
+  Décompression IPv6 + contrôle IPv4 des 32 derniers bits. Test `[50]`.
+- **Historique de prix tronqué** (`jobHistory.buildAdHistory`) : `parseFloat`
+  sur des prix en chaîne FR (`« 1 250 € »` → `1`) → `prix.initial/actuel/baisse`
+  restaient `null`. Utilisation de `parsePriceString`. Test `[50]`.
+- **Filtre/tri/affichage de prix de l'explorateur** (`explorerModule`, `utils`) :
+  `parseFloat` sur les chaînes FR masquait/maltriait les annonces et affichait un
+  prix brut. Nouveau helper partagé `priceOf` (filtre, tri, tableau, grille,
+  fiche, comparer, carte). Test `[50]`.
+- **Réglages appliqués seulement au redémarrage** : décocher « Données vendeur »
+  ne masquait pas la colonne Vendeur (désormais `refreshSellerDataSetting()` est
+  rappelé après sauvegarde) ; la « Rétention des logs » n'était appliquée qu'au
+  démarrage (`config:save` applique désormais `logger.setRetention`). Test `[50]`.
+- **Import inutilisé** `app` retiré de `src/main/utils/secretStore.js`.
+
+### Tests
+
+- `test/regression.test.js` : nouvelle section `[50]` (29 assertions) couvrant
+  les six correctifs ci-dessus. Suite : **1600 réussis / 0 échoués**.
+
 ## [Non publié] — Audit intégral et stabilisation — 2026-10-17
 
 ### Corrigé

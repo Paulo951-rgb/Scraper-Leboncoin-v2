@@ -16,6 +16,46 @@ const PLACEHOLDER_SVG = (label) =>
 const noPhotoUrl = () => PLACEHOLDER_SVG('Pas de photo');
 
 /**
+ * Décompose une adresse IPv6 littérale en 8 groupes de 16 bits.
+ * Renvoie null si l'adresse n'est pas exploitable (fail-closed).
+ * Gère la forme compressée `::` et la notation IPv4 en suffixe (`::ffff:1.2.3.4`).
+ * @param {string} host hostname sans crochets, en minuscules
+ * @returns {number[]|null}
+ */
+function _ipv6Groups(host) {
+  let h = host;
+  // Suffixe IPv4 (ex. ::ffff:127.0.0.1) → deux groupes hexadécimaux.
+  const v4 = h.match(/(\d{1,3}(?:\.\d{1,3}){3})$/);
+  if (v4) {
+    const o = v4[1].split('.').map(Number);
+    if (o.some((n) => n > 255)) return null;
+    const hex = ((o[0] << 8) | o[1]).toString(16) + ':' + ((o[2] << 8) | o[3]).toString(16);
+    h = h.slice(0, v4.index) + hex;
+  }
+  const halves = h.split('::');
+  if (halves.length > 2) return null;
+  const parse = (s) => (s === '' ? [] : s.split(':').map((g) => (/^[0-9a-f]{1,4}$/.test(g) ? parseInt(g, 16) : NaN)));
+  const left = parse(halves[0]);
+  const right = halves.length === 2 ? parse(halves[1]) : [];
+  if ([...left, ...right].some((n) => Number.isNaN(n))) return null;
+  if (halves.length === 1) return left.length === 8 ? left : null;
+  const fill = 8 - left.length - right.length;
+  if (fill < 0) return null;
+  return [...left, ...new Array(fill).fill(0), ...right];
+}
+
+/** Octets IPv4 privés/loopback/link-local/CGNAT/réservés (fail-closed si hors bornes). */
+function _isPrivateIPv4Octets(a, b, c, d) {
+  if ([a, b, c, d].some((n) => !Number.isFinite(n) || n < 0 || n > 255)) return true;
+  if (a === 0 || a === 10 || a === 127) return true;
+  if (a === 169 && b === 254) return true;                 // link-local
+  if (a === 172 && b >= 16 && b <= 31) return true;        // 172.16/12
+  if (a === 192 && b === 168) return true;                 // 192.168/16
+  if (a === 100 && b >= 64 && b <= 127) return true;       // CGNAT
+  return false;
+}
+
+/**
  * Valide une URL d'image AVANT de l'assigner à `img.src`.
  *
  * Les URL proviennent d'un fichier `annonces.json` (données scrapées ou fichier
@@ -43,18 +83,37 @@ function sanitizeImageUrl(raw) {
   // IPv4 privée / loopback / link-local / CGNAT.
   if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) {
     const p = host.split('.').map(Number);
-    if (p.some((n) => n > 255)) return null;
-    if (p[0] === 0 || p[0] === 10 || p[0] === 127) return null;
-    if (p[0] === 169 && p[1] === 254) return null;              // link-local (métadonnées cloud)
-    if (p[0] === 172 && p[1] >= 16 && p[1] <= 31) return null;  // 172.16/12
-    if (p[0] === 192 && p[1] === 168) return null;              // 192.168/16
-    if (p[0] === 100 && p[1] >= 64 && p[1] <= 127) return null; // CGNAT 100.64/10
+    if (_isPrivateIPv4Octets(p[0], p[1], p[2], p[3])) return null;
   }
-  // IPv6 loopback / unique-local / link-local.
+  // IPv6 (dont les formes littérales) : on ramène d'abord l'adresse à sa forme
+  // canonique pour ne pas se laisser contourner par une écriture compressée ou
+  // mappée. `new URL` réécrit déjà `::ffff:127.0.0.1` en `::ffff:7f00:1` et
+  // `0:0:0:0:0:0:0:1` en `::1` : comparer des préfixes sur la chaîne d'origine
+  // laissait passer les adresses IPv4-mappées (SSRF) et les préfixes non
+  // compressés (`fc00::` écrit `fc00:0:...`).
   if (/^[0-9a-f:]+$/i.test(host) && host.includes(':')) {
-    if (host === '::1' || host === '::') return null;
-    if (/^f[cd]/.test(host)) return null; // fc00::/7 (ULA)
-    if (/^fe80/.test(host)) return null;  // link-local
+    const groups = _ipv6Groups(host);
+    if (!groups) return null; // IPv6 illisible : on refuse (fail-closed).
+    const [g0, g1, g2, g3, g4, g5, g6, g7] = groups;
+    // Loopback ::1 et non-spécifiée ::.
+    if (groups.every((g, i) => g === (i === 7 ? 1 : 0))) return null;
+    if (groups.every((g) => g === 0)) return null;
+    // IPv4-mappée (::ffff:a.b.c.d) et IPv4-compatible (::a.b.c.d) : on rejoue le
+    // contrôle IPv4 sur les 32 derniers bits (sinon 127.0.0.1 déguisé passait).
+    if (g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0 && (g5 === 0xffff || g5 === 0)) {
+      const a = (g6 >> 8) & 0xff, b = g6 & 0xff, c = (g7 >> 8) & 0xff, d = g7 & 0xff;
+      if (_isPrivateIPv4Octets(a, b, c, d)) return null;
+    }
+    // fc00::/7 (ULA) : préfixe 1111 110.
+    if ((g0 & 0xfe00) === 0xfc00) return null;
+    // fe80::/10 (link-local).
+    if ((g0 & 0xffc0) === 0xfe80) return null;
+    // ::/96 non mappée (déjà couvert plus haut) et 64:ff9b::/96 (NAT64) : les
+    // adresses NAT64 encapsulent une IPv4 ; on rejoue le contrôle IPv4 dessus.
+    if (g0 === 0x0064 && g1 === 0xff9b && g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0) {
+      const a = (g6 >> 8) & 0xff, b = g6 & 0xff, c = (g7 >> 8) & 0xff, d = g7 & 0xff;
+      if (_isPrivateIPv4Octets(a, b, c, d)) return null;
+    }
   }
   return u.toString();
 }
@@ -98,6 +157,30 @@ function locationLabel(a) {
   if (!city && !zip) return 'Inconnue';
   if (city && zip) return `${city} (${zip})`;
   return city || zip;
+}
+
+/**
+ * Convertit le prix d'une annonce en NOMBRE, en tolérant les formes
+ * historiques (chaîne « 1 250 € », « 1.299,99 »). Le modèle actuel expose
+ * `prix` en nombre, mais d'anciens jobs/presets peuvent contenir une chaîne :
+ * `parseFloat('1 250 €')` → 1 (troncature silencieuse) faussait alors le
+ * filtre de prix, le tri et l'affichage de l'explorateur. Même convention que
+ * le pipeline (adFields.parsePriceString) et les statistiques.
+ * @param {object} a
+ * @returns {number} prix (NaN si absent/illisible)
+ */
+function priceOf(a) {
+  if (!a || typeof a !== 'object') return NaN;
+  const raw = a.prix ?? a.price;
+  if (typeof raw === 'number') return Number.isFinite(raw) ? raw : NaN;
+  if (typeof raw !== 'string') return NaN;
+  const cleaned = raw
+    .replace(/\s/g, '')
+    .replace(/\./g, '')
+    .replace(',', '.')
+    .replace(/[^\d.-]/g, '');
+  const n = parseFloat(cleaned);
+  return Number.isFinite(n) ? n : NaN;
 }
 
 // Échappe une valeur injectée dans un attribut HTML contenant du JS

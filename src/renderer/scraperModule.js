@@ -331,7 +331,7 @@ openCompareModalBtn.addEventListener('click', () => {
   compareGrid.innerHTML = selectedAds
     .map((a) => {
       const sellerName = includeSellerData ? (a.vendeurNom || a.seller || 'Particulier') : 'Masqué';
-      const priceText = a.prix != null ? a.prix + ' €' : (a.price != null ? a.price + ' €' : '-');
+      const priceText = Number.isFinite(priceOf(a)) ? priceOf(a) + ' €' : '-';
       const thumb = sanitizeImageUrl((a.photosUrls && a.photosUrls[0]) || (a.images && a.images[0])) || noPhotoUrl();
       return `
       <div class="compare-col">
@@ -419,6 +419,10 @@ saveSettingsBtn.addEventListener('click', async () => {
     autoCleanJobsDays: cfgAutoCleanJobs.checked ? (parseInt(cfgAutoCleanJobsDays.value, 10) || 30) : 0,
     logRetentionDays: parseInt(cfgLogRetention.value, 10) || 7,
   });
+  // Applique immédiatement le masquage/démasquage des données vendeur : sans ce
+  // rappel, la colonne Vendeur et les filtres restaient dans l'ancien état
+  // jusqu'au redémarrage (le réglage n'était relu qu'au chargement de l'app).
+  if (window.refreshSellerDataSetting) await window.refreshSellerDataSetting();
   settingsModal.classList.add('hidden');
   showToast('Paramètres enregistrés avec succès !', 'success');
 });
