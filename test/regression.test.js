@@ -2348,6 +2348,18 @@ console.log('\n[28] Distribution Windows (packaging)');
   assert(pb.extractedDir('win') === 'chrome-win', 'dist: extraction win → chrome-win/');
   assert(pb.extractedDir('linux') === 'chrome-linux', 'dist: extraction linux → chrome-linux/');
 
+  // prepare-browsers décompresse via `extract-zip`. Cette dépendance ÉTAIT
+  // transitive (playwright 1.41) : sa mise à jour l'a retirée et le build CI
+  // Windows a échoué (« Cannot find module 'extract-zip' »). Elle doit rester
+  // DÉCLARÉE explicitement — ne jamais dépendre d'une transitive pour un outil
+  // de build.
+  const pbSrc = fs.readFileSync(path.join(repoRoot, 'tools', 'prepare-browsers.js'), 'utf8');
+  if (/require\(['"]extract-zip['"]\)/.test(pbSrc)) {
+    const declared = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+    assert(!!declared['extract-zip'],
+      'dist: extract-zip DÉCLARÉE (prepare-browsers.js l\'importe — pas de dépendance transitive)');
+  }
+
   // main.js : résolution du chemin Chromium embarqué quand packagé
   const mainCode = fs.readFileSync(path.join(repoRoot, 'src/main/main.js'), 'utf8');
   assert(/PLAYWRIGHT_BROWSERS_PATH/.test(mainCode), 'dist: main.js pointe PLAYWRIGHT_BROWSERS_PATH (app packagée)');

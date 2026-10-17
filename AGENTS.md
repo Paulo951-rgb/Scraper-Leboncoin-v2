@@ -334,6 +334,10 @@ Configuration dans `package.json` → clé `build` :
   **Piège** : les archives Playwright s'appellent `chromium-win64.zip` /
   `chromium-mac.zip` / `chromium-linux.zip` (PAS `chromium-win.zip`), et le
   sous-dossier extrait est `chrome-win` / `chrome-mac` / `chrome-linux`.
+  **Piège** : la décompression utilise `extract-zip`, qui doit rester déclarée
+  explicitement (elle n'était que transitive sous Playwright 1.41 ; sa montée à
+  1.64 l'a retirée → CI Windows en échec). Ne jamais dépendre d'une transitive
+  pour l'outillage de build (test `[28]`).
 - `generate-icon.py` : génère `build/icon.ico` + `build/icon.png` (Pillow).
 - `verify-dist.js` : contrôle un dossier `dist/` après build (installeur NSIS,
   `win-unpacked/` + `app.asar` + `ffmpeg.dll`, Chromium embarqué, en-tête PE,

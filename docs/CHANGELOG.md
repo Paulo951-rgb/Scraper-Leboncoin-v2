@@ -48,6 +48,13 @@ décrivent des modifications vérifiées (code + tests).
   `performance` (`totalMs`, `adsProcessed`, `adsPerMinute`, `avgMsPerAd`,
   `peakRssMb`) permettant une comparaison avant/après reproductible. Ces valeurs
   sont **mesurées**, jamais estimées. Test `[35]` (pipeline forké réel) + `[41]`.
+- **Build CI Windows réparé — `extract-zip` déclarée** : `tools/prepare-browsers.js`
+  décompresse le Chromium via `require('extract-zip')`, qui n'était qu'une
+  dépendance **transitive** de Playwright 1.41. La montée à Playwright 1.64 l'a
+  retirée → le job `build` (windows-latest) échouait sur
+  « Cannot find module 'extract-zip' ». `extract-zip` est désormais déclarée en
+  `devDependencies` (outil de build uniquement, non embarqué). Test `[28]` ajouté
+  pour interdire le retour à une dépendance transitive pour l'outillage de build.
 - **Photos « inconnu » ≠ « zéro »** : `normalizeAd` renvoyait `photosCount: 0`
   même quand le champ `images` était **absent** de la source, transformant une
   information *non récupérée* en *absence confirmée*. Désormais : `images` absent
