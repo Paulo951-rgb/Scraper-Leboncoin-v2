@@ -382,8 +382,6 @@ const closeSettingsModalBtn = document.getElementById('closeSettingsModalBtn');
 const saveSettingsBtn = document.getElementById('saveSettingsBtn');
 const resetSettingsBtn = document.getElementById('resetSettingsBtn');
 const cfgTheme = document.getElementById('cfgTheme');
-const cfgScrapeSpeed = document.getElementById('cfgScrapeSpeed');
-const cfgPageDelay = document.getElementById('cfgPageDelay');
 const cfgHeadless = document.getElementById('cfgHeadless');
 const cfgIncludeSellerData = document.getElementById('cfgIncludeSellerData');
 const cfgCleanHarDays = document.getElementById('cfgCleanHarDays');
@@ -393,8 +391,6 @@ const cfgLogRetention = document.getElementById('cfgLogRetention');
 
 function applySettingsToUI(cfg) {
   cfgTheme.value = localStorage.getItem('app-theme') || cfg.theme || 'theme-dark';
-  cfgScrapeSpeed.value = cfg.scrapeSpeed || 'moyen';
-  cfgPageDelay.value = cfg.pageDelayMs ?? 1000;
   cfgHeadless.checked = cfg.headless !== false;
   if (cfgIncludeSellerData) cfgIncludeSellerData.checked = cfg.includeSellerData !== false;
   cfgCleanHarDays.value = cfg.autoCleanHarDays || 7;
@@ -429,8 +425,6 @@ saveSettingsBtn.addEventListener('click', async () => {
   document.body.className = theme;
 
   await window.api.saveConfig({
-    scrapeSpeed: cfgScrapeSpeed.value,
-    pageDelayMs: parseInt(cfgPageDelay.value, 10) || 1000,
     headless: cfgHeadless.checked,
     includeSellerData: cfgIncludeSellerData ? cfgIncludeSellerData.checked : true,
     autoCleanHarDays: parseInt(cfgCleanHarDays.value, 10) || 7,
@@ -451,15 +445,13 @@ resetSettingsBtn.addEventListener('click', async () => {
   localStorage.setItem('app-theme', 'theme-dark');
   document.body.className = 'theme-dark';
   await window.api.saveConfig({
-    scrapeSpeed: 'moyen',
-    pageDelayMs: 1000,
     headless: true,
     includeSellerData: true,
     autoCleanHarDays: 7,
     autoCleanJobsDays: 0,
     logRetentionDays: 7,
   });
-  applySettingsToUI({ scrapeSpeed: 'moyen', pageDelayMs: 1000, headless: true, includeSellerData: true, autoCleanHarDays: 7, autoCleanJobsDays: 0, logRetentionDays: 7 });
+  applySettingsToUI({ headless: true, includeSellerData: true, autoCleanHarDays: 7, autoCleanJobsDays: 0, logRetentionDays: 7 });
   showToast('Paramètres réinitialisés.', 'success');
 });
 

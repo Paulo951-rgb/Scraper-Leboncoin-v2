@@ -54,7 +54,7 @@ L'application vérifie automatiquement la présence du navigateur Chromium (néc
    - **Maximum** — toutes les données disponibles.
    - **Personnalisé** — sélection granulaire des champs.
 5. (Optionnel) Ajustez les **options** :
-   - **Vitesse** : Moyen / Rapide / Ultra-rapide.
+   - **Mode de performance** : **⚡ Ultra rapide** (fixe, non modifiable) — 25 tâches parallèles max, délai nominal 400 ms entre les pages.
    - **Mode de capture** : invisible (headless) ou visible.
    - **Ignorer les descriptions** : pour accélérer le scraping.
    - **Proxy** : si vous utilisez un proxy HTTP.
@@ -177,13 +177,12 @@ Ouvrez les **Paramètres** (icône ⚙️ dans l'en-tête) pour configurer l'app
 ### Thème
 13 thèmes disponibles (aperçu temps réel) : Dark, Light, OLED, Violet, Green, Sunset, Carbon, Rose, Amber, Mint, Slate, Crimson, Nordic.
 
-### Vitesse de scraping
-- **Moyen** : 10 parallèles, 0,5-1s entre les requêtes.
-- **Rapide** : 15 parallèles, 0,2-0,6s.
-- **Ultra-rapide** : 25 parallèles, 0,05-0,3s.
+### Mode de performance (fixe)
+Le logiciel fonctionne **toujours** en mode **⚡ Ultra rapide** : jusqu'à **25 tâches parallèles** et un **délai nominal de 400 ms** entre deux pages de recherche successives. Cette configuration est **appliquée automatiquement et n'est pas modifiable** (elle est affichée en lecture seule dans les Paramètres).
+
+Elle n'est pas fragile pour autant : en cas de limitation du site (403/429), le logiciel **réduit automatiquement la concurrence** (÷2 après un 429, −25 % après un 403) et applique un **backoff progressif**. Le `Retry-After` fourni par le serveur est respecté.
 
 ### Autres réglages
-- **Délai entre les pages** (ms, défaut 1000).
 - **Mode de capture** : invisible (headless) ou visible.
 - **Données vendeur** : exclure les champs vendeur de tous les exports et de l'interface.
 - **Nettoyage auto des .har** (jours, défaut 7).

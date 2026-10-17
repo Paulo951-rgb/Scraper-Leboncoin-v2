@@ -27,8 +27,54 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ── Contrôles rapides (Linux) : tests + syntaxe + audit des dépendances ─────
+  # Séparé du build Windows pour donner un retour immédiat sur une PR sans
+  # attendre la compilation complète de l'installeur.
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # Aucun navigateur nécessaire pour les tests de régression (fixtures).
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+      CI: 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies (reproductible)
+        run: npm ci
+
+      - name: Syntax check (node --check) sur tout le code source
+        run: |
+          set -eu
+          fail=0
+          for f in $(find src tools test -name '*.js'); do
+            node --check "$f" || fail=1
+          done
+          exit $fail
+
+      - name: Run regression tests
+        run: npm test
+
+      - name: Tests E2E Electron (démarrage réel du main + renderer)
+        run: npm run test:e2e
+        env:
+          # Le harness E2E lance Electron avec --ozone-platform=headless :
+          # aucun serveur X requis.
+          ELECTRON_DISABLE_SANDBOX: '1'
+
+      - name: Audit des dépendances de PRODUCTION (échec si vulnérabilité)
+        run: npm audit --omit=dev --audit-level=high
+
   build:
     runs-on: windows-latest
+    needs: checks
     timeout-minutes: 45
     env:
       # On fournit nous-mêmes le Chromium Windows (tools/prepare-browsers.js).
@@ -43,7 +89,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
 
       - name: Install dependencies (reproductible)
@@ -71,11 +117,16 @@ jobs:
             }
             const hits = [];
             for (const d of fs.readdirSync(base)) {
-              const exe = path.join(base, d, 'chrome-win', 'chrome.exe');
-              if (fs.existsSync(exe)) hits.push(exe);
+              // Deux dispositions possibles selon la version de Playwright :
+              //   ancienne → chromium-<rev>/chrome-win/chrome.exe
+              //   récente  → chromium-<rev>/chrome-win64/chrome.exe
+              for (const sub of ['chrome-win64', 'chrome-win']) {
+                const exe = path.join(base, d, sub, 'chrome.exe');
+                if (fs.existsSync(exe)) { hits.push(exe); break; }
+              }
             }
             if (hits.length === 0) {
-              core.setFailed('chrome-win/chrome.exe introuvable sous ' + base);
+              core.setFailed('chrome-win64/chrome.exe (ou chrome-win/chrome.exe) introuvable sous ' + base);
               return;
             }
             core.info('Chromium embarqué : ' + hits.join(', '));

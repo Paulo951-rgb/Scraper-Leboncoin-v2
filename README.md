@@ -59,8 +59,8 @@ L'utilisateur choisit parmi **3 profils de données** au moment du scraping :
 - 🏷️ **Catégorie** de l'annonce extraite à la fois sur la liste et la page de détail.
 - ⭐ **Note vendeur + nombre d'avis** extraits défensivement de l'objet `owner`.
 - 🔄 **Rotation de User-Agent** (10 UA réalistes en rotation aléatoire, fixé pour toute la durée d'une capture).
-- 🚀 **3 presets de vitesse** (Moyen / Rapide / Ultra-rapide) pour l'enrichissement des descriptions.
-- ⏳ **Rate limiting adaptatif** — backoff exponentiel si Leboncoin répond lentement ou bloque (403/429).
+- 🚀 **Configuration de scraping fixe et automatique** — mode **Ultra rapide** imposé (25 tâches parallèles max, délai nominal 400 ms entre pages), non modifiable par l'utilisateur.
+- ⏳ **Rate limiting adaptatif** — backoff exponentiel si Leboncoin répond lentement ou bloque (403/429) ; réduction automatique de la concurrence (÷2 après un 429, −25 % après un 403) et respect du `Retry-After`.
 - ⏹️ **Arrêt préventif** après 3 blocages 403/429 consécutifs pendant l'enrichissement (sauvegarde des données collectées).
 - 🧾 **Codes d'erreurs structurés** (`errorCodes.js`) — chaque erreur est catégorisée (`NET_`, `HTTP_`, `CAPTCHA_`, `PARSE_`, `EXTRACTOR_`, `SESSION_`, `BROWSER_`, `STRUCTURE_`, `AD_`).
 
@@ -175,7 +175,7 @@ npm start
 
 | Onglet | Description |
 |---|---|
-| 🚀 **Scraper** | Configuration du scraping (URL, pages, profil, vitesse, options) + presets 1-clic + progression temps réel. |
+| 🚀 **Scraper** | Configuration du scraping (URL, pages, profil, options) + presets 1-clic + progression temps réel. La politique de performance (Ultra rapide) est fixe et affichée en lecture seule. |
 | 📜 **Logs** | Console de logs en direct (info/warn/error/debug) avec mode normal/debug, auto-scroll, copie, vidage, compteur. |
 | 📁 **Historique** | Liste des scrapings passés + accès aux fichiers (JSON/TXT) + suppression. |
 | 🔍 **Explorateur** | Filtres (mot-clé, prix, type de remise, type vendeur, note, likes, catégorie, ville), tri, vue tableau/grille, fiche détaillée. |
@@ -184,8 +184,7 @@ npm start
 ### Paramètres
 
 - **Thème** : 13 thèmes (aperçu temps réel).
-- **Vitesse de scraping** : Moyen / Rapide / Ultra-rapide.
-- **Délai entre les pages** (ms, défaut 1000).
+- **Mode de performance** : **⚡ Ultra rapide** (fixe, affiché en lecture seule) — 25 tâches parallèles max, délai nominal 400 ms entre les pages. Non modifiable.
 - **Mode de capture** : invisible (headless) ou visible (sauf CAPTCHA qui bascule toujours en visible).
 - **Données vendeur** : exclusion systématique des champs vendeur.
 - **Nettoyage auto des .har** (jours, défaut 7).
@@ -475,7 +474,8 @@ Résultat attendu : `=== RÉSULTAT : <N> réussis, 0 échoués ===`
 **Symptôme** : le scraping ou l'enrichissement s'arrête avec un message 403 (accès refusé) ou 429 (limitation de débit).
 **Solution** :
 - Leboncoin a refusé ou limité temporairement les requêtes. **Patientez quelques minutes** avant de relancer — aucune reprise automatique agressive n'est faite (le `Retry-After` du serveur est respecté lorsqu'il est fourni).
-- Réduisez la vitesse (Moyen au lieu de Rapide) : la concurrence et les délais par défaut sont volontairement modérés pour limiter les rafales de requêtes.
+- **N'essayez pas de forcer la vitesse** : la politique (Ultra rapide, 25 parallèles, 400 ms nominal) est fixe et le logiciel **réduit automatiquement la concurrence** et applique un backoff dès qu'il détecte une limitation. Relancer en boucle aggrave le blocage.
+- Réduisez le nombre de pages par job pour limiter les rafales de requêtes.
 - Après 3 blocages 403/429 consécutifs, l'enrichissement s'arrête automatiquement et **sauvegarde les annonces déjà extraites**.
 - Le job est alors signalé « **succès partiel** » (jamais « succès ») : les annonces restent exportables même si certaines descriptions manquent.
 - Aucun contournement (proxy d'évasion, rotation d'identité) n'est utilisé : le refus est rapporté tel quel.

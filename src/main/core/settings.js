@@ -24,8 +24,6 @@ function getSettingsPath() {
 }
 const SETTINGS_DEFAULTS = Object.freeze({
   autoCleanHarDays: 7,
-  scrapeSpeed: 'moyen',      // 'moyen' | 'rapide' | 'ultra-rapide'
-  pageDelayMs: 1000,        // délai entre les pages de recherche
   headless: true,           // navigateur invisible (sauf CAPTCHA)
 
   logRetentionDays: 7,      // rétention des logs rotatifs (jours)
@@ -34,11 +32,31 @@ const SETTINGS_DEFAULTS = Object.freeze({
   includeSellerData: true,  // inclure les données vendeur dans les exports et l'interface
 });
 
+// Anciennes clés de réglage de vitesse supprimées : elles ne doivent PLUS
+// pouvoir rétablir une configuration de scraping contradictoire depuis un
+// user-settings.json hérité. On les ignore à la lecture et on les retire à
+// l'écriture (migration silencieuse). La politique de scraping est fixe
+// (config/scraping.js → SCRAPING_POLICY) : concurrence 25, délai 400 ms.
+const LEGACY_SPEED_KEYS = ['scrapeSpeed', 'pageDelayMs'];
+
+/**
+ * Fusionne un objet de paramètres brut avec les défauts et retire les clés
+ * héritées de vitesse (migration). Fonction PURE (testable sans disque) :
+ * un ancien fichier ne peut pas réintroduire de concurrence/délai arbitraires.
+ * @param {*} raw contenu parsé d'un user-settings.json
+ * @returns {object} paramètres normalisés
+ */
+function migrateSettings(raw) {
+  const merged = { ...SETTINGS_DEFAULTS, ...(raw && typeof raw === 'object' ? raw : {}) };
+  for (const k of LEGACY_SPEED_KEYS) delete merged[k];
+  return merged;
+}
+
 function loadSettings() {
   try {
     if (!fs.existsSync(getSettingsPath())) return { ...SETTINGS_DEFAULTS };
     const data = JSON.parse(fs.readFileSync(getSettingsPath(), 'utf8'));
-    return { ...SETTINGS_DEFAULTS, ...(data && typeof data === 'object' ? data : {}) };
+    return migrateSettings(data);
   } catch (err) {
     console.warn('Lecture paramètres impossible :', err.message);
     return { ...SETTINGS_DEFAULTS };
@@ -77,19 +95,15 @@ function sanitizeSettingsPatch(patch) {
     const n = intInRange(patch.autoCleanJobsDays, 0, 3650);
     if (n !== undefined) out.autoCleanJobsDays = n;
   }
-  if ('pageDelayMs' in patch) {
-    const n = intInRange(patch.pageDelayMs, 0, 60000);
-    if (n !== undefined) out.pageDelayMs = n;
-  }
-  if ('scrapeSpeed' in patch) {
-    if (['moyen', 'rapide', 'ultra-rapide'].includes(patch.scrapeSpeed)) out.scrapeSpeed = patch.scrapeSpeed;
-  }
   if ('headless' in patch) {
     if (typeof patch.headless === 'boolean') out.headless = patch.headless;
   }
   if ('includeSellerData' in patch) {
     if (typeof patch.includeSellerData === 'boolean') out.includeSellerData = patch.includeSellerData;
   }
+  // NB : les clés de vitesse (`scrapeSpeed`, `pageDelayMs`) ne sont PLUS
+  // acceptées : la configuration de scraping est fixe (config/scraping.js).
+  // Un renderer compromis ne peut donc pas les réintroduire via config:save.
   return out;
 }
 
@@ -106,4 +120,4 @@ function saveSettings(patch) {
   return merged;
 }
 
-module.exports = { loadSettings, saveSettings, sanitizeSettingsPatch, SETTINGS_DEFAULTS };
+module.exports = { loadSettings, saveSettings, sanitizeSettingsPatch, migrateSettings, SETTINGS_DEFAULTS };

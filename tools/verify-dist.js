@@ -13,7 +13,8 @@
  *   2. présence de l'app packagée (`win-unpacked/`) avec `app.asar`, `ffmpeg.dll`
  *      et l'exécutable de l'application ;
  *   3. présence du Chromium Playwright embarqué dans les ressources
- *      (`resources/browsers/chromium-<rev>/chrome-win/chrome.exe`) ;
+ *      (`resources/browsers/chromium-<rev>/chrome-win64/chrome.exe`, ou
+ *      `chrome-win/chrome.exe` pour l'ancien schéma) ;
  *   4. taille minimale plausible de l'installeur (défaut 20 Mo) ;
  *   5. en-tête PE (`MZ`) des exécutables, preuve qu'il ne s'agit pas d'un
  *      fichier vide ou d'un texte d'erreur.
@@ -136,7 +137,7 @@ function verifyDist(distDir, options = {}) {
   const browsersDir = path.join(unpackedDir, 'resources', 'browsers');
   const chromeExe = findFiles(browsersDir, (name) => /^chrome\.exe$/i.test(name) || /^chrome$/i.test(name));
   if (chromeExe.length === 0) {
-    errors.push('Chromium Playwright introuvable dans resources/browsers/ (attendu chromium-<rev>/chrome-win/chrome.exe).');
+    errors.push('Chromium Playwright introuvable dans resources/browsers/ (attendu chromium-<rev>/chrome-win64/chrome.exe ou chrome-win/chrome.exe).');
   } else {
     stats.chromiumExe = path.relative(unpackedDir, chromeExe[0]);
     if (!hasPeHeader(chromeExe[0])) errors.push(`Binaire Chromium embarqué sans en-tête PE : ${chromeExe[0]}`);
