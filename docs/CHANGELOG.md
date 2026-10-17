@@ -3,6 +3,81 @@
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/). Les entrées
 décrivent des modifications vérifiées (code + tests).
 
+## [Non publié] — Politique de scraping fixe + fiabilité des exports — 2026-10-17
+
+### Modifié
+
+- **Politique de scraping fixe et non configurable** : `src/main/config/scraping.js`
+  → `SCRAPING_POLICY` (figé) centralise désormais **toute** la performance :
+  mode **Ultra rapide**, **concurrence 25 max**, **délai nominal 400 ms** entre
+  les pages de recherche. Toutes les couches (main, pipeline forké, capture HAR)
+  consomment cette source unique.
+- **Contrôles de vitesse retirés de l'interface** : le sélecteur de vitesse et le
+  champ de délai sont supprimés des Paramètres ; le mode est affiché en **lecture
+  seule** (`.scraping-mode-readonly`). `scraperModule.js` ne lit/écrit plus
+  `scrapeSpeed`/`pageDelayMs`.
+- **Migration des anciens réglages** : `settings.migrateSettings()` retire les
+  clés héritées (`scrapeSpeed`, `pageDelayMs`) à la lecture et
+  `sanitizeSettingsPatch` les rejette à l'écriture — un ancien
+  `user-settings.json` ne peut plus rétablir une configuration contradictoire.
+- **Argument `--speed` ignoré** par le pipeline (`opts.speed = policy.mode`) ;
+  `report.json` et les logs reflètent la politique réelle.
+- **FAQ intégrée** enrichie (mode Ultra rapide, raison de la concurrence 25 et du
+  délai 400 ms, ralentissement automatique, erreurs 403/429, absence totale d'IA,
+  signalement de bug). FAQ/README/USER_GUIDE/ARCHITECTURE/AGENTS alignés sur le
+  comportement réel (plus de presets Moyen/Rapide).
+
+### Corrigé
+
+- **Régression de sécurité anti-SSRF restaurée (harCapturer)** : le moteur
+  « historique » de la base avait retiré `isSafeFetchDestination` et
+  `_installNetworkGuard` de `harCapturer` alors que la documentation les
+  déclarait actifs. L'URL de recherche (entrée utilisateur) pouvait donc viser
+  une IP privée/locale (`169.254.169.254`, `127.0.0.1`…) ou un domaine
+  arbitraire (SSRF), et aucune sous-requête n'était filtrée. Restauré :
+  - validation de l'URL de recherche (`isSafeFetchDestination` + allowlist
+    `LEBONCOIN_SOURCE_HOSTS`) **avant** le lancement de Chromium ;
+  - `_installNetworkGuard` (`ctx.route('**/*')`) qui bloque les sous-requêtes
+    vers IP privées/locales et schémas exotiques (`ws`/`wss` ramenés à
+    `http(s)` pour le contrôle) ;
+  - contrôle équivalent dans le `route` handler du `DescriptionEnricher`.
+  Vérifié que `ctx.route()` et `recordHar` coexistent (le HAR n'est pas vidé).
+  Tests de non-régression `[44]` ajoutés ; l'ancien test qui asserait l'absence
+  du contrôle a été corrigé.
+- **Mesures de performance observées dans `report.json`** : ajout d'un bloc
+  `performance` (`totalMs`, `adsProcessed`, `adsPerMinute`, `avgMsPerAd`,
+  `peakRssMb`) permettant une comparaison avant/après reproductible. Ces valeurs
+  sont **mesurées**, jamais estimées. Test `[35]` (pipeline forké réel) + `[41]`.
+- **Build CI Windows réparé — `extract-zip` déclarée** : `tools/prepare-browsers.js`
+  décompresse le Chromium via `require('extract-zip')`, qui n'était qu'une
+  dépendance **transitive** de Playwright 1.41. La montée à Playwright 1.64 l'a
+  retirée → le job `build` (windows-latest) échouait sur
+  « Cannot find module 'extract-zip' ». `extract-zip` est désormais déclarée en
+  `devDependencies` (outil de build uniquement, non embarqué). Test `[28]` ajouté
+  pour interdire le retour à une dépendance transitive pour l'outillage de build.
+- **Photos « inconnu » ≠ « zéro »** : `normalizeAd` renvoyait `photosCount: 0`
+  même quand le champ `images` était **absent** de la source, transformant une
+  information *non récupérée* en *absence confirmée*. Désormais : `images` absent
+  → `photosCount: null` (inconnu) ; `images` présent mais vide → `0` (absence
+  confirmée). `photosUrls` suit la même règle.
+- **CI : détection du Chromium embarqué** : l'étape de vérification ne cherchait
+  que `chrome-win/chrome.exe` ; elle accepte maintenant aussi le schéma récent
+  `chrome-win64/chrome.exe` (Chromium for Testing). `tools/verify-dist.js` mis à
+  jour de la même façon.
+
+### Ajouté
+
+- **Tests d'export (contenu réel)** : section `[42]` — analyse des octets écrits
+  (JSON valide, types, Unicode/emojis/accents, `null` vs `0`, dédup photos,
+  profils Défaut/Maximum/Personnalisé, cohérence JSON↔TXT).
+- **Tests de robustesse** : section `[43]` — JSON invalide, HAR corrompu (exit 1),
+  403/429 (exit 2), pages vides, annonce incomplète, entrées non-JSON,
+  `annonces.json` corrompu (reprise automatique).
+- **Tests E2E Electron réels** (`test/e2e.electron.test.js`, `npm run test:e2e`) :
+  démarrage réel de l'app en mode headless, navigation entre onglets, pont preload,
+  absence de fuite Node (`require`/`process`/`fs`), politique affichée en lecture
+  seule. Intégrés au workflow CI.
+
 ## [Non publié] — Extraction des données manquantes (vendeur, détail, fusion) — 2026-10-11
 
 ### Corrigé

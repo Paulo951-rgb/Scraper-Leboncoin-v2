@@ -15,6 +15,105 @@
 
 const FAQ_DATA = [
   {
+    q: 'Comment fonctionne le mode Ultra rapide ?',
+    a: `<p>Le logiciel fonctionne <strong>toujours</strong> en mode <strong>⚡ Ultra rapide</strong>. Ce mode traite jusqu'à <strong>25 annonces en parallèle</strong> avec un <strong>délai nominal de 400 ms</strong> entre deux pages de recherche successives.</p>
+        <p>Cette configuration est <strong>fixe et appliquée automatiquement</strong> : vous n'avez rien à régler, et elle n'est pas modifiable depuis les Paramètres (elle est affichée en lecture seule).</p>
+        <p>Le logiciel n'est pas fragile pour autant : en cas de limitation (403/429), il <strong>réduit automatiquement la concurrence</strong> et applique un <strong>backoff progressif</strong> (voir la question sur les erreurs 403/429).</p>`
+  },
+  {
+    q: 'Pourquoi la concurrence est-elle fixée à 25 ?',
+    a: `<p><strong>25</strong> est le nombre maximal de tâches parallèles que le logiciel s'autorise. C'est le meilleur compromis observé entre débit et stabilité : au-delà, le risque de blocage anti-bot (403/429) augmente fortement sans gain de débit réel.</p>
+        <p>La concurrence est <strong>bornée par sécurité</strong> : même si une ancienne configuration ou un paramètre transmis demandait davantage, le logiciel ne dépasse jamais 25.</p>
+        <p>En cas de limitation détectée, la concurrence <em>effective</em> est temporairement réduite (elle peut descendre en dessous de 25), mais elle ne remonte jamais au-dessus.</p>`
+  },
+  {
+    q: 'Pourquoi le délai nominal est-il de 400 ms ?',
+    a: `<p>Le <strong>délai nominal de 400 ms</strong> entre deux pages de recherche successives est un compromis entre rapidité et respect du serveur. Un délai trop faible multiplie les blocages (le backoff après un 403/429 devient lui aussi trop court pour être efficace).</p>
+        <p>C'est un délai <strong>nominal</strong> : il n'autorise jamais à contourner une limitation explicite du site. Si le serveur renvoie un <code>Retry-After</code> (avec un 429), le logiciel <strong>attend le délai demandé</strong> avant toute nouvelle requête.</p>`
+  },
+  {
+    q: 'Pourquoi un job peut-il ralentir automatiquement ?',
+    a: `<p>Pour rester fiable face aux protections anti-bot du site. Le logiciel surveille les signaux du serveur et réagit automatiquement :</p>
+        <ul>
+          <li><strong>Ralentissement progressif</strong> (backoff exponentiel) dès qu'un blocage est détecté ;</li>
+          <li><strong>Réduction de la concurrence</strong> : après un 429 elle est divisée par 2, après un 403 elle est réduite de 25 % ;</li>
+          <li><strong>Respect du <code>Retry-After</code></strong> : pause inter-lot d'au moins le délai demandé par le serveur.</li>
+        </ul>
+        <p>Les résultats déjà collectés sont <strong>conservés</strong> à chaque étape : un ralentissement ne fait jamais perdre les annonces déjà extraites.</p>`
+  },
+  {
+    q: 'Que signifient les erreurs 403 et 429 ?',
+    a: `<p><strong>403 (accès refusé)</strong> : le serveur refuse la requête (blocage anti-bot temporaire). <strong>429 (trop de requêtes)</strong> : le serveur limite temporairement le débit et indique souvent un délai via l'en-tête <code>Retry-After</code>.</p>
+        <p>Dans les deux cas le logiciel :</p>
+        <ul>
+          <li><strong>arrête préventivement</strong> l'enrichissement après plusieurs blocages consécutifs (disjoncteur) ;</li>
+          <li><strong>conserve</strong> les annonces déjà récupérées (succès partiel explicite, jamais un faux « succès complet ») ;</li>
+          <li><strong>respecte</strong> le <code>Retry-After</code> lorsqu'il est fourni.</li>
+        </ul>
+        <p>Il n'y a <strong>aucune reprise automatique agressive</strong> et aucun contournement de protection (pas de rotation d'identité ni de proxy d'évasion). Patientez quelques minutes avant de relancer.</p>`
+  },
+  {
+    q: 'Comment arrêter ou annuler un job ?',
+    a: `<p>Cliquez sur le bouton <strong>🛑 Arrêter</strong> dans l'onglet Scraper. L'arrêt est <strong>propre</strong> :</p>
+        <ul>
+          <li>la capture réseau et le processus d'enrichissement sont interrompus ;</li>
+          <li>les <strong>résultats partiels déjà écrits sont conservés</strong> ;</li>
+          <li>le navigateur est fermé (aucun processus orphelin) ;</li>
+          <li>l'état affiché est <strong>« annulé »</strong> — distinct d'un succès ou d'une erreur.</li>
+        </ul>
+        <p>Vous pouvez aussi simplement fermer l'application : les jobs en cours sont arrêtés proprement.</p>`
+  },
+  {
+    q: 'Où retrouver les résultats et comment exporter en JSON et TXT ?',
+    a: `<p>Chaque job crée un dossier horodaté dans le dossier de sortie (<strong>bouton « Dossier principal »</strong> dans l'onglet Historique). Il contient :</p>
+        <ul>
+          <li><code>annonces.json</code> — données structurées, avec empreinte d'intégrité SHA-256 ;</li>
+          <li><code>annonces.txt</code> — version lisible (une fiche par annonce) ;</li>
+          <li><code>report.json</code> — durées par phase, compteurs réseau, état du disjoncteur.</li>
+        </ul>
+        <p>Les exports sont <strong>générés automatiquement</strong> en fin de job selon le <strong>profil de données</strong> choisi (Défaut / Maximum / Personnalisé). Le TXT et le JSON reflètent exactement les mêmes champs sélectionnés.</p>`
+  },
+  {
+    q: 'Comment fonctionne l\'historique ?',
+    a: `<p>L'onglet <strong>📁 Historique Jobs</strong> liste tous les scrapings passés (date, nombre d'annonces, accès aux fichiers JSON/TXT, suppression).</p>
+        <p>Les jobs sont triés du plus récent au plus ancien. La suppression d'un job efface son dossier complet (HAR + résultats) après confirmation. Le nettoyage automatique des vieux jobs est configurable dans les Paramètres.</p>`
+  },
+  {
+    q: 'Pourquoi certaines informations peuvent-elles être absentes ?',
+    a: `<p>Le logiciel distingue strictement trois états : <strong>information présente</strong>, <strong>information absente</strong> (le site ne la fournit pas) et <strong>information non récupérée</strong> (erreur/blocage). Un champ introuvable vaut toujours <code>null</code> — <strong>jamais</strong> <code>0</code>, <code>''</code> ou une valeur inventée.</p>
+        <p>Causes fréquentes d'absence : le vendeur n'expose pas de note, l'annonce n'a pas de description, ou l'enrichissement de la page de détail a été bloqué (403/429). Dans ce dernier cas, le job est signalé comme <strong>succès partiel</strong>.</p>`
+  },
+  {
+    q: 'Comment interpréter les statistiques ?',
+    a: `<p>L'onglet <strong>📊 Statistiques & Carte</strong> calcule les statistiques à partir des annonces réellement collectées : total, prix moyen, <strong>prix médian</strong> (souvent plus parlant que la moyenne car il ignore les extrêmes), prix min/max, répartition des modes de remise, vendeurs pro/particulier, top villes.</p>
+        <p>Les annonces sans prix valide sont ignorées dans les calculs de prix (et comptées séparément). Les statistiques se recalculent après chaque job et lors du changement de session.</p>`
+  },
+  {
+    q: 'Où sont stockées mes données et comment les supprimer ?',
+    a: `<p>Tout reste <strong>local</strong> sur votre machine, dans le dossier de sortie : jobs, résultats, logs, session navigateur. Aucune donnée scrapée n'est envoyée sur Internet.</p>
+        <p>Pour supprimer : utilisez le bouton <strong>🗑</strong> de l'historique pour un job précis, ou supprimez le dossier de sortie complet pour tout effacer. Les fichiers <code>.har</code> et les logs sont purgés automatiquement selon la rétention configurée.</p>`
+  },
+  {
+    q: 'Comment consulter les logs et diagnostiquer un problème ?',
+    a: `<p>L'onglet <strong>📜 Logs</strong> affiche la console en temps réel (filtrage normal/debug, export possible). Un <strong>résumé de session</strong> est produit en fin de job (pages, annonces, doublons, erreurs).</p>
+        <p>Pour un diagnostic avancé : ouvrez <code>report.json</code> du job (durées par phase, compteurs réseau, blocages) et les logs dans le dossier <code>logs/</code>. Le bouton <strong>Signaler un problème</strong> pré-remplit un rapport avec la version et le système (aucune donnée personnelle).</p>`
+  },
+  {
+    q: 'Comment mettre à jour l\'application ?',
+    a: `<p>Téléchargez la dernière version depuis la page <strong>Releases</strong> du dépôt GitHub et réinstallez-la par-dessus l'installation existante (vos données locales sont conservées).</p>
+        <p>Il n'y a pas de mise à jour automatique intégrée : la mise à jour est manuelle et documentée dans le <code>README.md</code>.</p>`
+  },
+  {
+    q: 'Y a-t-il une analyse par intelligence artificielle (modèle local ou cloud) ?',
+    a: `<p><strong>Non.</strong> Le logiciel ne contient <strong>aucune</strong> intelligence artificielle : pas de modèle de langage, pas de service cloud, pas d'analyse d'image. Il n'y a donc <strong>rien à configurer</strong> (aucune clé d'API, aucun serveur d'IA à installer).</p>
+        <p>Le scraping et l'analyse sont <strong>100 % locaux et déterministes</strong> : extraction, normalisation, calcul du type de remise, statistiques de prix et exports. Les résultats sont reproductibles et ne dépendent d'aucun modèle externe. L'ancien module « IA Studio » et les fonctions d'estimation par IA ont été <strong>entièrement retirés</strong>.</p>`
+  },
+  {
+    q: 'Comment signaler un bug ou proposer une amélioration ?',
+    a: `<p>Utilisez le bouton <strong>💬 Feedback</strong> dans la barre latérale : le formulaire pré-remplit un rapport (version de l'application, système) <strong>sans donnée personnelle</strong>, prêt à être copié.</p>
+        <p>Vous pouvez aussi ouvrir une <strong>issue</strong> sur le dépôt GitHub en décrivant : ce que vous faisiez, ce qui s'est passé, et si possible le <code>report.json</code> du job concerné. Pour un diagnostic, joignez l'extrait pertinent de l'onglet <strong>Logs</strong> (jamais de secrets).</p>`
+  },
+  {
     q: 'À quoi sert Leboncoin Scraper Pro ?',
     a: `<p>Leboncoin Scraper Pro est un logiciel de bureau (Windows / macOS / Linux) qui <strong>collecte automatiquement les annonces Leboncoin</strong> à partir d'une URL de recherche, puis les exporte.</p>
         <p>Il permet de :</p>
@@ -42,17 +141,6 @@ const FAQ_DATA = [
         <p>Si Leboncoin détecte une activité robotique, un <strong>CAPTCHA peut apparaître</strong> : le navigateur devient alors visible pour que vous le résolviez manuellement, après quoi le scraping reprend tout seul.</p>`
   },
   {
-    q: 'À quoi servent les vitesses de scraping (Moyen / Rapide / Ultra-rapide) ?',
-    a: `<p>Elles contrôlent le compromis <strong>vitesse ↔ discrétion</strong> lors de l'enrichissement des descriptions (Paramètres ⚙️ → Vitesse de scraping) :</p>
-        <ul>
-          <li><strong>🟢 Moyen</strong> — 10 annonces en parallèle, délais courts. Bon compromis vitesse/stabilité.</li>
-          <li><strong>🟠 Rapide</strong> — 15 annonces en parallèle, délais très courts. Pour les utilisateurs expérimentés.</li>
-          <li><strong>🔴 Ultra-rapide</strong> — 25 annonces en parallèle, délais maximaux. Risque de blocage (403) plus élevé.</li>
-        </ul>
-        <p>Les trois modes utilisent une <strong>queue dynamique avec workers persistants</strong> : dès qu'un worker termine une annonce, il prend immédiatement la suivante. Pas de temps mort entre les batchs.</p>
-        <p>Une case <strong>« Ignorer les descriptions (Mode Ultra-Rapide) »</strong> dans le formulaire de recherche permet de sauter l'enrichissement des descriptions pour aller encore plus vite (titre + prix seulement).</p>`
-  },
-  {
     q: 'Que signifie « Type de remise » (livraison, main propre, les deux) ?',
     a: `<p>Chaque annonce Leboncoin propose un ou plusieurs <strong>modes de remise</strong>. Le logiciel unifie ces informations dans un champ unique <code>deliveryType</code> :</p>
         <ul>
@@ -74,20 +162,21 @@ const FAQ_DATA = [
         </ul>`
   },
   {
-    q: `Le mode Rapide n'a pas récupéré les descriptions, est-ce normal ?`,
-    a: `<p><strong>Oui</strong>. Le mode « Rapide » n'extrait volontairement que le titre et le prix (pas la description détaillée) si la case « Ignorer les descriptions » est cochée.</p>
-        <p>Pour les descriptions complètes, utilisez <strong>Équilibré</strong> ou <strong>Prudent</strong>, et décochez « Ignorer les descriptions ».</p>`
+    q: 'Pourquoi aucune description n\'a-t-elle été récupérée ?',
+    a: `<p><strong>C'est volontaire si la case « Ignorer les descriptions » est cochée.</strong> Dans ce cas le logiciel n'extrait que les données de la liste de recherche (titre, prix, ville…) et <strong>saute l'enrichissement des descriptions détaillées</strong> pour aller beaucoup plus vite.</p>
+        <p>Pour obtenir les descriptions complètes (et les données vendeur de la page de détail), <strong>décochez</strong> cette case. Le mode de performance (Ultra rapide) reste identique dans tous les cas.</p>`
   },
   {
-    q: 'J\'obtiens une erreur 403 / page blanche pendant le scraping, que faire ?',
-    a: `<p>Une erreur <strong>403</strong> signifie que Leboncoin a temporairement bloqué la requête. Solutions :</p>
+    q: 'J\'obtiens une erreur 403 / 429 pendant le scraping, que faire ?',
+    a: `<p>Une erreur <strong>403</strong> (accès refusé) ou <strong>429</strong> (trop de requêtes) signifie que Leboncoin a temporairement limité l'accès. Le logiciel gère déjà cela automatiquement (réduction de concurrence + backoff + respect du <code>Retry-After</code>) et <strong>conserve les annonces déjà collectées</strong>.</p>
+        <p>Si le blocage persiste :</p>
         <ul>
           <li>Attendez quelques minutes puis réessayez ;</li>
-          <li>Choisissez une vitesse plus lente (<strong>Prudent</strong>) ;</li>
-          <li>Augmentez le délai entre les pages (Paramètres → Délai entre les pages) ;</li>
-          <li>Utilisez un <strong>proxy rotatif</strong> ;</li>
-          <li>Ne scrapez pas trop de pages d'un coup.</li>
-        </ul>`
+          <li>Réduisez le nombre de pages par job ;</li>
+          <li>Utilisez un <strong>proxy</strong> si vous en disposez ;</li>
+          <li>Ne relancez pas en boucle : cela aggrave la limitation.</li>
+        </ul>
+        <p>Le logiciel n'effectue <strong>aucun contournement</strong> des protections du site (pas de rotation d'identité ni de mécanisme d'évasion).</p>`
   },
   {
     q: 'Mes favoris ou filtres sont-ils conservés ?',
@@ -125,14 +214,15 @@ const HELP_SECTIONS = [
   },
   {
     icon: '⚙️', title: '2. Configurer le scraping',
-    body: `<p>Paramètres clés :</p>
+    body: `<p>Paramètres de recherche :</p>
       <ul>
         <li><strong>Pages</strong> — combien de pages de résultats parcourir (attention : trop de pages = risque de blocage).</li>
         <li><strong>Limite</strong> — plafond d'annonces (vide = toutes).</li>
         <li><strong>Proxy</strong> — serveur HTTP/SOCKS5 pour masquer votre IP (optionnel, utile contre le blocage).</li>
-        <li><strong>Vitesse</strong> — voir la FAQ pour le détail (Rapide/Équilibré/Prudent), plus la case « Ignorer les descriptions » pour le mode ultra-rapide.</li>
+        <li><strong>Ignorer les descriptions</strong> — saute l'enrichissement des descriptions (plus rapide).</li>
       </ul>
-      <p>Dans <strong>Paramètres ⚙️</strong> vous pouvez aussi régler : le thème, le délai entre les pages, le mode de capture (invisible / visible si CAPTCHA), le nettoyage automatique.</p>`
+      <p>La <strong>performance</strong> (mode ⚡ Ultra rapide, 25 parallèles, délai 400 ms) est <strong>fixe</strong> et appliquée automatiquement : elle n'est pas modifiable.</p>
+      <p>Dans <strong>Paramètres ⚙️</strong> vous pouvez régler : le thème, le mode de capture (invisible / visible si CAPTCHA), les données vendeur, le nettoyage automatique.</p>`
   },
   {
     icon: '🔍', title: '3. Explorer les résultats',
@@ -169,7 +259,7 @@ const HELP_SECTIONS = [
   {
     icon: '⚠️', title: '6. Erreurs courantes et solutions',
     body: `<ul>
-        <li><strong>403 / page blanche</strong> — Leboncoin bloque. Ralentissez (Prudent), augmentez le délai, utilisez un proxy, attendez.</li>
+        <li><strong>403 / 429</strong> — Leboncoin limite l'accès. Le logiciel ralentit et réduit la concurrence automatiquement, puis conserve les annonces déjà récupérées. Attendez et réessayez, ou réduisez les pages.</li>
         <li><strong>CAPTCHA</strong> — le navigateur devient visible : résolvez-le à la main, le scraping reprend.</li>
         <li><strong>0 annonce récupérée</strong> — vérifiez l'URL (catégorie/prix/filtres) et votre connexion.</li>
         <li><strong>Carte vide</strong> — décochez le filtre main propre ou scrapez des annonces avec une ville.</li>

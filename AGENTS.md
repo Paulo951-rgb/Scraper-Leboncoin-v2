@@ -81,27 +81,55 @@ Codes de sortie du pipeline (contrat avec `pipelineRunner.js`) : `0` succès,
 `1` erreur fatale, `2` aucune donnée exploitable, `3` enrichissement arrêté sur
 HTTP 403, `4` enrichissement arrêté sur HTTP 429.
 
+## Politique de scraping FIXE (non configurable) — source unique
+
+`src/main/config/scraping.js` → `SCRAPING_POLICY` (figé via `Object.freeze`) est
+la **seule** source de vérité pour la performance de scraping. L'utilisateur ne
+peut plus la modifier : elle est appliquée automatiquement au démarrage par
+toutes les couches.
+
+- `SCRAPING_POLICY = { mode: 'ultra-rapide', label: 'ULTRA RAPIDE',
+  concurrency: 25, pageDelayMs: 400, enrichMinDelayMs: 400, enrichMaxDelayMs: 8000 }`.
+- `getScrapingPolicy()` renvoie une copie ; `clampConcurrency(n)` borne toute
+  concurrence demandée à `MAX_CONCURRENCY` (25) — un renderer compromis ou un
+  ancien paramètre persisté ne peut JAMAIS relever le débit.
+- `harCapturer` et `leboncoin-pipeline` consomment la politique directement.
+  Le pipeline force `opts.concurrency = clampConcurrency(policy.concurrency)`,
+  `opts.minDelayMs`/`opts.maxDelayMs` depuis la politique, et ignore tout
+  `--speed` hérité (`opts.speed = policy.mode`).
+- **UI** : plus aucun contrôle modifiable de vitesse/délai. `index.html` affiche
+  le mode en lecture seule (`.scraping-mode-readonly`). `scraperModule.js` ne
+  lit/écrit plus `scrapeSpeed`/`pageDelayMs`.
+- **Migration** : `settings.migrateSettings(raw)` retire les clés héritées
+  (`scrapeSpeed`, `pageDelayMs`) à la lecture ; `sanitizeSettingsPatch` les
+  rejette à l'écriture. Un ancien `user-settings.json` ne peut donc pas rétablir
+  une configuration contradictoire.
+- **Invariants testés** : `test/regression.test.js` section `[41]`.
+- Les anciens `SPEED_PRESETS` / `getSpeedPreset()` sont conservés uniquement pour
+  la rétro-compatibilité d'affichage : `getSpeedPreset()` renvoie toujours la
+  politique fixe, quelle que soit la valeur demandée.
+
 ## Anti-débit (rate limiting) — ne PAS réintroduire la régression
 
 `AdaptiveRateLimiter` (`src/main/utils/rateLimiter.js`) utilise `baseDelayMs`
 comme délai **MINIMAL** (`minDelayMs` par défaut = `baseDelayMs`). Il est
-instancié par `DescriptionEnricher` avec `baseDelayMs = opts.minDelayMs` (le
-preset de vitesse) et `maxDelayMs = opts.maxDelayMs`. Conséquence : **si les
-presets mettent des délais de base trop faibles, le backoff après blocage est
-lui aussi minuscule** (ex. base 50 ms → backoff max 250 ms), ce qui ne freine
-rien face à une limitation de débit.
+instancié par `DescriptionEnricher` avec `baseDelayMs = opts.minDelayMs` (dérivé
+de la politique) et `maxDelayMs = opts.maxDelayMs`. Conséquence : **si les
+délais de base sont trop faibles, le backoff après blocage est lui aussi
+minuscule** (ex. base 50 ms → backoff max 250 ms), ce qui ne freine rien face à
+une limitation de débit. C'est pourquoi `enrichMinDelayMs = 400` (jamais 50).
 
-- Presets actuels (source unique : `src/main/config/scraping.js` → `SPEED_PRESETS`) :
-  `moyen {10, 500, 1000}`, `rapide {15, 200, 600}`, `ultra-rapide {25, 50, 300}`
-  (`{concurrency, minDelayMs, maxDelayMs}`). Le pipeline les consomme via
-  `getSpeedPreset()` — ne PAS redupliquer ces valeurs ailleurs.
+- Délais issus de la politique : `minDelayMs = 400`, `maxDelayMs = 8000`.
 - Le backoff saute directement à `base × 2^max(N,4)` (×16) dès le premier
   blocage — cf. commit de diagnostic 403.
+- Réduction adaptative de la concurrence (`nextConcurrencyAfterBlock`) : ÷2 après
+  un 429, −25 % après un 403, jamais sous 1, jamais en hausse.
 - `Retry-After` (429) est appliqué comme **pause inter-batch**
   `max(délai adaptatif, Retry-After)` : aucune reprise avant le délai indiqué.
 - Le commit `a861165` (« restore fast parallel scraping ») avait remonté la
   concurrence à 25 et baissé les délais à 50 ms → **régression de débit** à ne
-  pas reproduire.
+  pas reproduire. Le délai de 400 ms est NOMINAL : il n'autorise pas à ignorer
+  une limitation explicite du site.
 
 ## Fiabilité : signaux structurés, reprise, anti-boucles
 
@@ -116,7 +144,8 @@ rien face à une limitation de débit.
   sur les messages de détection CAPTCHA.
 - **Journal réseau** : `NetworkJournal` compte navigations / requêtes détail /
   403-429 (avec URLs) / erreurs ; `harCapturer` émet `[NET_JOURNAL] …` et le
-  pipeline écrit `report.json` (durées par phase + circuit + journal) dans
+  pipeline écrit `report.json` (durées par phase + circuit + journal + mesures de
+  performance `totalMs`/`adsPerMinute`/`avgMsPerAd`/`peakRssMb`) dans
   `<jobDir>/results/`.
 - **Reprise incrémentale** : `harCapturer` persiste `capture-progress.json`
   (`lastPageOk`) après chaque page réussie ; en reprise il écrit un HAR séparé
@@ -198,7 +227,8 @@ widget.html                  widget flottant
 app.js                       orchestration, sidebar, routage
 appState.js                  état global du renderer
 utils.js                     escapeHtml, escapePath, formatage
-scraperModule.js             onglet Scraper (URL, pages, profil, vitesse, presets)
+scraperModule.js             onglet Scraper (URL, pages, profil, presets, options ;
+                             mode de performance fixe affiché en lecture seule)
 logsModule.js                onglet Logs (console temps réel, filtrage)
 historyModule.js            onglet Historique (jobs, ouverture, suppression)
 explorerModule.js           onglet Explorateur (table, grille, filtres, tri, fiche)
@@ -304,6 +334,10 @@ Configuration dans `package.json` → clé `build` :
   **Piège** : les archives Playwright s'appellent `chromium-win64.zip` /
   `chromium-mac.zip` / `chromium-linux.zip` (PAS `chromium-win.zip`), et le
   sous-dossier extrait est `chrome-win` / `chrome-mac` / `chrome-linux`.
+  **Piège** : la décompression utilise `extract-zip`, qui doit rester déclarée
+  explicitement (elle n'était que transitive sous Playwright 1.41 ; sa montée à
+  1.64 l'a retirée → CI Windows en échec). Ne jamais dépendre d'une transitive
+  pour l'outillage de build (test `[28]`).
 - `generate-icon.py` : génère `build/icon.ico` + `build/icon.png` (Pillow).
 - `verify-dist.js` : contrôle un dossier `dist/` après build (installeur NSIS,
   `win-unpacked/` + `app.asar` + `ffmpeg.dll`, Chromium embarqué, en-tête PE,
@@ -323,6 +357,22 @@ Sans Wine, `-c.win.signAndEditExecutable=false` permet de produire `dist/win-unp
 (dossier app lançable) mais PAS l'installeur ni le portable.
 
 ## Pièges corrigés (à ne PAS réintroduire)
+- **Contrôle anti-SSRF du chemin Playwright (NE PAS le retirer)** : le commit de
+  base avait retiré `isSafeFetchDestination`/`_installNetworkGuard` de
+  `harCapturer` (« moteur historique »), alors que la documentation
+  (`AGENTS.md`, `KNOWN_ISSUES` KI-3, `PHASE2_REPORT`) le déclarait actif. Un
+  test de non-régression asserait même son ABSENCE. C'était une **régression de
+  sécurité** : l'URL de recherche (entrée utilisateur) pouvait viser
+  `http://169.254.169.254/…` (métadonnées cloud), `http://127.0.0.1/…` ou un
+  domaine arbitraire (SSRF), et aucune sous-requête n'était filtrée. Restauré :
+  validation avant lancement + `_installNetworkGuard` (sous-requêtes) dans
+  `harCapturer`, plus le contrôle équivalent dans le `route` handler du pipeline
+  d'enrichissement. Les tests `[44]` verrouillent ces invariants.
+- **`ctx.route()` + `recordHar`** : vérifier qu'un filtre réseau
+  (`ctx.route('**/*')`) n'empêche PAS l'enregistrement du HAR (source des
+  données). Testé avec le Chromium embarqué : les deux coexistent, le HAR reste
+  rempli. Un `route` handler qui `abort()` la navigation légitime (ex. filtre
+  d'images trop large sur le document) casserait la capture.
 - **Enrichissement des descriptions** : `DescriptionEnricher.enrichAll` DOIT
   cibler aussi les annonces qui ont déjà une description mais dont un champ de
   détail est manquant (`vendeurNote`, `nombreAvis`, `vendeurUrlProfil`,
@@ -393,10 +443,16 @@ Sans Wine, `-c.win.signAndEditExecutable=false` permet de produire `dist/win-unp
   fermer le navigateur (handler retiré en `finally`).
 - **Sécurité du chemin Playwright (KI-3)** : l'URL de recherche (entrée
   utilisateur) est validée par `isSafeFetchDestination(searchUrl, LEBONCOIN_SOURCE_HOSTS)`
-  AVANT de lancer Chromium. Toutes les sous-requêtes passent par
-  `_installNetworkGuard` (`ctx.route('**/*')`) qui bloque IP privées/locales et
-  schémas exotiques. LIMITE : pas de résolution DNS dans le callback `route`
-  (rebinding DNS non détecté sur les sous-ressources).
+  AVANT de lancer Chromium (`harCapturer.capture()`). Toutes les sous-requêtes
+  passent par `_installNetworkGuard` (`ctx.route('**/*')`) qui bloque IP
+  privées/locales et schémas exotiques. `ws://`/`wss://` sont ramenés à
+  `http(s)://` pour réutiliser le même contrôle. Le `route` handler de
+  l'enrichissement (`DescriptionEnricher`) applique le même contrôle
+  (`isSafeFetchDestination`) en plus de son filtre d'images. LIMITE : pas de
+  résolution DNS dans le callback `route` (rebinding DNS non détecté sur les
+  sous-ressources).
+  **Vérifié** : `ctx.route()` et `recordHar` coexistent (le HAR n'est PAS vidé
+  par l'interception — testé avec Chromium embarqué).
 - **`isHostAllowed` inclusif** (domaine + sous-domaines) : rejette les suffixes
   trompeurs (`leboncoin.fr.attacker.com`) grâce au préfixe `.`.
 - **IPv6 littérales** : `URL.hostname` conserve les crochets (`[::1]`) → les

@@ -34,6 +34,13 @@ const ROOT = path.join(__dirname, '..');
 const PW_CORE = path.join(ROOT, 'node_modules', 'playwright-core');
 const LOCAL_BROWSERS = path.join(PW_CORE, '.local-browsers');
 
+// ── Schémas de téléchargement Chromium ───────────────────────────────────────
+// Playwright a changé de distribution : les anciennes versions publiaient un
+// build « chromium » (archive chromium-<platform>.zip, extraite dans chrome-win
+// / chrome-linux / chrome-mac) ; les versions récentes (≥ 1.49) publient un
+// build « Chrome for Testing » (archive chrome-<platform>.zip, extraite dans
+// chrome-win64 / chrome-linux64 / chrome-mac-<arch>). On supporte les DEUX :
+// le schéma effectif est déterminé par la première archive téléchargeable.
 const CDN_PRIMARY = 'https://cdn.playwright.dev/builds';
 const CDN_FALLBACK = 'https://playwright.azureedge.net/builds';
 
@@ -46,19 +53,46 @@ function getArgPlatform() {
   return 'linux';
 }
 
-// Nom de l'archive Playwright pour (plateforme, révision, arch).
-// Playwright nomme les archives win64/win-arm64, mac/mac-arm64, linux.
+// ── Ancien schéma « chromium » ───────────────────────────────────────────────
+// Archive : chromium-win64.zip / chromium-mac.zip / chromium-linux.zip
+// Extraction : chrome-win / chrome-mac / chrome-linux
 function archiveName(platform, arch) {
   if (platform === 'win') return arch === 'arm64' ? 'chromium-win-arm64.zip' : 'chromium-win64.zip';
   if (platform === 'mac') return arch === 'arm64' ? 'chromium-mac-arm64.zip' : 'chromium-mac.zip';
   return 'chromium-linux.zip';
 }
 
-// Sous-dossier d'extraction produit par l'archive.
 function extractedDir(platform) {
   if (platform === 'win') return 'chrome-win';
   if (platform === 'mac') return 'chrome-mac';
   return 'chrome-linux';
+}
+
+// ── Nouveau schéma « Chrome for Testing » (Playwright ≥ 1.49) ────────────────
+// Archive : chrome-win64.zip / chrome-mac-arm64.zip / chrome-linux64.zip
+// Extraction : chrome-win64 / chrome-mac-<arch> / chrome-linux64
+function cftArchiveName(platform, arch) {
+  if (platform === 'win') return arch === 'arm64' ? 'chrome-win-arm64.zip' : 'chrome-win64.zip';
+  if (platform === 'mac') return arch === 'arm64' ? 'chrome-mac-arm64.zip' : 'chrome-mac-x64.zip';
+  return arch === 'arm64' ? 'chrome-linux-arm64.zip' : 'chrome-linux64.zip';
+}
+
+function cftExtractedDir(platform, arch) {
+  if (platform === 'win') return arch === 'arm64' ? 'chrome-win-arm64' : 'chrome-win64';
+  if (platform === 'mac') return arch === 'arm64' ? 'chrome-mac-arm64' : 'chrome-mac-x64';
+  return arch === 'arm64' ? 'chrome-linux-arm64' : 'chrome-linux64';
+}
+
+// Chemin de l'exécutable dans le dossier extrait, selon le schéma.
+function exeNameIn(platform, scheme) {
+  if (scheme === 'cft') {
+    if (platform === 'win') return 'chrome.exe';
+    if (platform === 'mac') return path.join('Google Chrome for Testing.app', 'Contents', 'MacOS', 'Google Chrome for Testing');
+    return 'chrome';
+  }
+  if (platform === 'win') return 'chrome.exe';
+  if (platform === 'mac') return 'Chromium.app';
+  return 'chrome';
 }
 
 function config() {
@@ -68,6 +102,43 @@ function config() {
   const chromium = browsersJson.browsers.find((b) => b.name === 'chromium');
   if (!chromium) throw new Error('Révision Chromium introuvable dans browsers.json');
   return { platform, arch, revision: chromium.revision, version: chromium.browserVersion };
+}
+
+/**
+ * Construit la liste ordonnée des schémas candidats (URL + dossier extrait +
+ * exécutable). Le schéma « cft » (Chrome for Testing) est essayé en premier car
+ * il correspond aux versions récentes de Playwright ; l'ancien schéma sert de
+ * repli. Exporté pour les tests.
+ */
+function downloadSchemes(platform, arch, revision, version) {
+  const cftDir = cftExtractedDir(platform, arch);
+  const legacyDir = extractedDir(platform);
+  const schemes = [];
+  if (version) {
+    const cftArchive = cftArchiveName(platform, arch);
+    const cftPlatform = platform === 'win' ? (arch === 'arm64' ? 'win-arm64' : 'win64')
+      : platform === 'mac' ? (arch === 'arm64' ? 'mac-arm64' : 'mac-x64')
+      : (arch === 'arm64' ? 'linux-arm64' : 'linux64');
+    schemes.push({
+      name: 'cft',
+      dir: cftDir,
+      exe: exeNameIn(platform, 'cft'),
+      urls: [
+        `${CDN_PRIMARY}/cft/${version}/${cftPlatform}/${cftArchive}`,
+        `${CDN_FALLBACK}/cft/${version}/${cftPlatform}/${cftArchive}`,
+      ],
+    });
+  }
+  schemes.push({
+    name: 'chromium',
+    dir: legacyDir,
+    exe: exeNameIn(platform, 'chromium'),
+    urls: [
+      `${CDN_PRIMARY}/chromium/${revision}/${archiveName(platform, arch)}`,
+      `${CDN_FALLBACK}/chromium/${revision}/${archiveName(platform, arch)}`,
+    ],
+  });
+  return schemes;
 }
 
 function download(url, dest) {
@@ -98,46 +169,49 @@ async function main() {
   const { platform, arch, revision, version } = config();
   const targetDir = path.join(LOCAL_BROWSERS, `chromium-${revision}`);
   const marker = path.join(targetDir, 'INSTALLATION_COMPLETE');
-  const exeName = platform === 'win' ? 'chrome.exe' : (platform === 'mac' ? 'Chromium.app' : 'chrome');
-  const extractSub = extractedDir(platform);
-  const exePath = path.join(targetDir, extractSub, exeName);
+  const schemes = downloadSchemes(platform, arch, revision, version);
 
   console.log(`[prepare-browsers] Cible : ${platform}-${arch}, Chromium ${version} (rev ${revision})`);
 
-  if (fs.existsSync(exePath)) {
-    if (!fs.existsSync(marker)) fs.writeFileSync(marker, '');
-    console.log(`[prepare-browsers] Déjà présent → ${targetDir} (ignoré).`);
-    return;
-  }
-
-  const file = archiveName(platform, arch);
-  const urls = [
-    `${CDN_PRIMARY}/chromium/${revision}/${file}`,
-    `${CDN_FALLBACK}/chromium/${revision}/${file}`,
-  ];
-
-  const tmpZip = path.join(os.tmpdir(), `pw-${platform}-chromium-${revision}.zip`);
-  let downloaded = false;
-  for (const url of urls) {
-    try {
-      console.log(`[prepare-browsers] Téléchargement : ${url}`);
-      await download(url, tmpZip);
-      downloaded = true;
-      break;
-    } catch (err) {
-      console.warn(`[prepare-browsers] Échec (${url}) : ${err.message}`);
+  // Déjà installé ? On teste l'exécutable de CHAQUE schéma possible.
+  for (const s of schemes) {
+    const exePath = path.join(targetDir, s.dir, s.exe);
+    if (fs.existsSync(exePath)) {
+      if (!fs.existsSync(marker)) fs.writeFileSync(marker, '');
+      console.log(`[prepare-browsers] Déjà présent (${s.name}) → ${targetDir} (ignoré).`);
+      return;
     }
   }
-  if (!downloaded) {
-    throw new Error(`Téléchargement du Chromium ${platform} impossible (CDN injoignable).`);
+
+  const tmpZip = path.join(os.tmpdir(), `pw-${platform}-chromium-${revision}.zip`);
+  let chosen = null;
+  for (const s of schemes) {
+    for (const url of s.urls) {
+      try {
+        console.log(`[prepare-browsers] Téléchargement (${s.name}) : ${url}`);
+        await download(url, tmpZip);
+        chosen = s;
+        break;
+      } catch (err) {
+        console.warn(`[prepare-browsers] Échec (${url}) : ${err.message}`);
+      }
+    }
+    if (chosen) break;
+  }
+  if (!chosen) {
+    throw new Error(`Téléchargement du Chromium ${platform} impossible (aucun schéma disponible sur le CDN).`);
   }
 
   fs.mkdirSync(targetDir, { recursive: true });
-  console.log(`[prepare-browsers] Extraction vers ${targetDir}…`);
+  console.log(`[prepare-browsers] Extraction (${chosen.name}) vers ${targetDir}…`);
   await unzip(tmpZip, targetDir);
+  const exePath = path.join(targetDir, chosen.dir, chosen.exe);
+  if (!fs.existsSync(exePath)) {
+    throw new Error(`Archive extraite mais exécutable introuvable : ${exePath}`);
+  }
   fs.writeFileSync(marker, '');
   fs.unlinkSync(tmpZip);
-  console.log(`[prepare-browsers] Terminé : ${extractSub}/${exeName} embarqué pour ${platform}.`);
+  console.log(`[prepare-browsers] Terminé : ${chosen.dir}/${chosen.exe} embarqué pour ${platform}.`);
 }
 
 if (require.main === module) {
@@ -148,4 +222,4 @@ if (require.main === module) {
 }
 
 // Exports pour les tests unitaires (nom d'archive/sous-dossier selon plateforme).
-module.exports = { archiveName, extractedDir, getArgPlatform };
+module.exports = { archiveName, extractedDir, cftArchiveName, cftExtractedDir, downloadSchemes, getArgPlatform };

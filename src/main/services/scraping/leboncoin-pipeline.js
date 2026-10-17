@@ -22,10 +22,11 @@ const adFields = require('./adFields');
 const { ErrorCodes, createError } = require('./errorCodes');
 const { filterAdByFields, toReadableBlock } = require('../exporting/exportFields');
 const { DEFAULT_PROFILE_FIELDS } = require('../exporting/dataProfiles');
-const { PIPELINE_DEFAULTS, getSpeedPreset, BLOCK_THRESHOLD } = require('../../config/scraping');
+const { PIPELINE_DEFAULTS, getScrapingPolicy, clampConcurrency, BLOCK_THRESHOLD } = require('../../config/scraping');
 const { CircuitBreaker } = require('./circuitBreaker');
 const { NetworkJournal } = require('./networkJournal');
 const { getJobSessionPathFromResults, getGlobalSessionPath } = require('./sessionPaths');
+const { isSafeFetchDestination } = require('../../utils/urlSecurity');
 
 // Valeurs par défaut du pipeline, centralisées dans config/scraping.js.
 const DEFAULTS = Object.freeze({ ...PIPELINE_DEFAULTS });
@@ -247,6 +248,43 @@ const ALLOWED_FETCH_HOSTS = [
   'leboncoindirect.com', 'www.leboncoindirect.com',
 ];
 
+/**
+ * Analyse l'en-tête `Retry-After` (RFC 9110) et renvoie le délai en millisecondes.
+ * Accepte soit un nombre de secondes, soit une date HTTP.
+ * @param {string|null|undefined} headerValue
+ * @returns {number|null} délai en ms (>= 0), ou null si absent/invalide.
+ */
+function parseRetryAfterMs(headerValue) {
+  if (headerValue == null || headerValue === '') return null;
+  const s = String(headerValue).trim();
+  // Forme « delta-seconds »
+  if (/^\d+$/.test(s)) {
+    const secs = parseInt(s, 10);
+    return Number.isFinite(secs) ? Math.min(secs, 24 * 3600) * 1000 : null;
+  }
+  // Forme date HTTP (ex. « Wed, 21 Oct 2026 07:28:00 GMT »)
+  const dateMs = Date.parse(s);
+  if (Number.isFinite(dateMs)) {
+    return Math.max(0, Math.min(dateMs - Date.now(), 24 * 3600 * 1000));
+  }
+  return null;
+}
+
+/**
+ * Calcule la concurrence effective après un lot bloqué (403/429).
+ * Fonction PURE (testable sans navigateur) : la concurrence ne peut que
+ * DIMINUER et jamais descendre sous 1. Un 429 (limitation de débit) réduit de
+ * moitié, un 403 (accès refusé) réduit de 25 %. Elle n'est jamais relevée.
+ * @param {number} current concurrence effective actuelle
+ * @param {{is429?:boolean}} [info]
+ * @returns {number} concurrence à appliquer au lot suivant
+ */
+function nextConcurrencyAfterBlock(current, info = {}) {
+  const cur = Number.isFinite(current) && current >= 1 ? Math.floor(current) : 1;
+  const factor = info.is429 ? 0.5 : 0.75;
+  return Math.max(1, Math.floor(cur * factor));
+}
+
 function isFetchUrlAllowed(urlStr) {
   try {
     const u = new URL(urlStr);
@@ -413,8 +451,8 @@ function normalizeAd(raw) {
 
     etat,
 
-    photosCount: photos.count,
-    photosUrls: photos.urls,
+    photosCount: raw && raw.images != null ? photos.count : null,
+    photosUrls: raw && raw.images != null ? photos.urls : null,
 
     description,
 
@@ -633,8 +671,17 @@ class DescriptionEnricher {
               headers: { 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' },
             }, timeoutMs);
             if (!res.ok) {
-              if (res.status === 403 || res.status === 429) results[item.id] = { error: 'BLOCKED_403' };
-              else results[item.id] = { error: 'HTTP_' + res.status };
+              if (res.status === 403) {
+                results[item.id] = { error: 'BLOCKED_403', status: 403 };
+              } else if (res.status === 429) {
+                // On remonte l'en-tête Retry-After tel quel : il sera interprété
+                // par le main process (parseRetryAfterMs) qui applique une pause
+                // inter-batch. Le délai n'est PAS appliqué côté navigateur pour
+                // ne pas bloquer la page pendant plusieurs minutes.
+                results[item.id] = { error: 'BLOCKED_429', status: 429, retryAfter: res.headers.get('retry-after') };
+              } else {
+                results[item.id] = { error: 'HTTP_' + res.status, status: res.status };
+              }
             } else {
               const html = await res.text();
               results[item.id] = { html };
@@ -660,8 +707,13 @@ class DescriptionEnricher {
               headers: { 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' },
             }, timeoutMs);
             if (!res.ok) {
-              if (res.status === 403 || res.status === 429) results[item.id] = { error: 'BLOCKED_403' };
-              else results[item.id] = { error: 'HTTP_' + res.status };
+              if (res.status === 403) {
+                results[item.id] = { error: 'BLOCKED_403', status: 403 };
+              } else if (res.status === 429) {
+                results[item.id] = { error: 'BLOCKED_429', status: 429, retryAfter: res.headers.get('retry-after') };
+              } else {
+                results[item.id] = { error: 'HTTP_' + res.status, status: res.status };
+              }
             } else {
               const html = await res.text();
               results[item.id] = { html };
@@ -706,7 +758,10 @@ class DescriptionEnricher {
     const { chromium } = require('playwright');
     this.logger.debug(`[DescriptionEnricher] Lancement Chromium (headless=${this.opts.headless})...`);
     const t0Launch = Date.now();
-    const browser = await chromium.launch({ headless: this.opts.headless });
+    // `channel: 'chromium'` → utilise le Chromium complet embarqué (et non le
+    // « headless shell » séparé, non présent dans l'installeur depuis
+    // Playwright 1.49+). Cf. harCapturer._launchOptions.
+    const browser = await chromium.launch({ headless: this.opts.headless, channel: 'chromium' });
     this.logger.debug(`[DescriptionEnricher] Chromium lancé en ${formatMs(Date.now() - t0Launch)}.`);
 
     // Résolution de session centralisée (sessionPaths.js) : la session globale
@@ -740,6 +795,20 @@ class DescriptionEnricher {
         if (['image', 'media', 'font', 'stylesheet'].includes(route.request().resourceType())) {
           return route.abort();
         }
+        // Défense en profondeur (anti-SSRF) : bloque toute sous-requête vers une
+        // destination structurellement dangereuse (IP privée/locale, schéma
+        // exotique) avant qu'elle ne quitte la machine.
+        const reqUrl = route.request().url();
+        if (!/^(data|blob|about|devtools|chrome|chrome-extension):/.test(reqUrl)) {
+          let checkUrl = reqUrl;
+          if (reqUrl.startsWith('ws://')) checkUrl = 'http://' + reqUrl.slice(5);
+          else if (reqUrl.startsWith('wss://')) checkUrl = 'https://' + reqUrl.slice(6);
+          const dest = isSafeFetchDestination(checkUrl);
+          if (!dest.safe) {
+            this.logger.warn(`[security] Sous-requête bloquée (${dest.reason}) : ${truncate(reqUrl, 100)}`);
+            return route.abort();
+          }
+        }
         return route.continue();
       });
 
@@ -765,19 +834,32 @@ class DescriptionEnricher {
     let notFoundCount = 0;
     let httpErrorCount = 0;
     let blockedCount = 0;
-    const concurrency = this.opts.concurrency || 10;
+    let rateLimitedCount = 0;
+    // Délai minimal imposé par le serveur (Retry-After) à respecter avant toute
+    // nouvelle requête. Appliqué comme pause inter-batch, en plus du délai
+    // adaptatif : jamais de reprise avant le délai indiqué par le serveur.
+    let pendingRetryAfterMs = 0;
+    // Concurrence effective : démarre au maximum autorisé (politique fixe,
+    // bornée à 25) et peut être RÉDUITE temporairement en cas de blocage. Elle
+    // n'est jamais relevée au-dessus du maximum. La boucle est pilotée par un
+    // curseur (`cursor`) plutôt que par `i += concurrency` : réduire la taille
+    // de lot en cours de route ne réindexe donc pas les annonces déjà traitées.
+    const maxConcurrency = this.opts.concurrency || 10;
+    let effectiveConcurrency = maxConcurrency;
+    let cursor = 0;
     let batchIndex = 0;
 
-    for (let i = 0; i < targets.length; i += concurrency) {
+    while (cursor < targets.length) {
       if (this.circuit.shouldStop() || this.cancelled) {
         this.logger.debug(`[DescriptionEnricher] Arrêt demandé (circuit=${this.circuit.state}, cancelled=${this.cancelled}) — sortie de la boucle à ${done}/${targets.length}.`);
         break;
       }
 
-      const batch = targets.slice(i, i + concurrency);
+      const batch = targets.slice(cursor, cursor + effectiveConcurrency);
+      cursor += batch.length;
       const batchItems = batch.map((a) => ({ id: a.id, url: a.url }));
       batchIndex++;
-      this.logger.debug(`[DescriptionEnricher] Batch ${batchIndex} : ${batch.length} annonce(s) — IDs [${batchItems.map((b) => b.id).join(', ')}]`);
+      this.logger.debug(`[DescriptionEnricher] Batch ${batchIndex} : ${batch.length} annonce(s) (concurrence effective ${effectiveConcurrency}) — IDs [${batchItems.map((b) => b.id).join(', ')}]`);
 
       const t0Batch = Date.now();
       const results = await this.fetchBatchInPage(page, batchItems);
@@ -810,13 +892,28 @@ class DescriptionEnricher {
             this.logger.warn(`⚠️ [${done}/${targets.length}] Description non trouvée sur ${ad.id}`);
             this.logger.debug(`[DescriptionEnricher] HTML reçu (${formatBytes(res.html.length)}) mais pas de __NEXT_DATA__ ou pas de body pour l'ID ${ad.id}.`);
           }
-        } else if (res && res.error === 'BLOCKED_403') {
+        } else if (res && (res.error === 'BLOCKED_403' || res.error === 'BLOCKED_429')) {
+          const is429 = res.error === 'BLOCKED_429';
+          const httpStatus = is429 ? 429 : 403;
           blockedCount++;
-          this.journal.recordBlock(ad.url, 403);
-          const blockCode = ErrorCodes.HTTP_403;
-          const blockErr = createError(blockCode, `Bloqué (HTTP 403) sur ${ad.id} — ${truncate(ad.url, 60)}`, { adId: ad.id, url: ad.url });
-          this.logger.warn(`🛑 [${done}/${targets.length}] [${blockErr.code}] Bloqué (HTTP 403) sur ${ad.id} — ${truncate(ad.url, 60)}`);
-          const mustStop = this.circuit.recordBlock(403, blockCode);
+          if (is429) {
+            rateLimitedCount++;
+            this.journal.recordBlock(ad.url, 429);
+            // Retry-After : pause inter-batch (max avec le délai adaptatif),
+            // appliquée APRÈS le traitement du lot. On ne relance jamais avant
+            // le délai indiqué par le serveur.
+            const ra = parseRetryAfterMs(res.retryAfter);
+            if (ra != null && ra > pendingRetryAfterMs) {
+              pendingRetryAfterMs = ra;
+              this.logger.warn(`⏳ Retry-After reçu (HTTP 429) : pause de ${Math.round(ra / 1000)}s avant toute nouvelle requête.`);
+            }
+          } else {
+            this.journal.recordBlock(ad.url, 403);
+          }
+          const blockCode = is429 ? ErrorCodes.HTTP_429 : ErrorCodes.HTTP_403;
+          const blockErr = createError(blockCode, `${is429 ? 'Requête limitée (HTTP 429)' : 'Bloqué (HTTP 403)'} sur ${ad.id} — ${truncate(ad.url, 60)}`, { adId: ad.id, url: ad.url, httpStatus });
+          this.logger.warn(`🛑 [${done}/${targets.length}] [${blockErr.code}] ${is429 ? 'Requête limitée (HTTP 429)' : 'Bloqué (HTTP 403)'} sur ${ad.id} — ${truncate(ad.url, 60)}`);
+          const mustStop = this.circuit.recordBlock(httpStatus, blockCode);
           if (mustStop) {
             this.logger.warn('\n🛑 Blocage détecté. Arrêt préventif.');
             this.logger.debug(`[DescriptionEnricher] Raison arrêt : ${this.circuit.consecutiveBlocks} blocages consécutifs (seuil=${this.circuit.blockThreshold}). ${blockedCount} blocages au total.`);
@@ -849,20 +946,43 @@ class DescriptionEnricher {
       // qui ajuste dynamiquement le délai (backoff exponentiel si blocage,
       // accélération si succès rapides). Remplace le randomDelay fixe.
       const batchDuration = Date.now() - t0Batch;
-      const batchHadBlock = batch.some((ad) => results[ad.id]?.error === 'BLOCKED_403');
+      const batchHas403 = batch.some((ad) => results[ad.id]?.error === 'BLOCKED_403');
+      const batchHas429 = batch.some((ad) => results[ad.id]?.error === 'BLOCKED_429');
+      const batchHadBlock = batchHas403 || batchHas429;
       const batchHadError = batch.some((ad) => {
         const e = results[ad.id]?.error;
-        return e && e !== 'BLOCKED_403' && !e.startsWith('HTTP_');
+        return e && e !== 'BLOCKED_403' && e !== 'BLOCKED_429' && !e.startsWith('HTTP_');
       });
+      // Réduction ADAPTATIVE de la concurrence : dès qu'un blocage est observé
+      // (403/429), on réduit la taille des lots suivants pour freiner la cadence
+      // sans interrompre le job. La concurrence ne remonte JAMAIS au-dessus du
+      // maximum et le backoff temporel est déjà géré par le rate limiter.
+      if (batchHas429 || batchHas403) {
+        const next = nextConcurrencyAfterBlock(effectiveConcurrency, { is429: batchHas429 });
+        if (next < effectiveConcurrency) {
+          this.logger.warn(`🐢 ${batchHas429 ? 'Limitation de débit (429)' : 'Accès refusé (403)'} : concurrence réduite ${effectiveConcurrency} → ${next} pour la suite.`);
+          effectiveConcurrency = next;
+        }
+      }
+
       if (batchHadBlock) {
-        await this.rateLimiter.waitAfter({ durationMs: batchDuration, blocked: true, status: 403 });
+        await this.rateLimiter.waitAfter({ durationMs: batchDuration, blocked: true, status: batchHas429 ? 429 : 403 });
       } else if (batchHadError) {
         await this.rateLimiter.waitAfter({ durationMs: batchDuration, error: true });
       } else {
         await this.rateLimiter.waitAfter({ durationMs: batchDuration });
       }
 
-      if (done > 0 && done % this.opts.recycleContextEvery === 0 && i + concurrency < targets.length) {
+      // Respect strict de Retry-After (429) : pause inter-batch AU MOINS égale
+      // au délai demandé par le serveur, en plus du délai adaptatif ci-dessus.
+      // On ne reprend jamais avant l'échéance indiquée par le serveur.
+      if (pendingRetryAfterMs > 0) {
+        this.logger.warn(`⏳ Pause inter-batch imposée par le serveur (Retry-After) : ${Math.round(pendingRetryAfterMs / 1000)}s.`);
+        await sleep(pendingRetryAfterMs);
+        pendingRetryAfterMs = 0;
+      }
+
+      if (done > 0 && done % this.opts.recycleContextEvery === 0 && cursor < targets.length) {
         this.logger.info(`🔄 Purge mémoire RAM (${done} items)...`);
         // Sauvegarde préventive AVANT le recyclage : si createStealthContext()
         // échoue pendant le recyclage (contexte Playwright instable après un
@@ -892,7 +1012,7 @@ class DescriptionEnricher {
     writeOutputs(ads);
     this.logger.info(`Session terminée : ${successCount}/${targets.length} récupérées.`);
     const stop = this.circuit.stopInfo();
-    this.logger.debug(`[DescriptionEnricher] Bilan final : ${successCount} réussies | ${notFoundCount} sans description trouvée | ${blockedCount} bloquées (403/429) | ${httpErrorCount} autres erreurs HTTP/fetch | circuit=${this.circuit.state}${stop ? ` (raison=${stop.reason}, HTTP ${stop.status || '?'})` : ''}.`);
+    this.logger.debug(`[DescriptionEnricher] Bilan final : ${successCount} réussies | ${notFoundCount} sans description trouvée | ${blockedCount} bloquées (403/429) dont ${rateLimitedCount} limitées (429) | ${httpErrorCount} autres erreurs HTTP/fetch | circuit=${this.circuit.state}${stop ? ` (raison=${stop.reason}, HTTP ${stop.status || '?'})` : ''}.`);
     // Signal d'arrêt STRUCTURÉ (machine-lisible) : permet au main process de
     // rapporter un succès partiel SANS heuristique de texte fragile. Format
     // stable : « [STOP_REASON] code=... status=... reason=... ».
@@ -1009,7 +1129,7 @@ function writeOutputsFactory(outDir, opts) {
   };
 }
 
-module.exports = { detectStructureChanges, normalizeAd, looksLikeAd, parseHtmlDescription, findAdsIterative, mergeKeepingNonNull, applyDetailFields };
+module.exports = { detectStructureChanges, normalizeAd, looksLikeAd, parseHtmlDescription, findAdsIterative, mergeKeepingNonNull, applyDetailFields, parseRetryAfterMs, isFetchUrlAllowed, nextConcurrencyAfterBlock };
 
 async function main() {
   let opts;
@@ -1022,13 +1142,15 @@ async function main() {
     throw err;
   }
 
-  // Preset de vitesse : ajuste concurrence et délais selon le choix utilisateur.
-  // Les presets sont centralisés dans config/scraping.js (source unique partagée
-  // avec le main process) — évite les désynchronisations de seuils.
-  const preset = getSpeedPreset(opts.speed);
-  opts.concurrency = preset.concurrency;
-  opts.minDelayMs = preset.minDelayMs;
-  opts.maxDelayMs = preset.maxDelayMs;
+  // Politique de scraping FIXE (config/scraping.js) : concurrence 25 maximum,
+  // délai nominal 400 ms. La vitesse n'est plus configurable par l'utilisateur ;
+  // un ancien argument `--speed` est ignoré. On borne malgré tout la concurrence
+  // par sécurité (un appelant ne peut jamais dépasser MAX_CONCURRENCY).
+  const policy = getScrapingPolicy();
+  opts.concurrency = clampConcurrency(policy.concurrency);
+  opts.minDelayMs = policy.enrichMinDelayMs;
+  opts.maxDelayMs = policy.enrichMaxDelayMs;
+  opts.speed = policy.mode;
   opts.sequential = false;
 
   const ts = () => new Date().toLocaleTimeString();
@@ -1048,13 +1170,14 @@ async function main() {
     generatedAt: null,
     harPath: opts.harPath,
     outDir: opts.outDir,
-    speed: opts.speed || 'moyen',
+    speed: policy.mode,
     profileId: opts.profileId || 'default',
     phases: {},
     counts: {},
     circuit: null,
     circuitStop: null,
     journal: null,
+    performance: null,
     exitCode: 0,
   };
   function writeReport() {
@@ -1067,8 +1190,8 @@ async function main() {
     }
   }
 
-  logger.info(`=== Pipeline Leboncoin (Vitesse: ${opts.speed || 'moyen'} — ${preset.mode}, concurrency=${preset.concurrency}) ===`);
-  logger.debug(`[main] Options : harPath=${opts.harPath} | outDir=${opts.outDir} | headless=${opts.headless}  noDesc=${opts.noDesc} | limit=${opts.limit ?? '(aucun)'} | fresh=${opts.fresh} | speed=${opts.speed || 'moyen'} | concurrency=${opts.concurrency} | minDelay=${opts.minDelayMs} | maxDelay=${opts.maxDelayMs} | profileId=${opts.profileId || 'default'} | profileFields=${opts.profileFields ? `[${opts.profileFields.join(', ')}]` : '(selon profil)'} | includeSellerData=${opts.includeSellerData}`);
+  logger.info(`=== Pipeline Leboncoin (Mode: ${policy.label} — concurrence=${opts.concurrency}, délai nominal=${policy.pageDelayMs}ms) ===`);
+  logger.debug(`[main] Options : harPath=${opts.harPath} | outDir=${opts.outDir} | headless=${opts.headless}  noDesc=${opts.noDesc} | limit=${opts.limit ?? '(aucun)'} | fresh=${opts.fresh} | mode=${policy.mode} | concurrency=${opts.concurrency} | minDelay=${opts.minDelayMs} | maxDelay=${opts.maxDelayMs} | profileId=${opts.profileId || 'default'} | profileFields=${opts.profileFields ? `[${opts.profileFields.join(', ')}]` : '(selon profil)'} | includeSellerData=${opts.includeSellerData}`);
 
   const writeOutputs = writeOutputsFactory(opts.outDir, opts);
   const jsonPath = path.join(opts.outDir, 'annonces.json');
@@ -1196,6 +1319,20 @@ async function main() {
     descriptions: ads.filter((a) => a.description).length,
   };
   report.exitCode = process.exitCode || 0;
+
+  // Mesures de performance reproductibles (comparaison avant/après) : durée
+  // totale, débit d'annonces/minute, durée moyenne par annonce, pic mémoire.
+  // Ces valeurs sont OBSERVÉES, jamais estimées.
+  const totalMs = Date.now() - t0Main;
+  const rssMb = Math.round(process.memoryUsage().rss / (1024 * 1024));
+  report.performance = {
+    totalMs,
+    adsProcessed: ads.length,
+    adsPerMinute: totalMs > 0 ? Math.round((ads.length * 60000) / totalMs) : null,
+    avgMsPerAd: ads.length > 0 ? Math.round(totalMs / ads.length) : null,
+    peakRssMb: rssMb,
+  };
+
   writeReport();
   logger.info('\n✅ Opération terminée avec succès.');
   logger.debug(`[main] Bilan final : ${summarizeAds(ads)}`);

@@ -59,7 +59,7 @@ Le renderer est le processus Chromium sandboxé. Il n'a **aucun accès direct à
 L'UI est organisée en **sidebar** + modules :
 - `app.js` — orchestration, sidebar, routage.
 - `appState.js` — état global du renderer.
-- `scraperModule.js` — onglet Scraper (URL, pages, profil, vitesse, presets).
+- `scraperModule.js` — onglet Scraper (URL, pages, profil, presets, options ; mode de performance fixe affiché en lecture seule).
 - `logsModule.js` — onglet Logs (console temps réel, filtrage, auto-scroll).
 - `historyModule.js` — onglet Historique (jobs, ouverture dossier, suppression).
 - `explorerModule.js` — onglet Explorateur (table, grille, filtres, tri, fiche détaillée).

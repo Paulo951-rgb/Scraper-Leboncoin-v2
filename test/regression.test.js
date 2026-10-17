@@ -1457,13 +1457,16 @@ await (async function () {
     'urlSecurity: validateRemoteUrl fail-closed si résolution DNS vide');
 })();
 
-// harCapturer : contrôle de destination + garde réseau RETIRÉS avec le moteur
-// historique (commit 8d223c9). La sécurité des sous-requêtes reste assurée au
-// niveau du pipeline d'enrichissement (`ALLOWED_FETCH_HOSTS` + `isFetchUrlAllowed`).
+// harCapturer : contrôle de destination + garde réseau RESTAURÉS (le moteur
+// historique les avait retirés). La protection anti-SSRF est de nouveau active
+// à deux niveaux : validation de l'URL de recherche AVANT le lancement de
+// Chromium, et filtrage de TOUTES les sous-requêtes (`_installNetworkGuard`).
+// Le pipeline d'enrichissement conserve en plus son allowlist
+// (`ALLOWED_FETCH_HOSTS` + `isFetchUrlAllowed`).
 {
   const harSecCode = fs.readFileSync(path.join(__dirname, '..', 'src/main/services/scraping/harCapturer.js'), 'utf8');
-  assert(!/isSafeFetchDestination/.test(harSecCode), 'harCapturer: plus de contrôle SSRF (restauré à l\'état historique)');
-  assert(!/_installNetworkGuard/.test(harSecCode), 'harCapturer: plus de garde réseau (état historique)');
+  assert(/isSafeFetchDestination/.test(harSecCode), 'harCapturer: contrôle SSRF restauré (URL de recherche)');
+  assert(/_installNetworkGuard/.test(harSecCode), 'harCapturer: garde réseau restauré (sous-requêtes)');
   const pipeSecCode = fs.readFileSync(path.join(__dirname, '..', 'src/main/services/scraping/leboncoin-pipeline.js'), 'utf8');
   assert(/ALLOWED_FETCH_HOSTS/.test(pipeSecCode) && /isFetchUrlAllowed/.test(pipeSecCode),
     'pipeline: filtrage SSRF des enrichissements conservé');
@@ -2038,17 +2041,17 @@ console.log('\n[22] Validation des paramètres');
   assert(sanitizeSettingsPatch({ autoCleanJobsDays: -5 }).autoCleanJobsDays === undefined, 'settings: autoCleanJobsDays négatif rejeté');
   assert(sanitizeSettingsPatch({ autoCleanJobsDays: 30 }).autoCleanJobsDays === 30, 'settings: autoCleanJobsDays valide accepté');
 
-  // scrapeSpeed énuméré
-  assert(sanitizeSettingsPatch({ scrapeSpeed: 'turbo' }).scrapeSpeed === undefined, 'settings: scrapeSpeed inconnu rejeté');
-  assert(sanitizeSettingsPatch({ scrapeSpeed: 'rapide' }).scrapeSpeed === 'rapide', 'settings: scrapeSpeed valide accepté');
+  // Réglages de vitesse SUPPRIMÉS : la configuration de scraping est fixe
+  // (config/scraping.js → SCRAPING_POLICY). Un ancien renderer/paramètre ne peut
+  // plus réintroduire une concurrence ou un délai arbitraire via config:save.
+  assert(sanitizeSettingsPatch({ scrapeSpeed: 'rapide' }).scrapeSpeed === undefined, 'settings: scrapeSpeed refusé (vitesse non configurable)');
+  assert(sanitizeSettingsPatch({ scrapeSpeed: 'turbo' }).scrapeSpeed === undefined, 'settings: scrapeSpeed inconnu refusé');
+  assert(sanitizeSettingsPatch({ pageDelayMs: 1000 }).pageDelayMs === undefined, 'settings: pageDelayMs refusé (délai non configurable)');
+  assert(sanitizeSettingsPatch({ pageDelayMs: 999999 }).pageDelayMs === undefined, 'settings: pageDelayMs hors plage refusé');
 
   // booléens stricts
   assert(sanitizeSettingsPatch({ headless: 'yes' }).headless === undefined, 'settings: headless non booléen rejeté');
   assert(sanitizeSettingsPatch({ headless: false }).headless === false, 'settings: headless=false accepté');
-
-  // pageDelayMs borné
-  assert(sanitizeSettingsPatch({ pageDelayMs: 999999 }).pageDelayMs === undefined, 'settings: pageDelayMs hors plage rejeté');
-  assert(sanitizeSettingsPatch({ pageDelayMs: 1000 }).pageDelayMs === 1000, 'settings: pageDelayMs valide accepté');
 
   // patch non-objet
   assert(Object.keys(sanitizeSettingsPatch(null)).length === 0, 'settings: patch null → objet vide');
@@ -2345,6 +2348,18 @@ console.log('\n[28] Distribution Windows (packaging)');
   assert(pb.extractedDir('win') === 'chrome-win', 'dist: extraction win → chrome-win/');
   assert(pb.extractedDir('linux') === 'chrome-linux', 'dist: extraction linux → chrome-linux/');
 
+  // prepare-browsers décompresse via `extract-zip`. Cette dépendance ÉTAIT
+  // transitive (playwright 1.41) : sa mise à jour l'a retirée et le build CI
+  // Windows a échoué (« Cannot find module 'extract-zip' »). Elle doit rester
+  // DÉCLARÉE explicitement — ne jamais dépendre d'une transitive pour un outil
+  // de build.
+  const pbSrc = fs.readFileSync(path.join(repoRoot, 'tools', 'prepare-browsers.js'), 'utf8');
+  if (/require\(['"]extract-zip['"]\)/.test(pbSrc)) {
+    const declared = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+    assert(!!declared['extract-zip'],
+      'dist: extract-zip DÉCLARÉE (prepare-browsers.js l\'importe — pas de dépendance transitive)');
+  }
+
   // main.js : résolution du chemin Chromium embarqué quand packagé
   const mainCode = fs.readFileSync(path.join(repoRoot, 'src/main/main.js'), 'utf8');
   assert(/PLAYWRIGHT_BROWSERS_PATH/.test(mainCode), 'dist: main.js pointe PLAYWRIGHT_BROWSERS_PATH (app packagée)');
@@ -2372,7 +2387,7 @@ console.log('\n[29] CI Windows (build + release)');
 
   // Runner Windows + Node compatible.
   assert(/runs-on:\s*windows-latest/.test(wf), 'ci: runner windows-latest');
-  assert(/node-version:\s*['"]?20/.test(wf), 'ci: Node.js 20');
+  assert(/node-version:\s*['"]?22/.test(wf), 'ci: Node.js 22 (requis par Electron 44 / jsdom 30)');
   assert(/npm ci/.test(wf), 'ci: installation reproductible (npm ci)');
   assert(/prepare-browsers\.js/.test(wf), 'ci: préparation du Chromium Windows');
   assert(/PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD/.test(wf), 'ci: évite le téléchargement Chromium redondant de Playwright');
@@ -2442,15 +2457,17 @@ console.log('\n[30] Restauration du moteur historique de scraping');
   assert(/code === 3/.test(runnerAudit) && /HTTP_ACCESS_REFUSED/.test(runnerAudit), 'pipelineRunner: exit 3 → HTTP_ACCESS_REFUSED');
   assert(/code === 4/.test(runnerAudit) && /HTTP_RATE_LIMITED/.test(runnerAudit), 'pipelineRunner: exit 4 → HTTP_RATE_LIMITED');
 
-  // pipeline : moteur historique (pas de 429 distinct ni d'exit 3/4).
+  // pipeline : 403/429 distincts + Retry-After (durcissement anti-débit rétabli).
   const pipeAudit = fs.readFileSync(path.join(base, 'services/scraping/leboncoin-pipeline.js'), 'utf8');
-  assert(!/BLOCKED_429/.test(pipeAudit), 'pipeline: plus de 429 distinct (moteur historique)');
-  assert(!/stopReason/.test(pipeAudit), 'pipeline: plus de stopReason (moteur historique)');
-  // Presets centralisés dans config/scraping.js (source unique partagée avec le
-  // main process) ; le pipeline les consomme via getSpeedPreset().
+  assert(/BLOCKED_429/.test(pipeAudit), 'pipeline: 429 distinct de 403 (BLOCKED_429)');
+  assert(/parseRetryAfterMs/.test(pipeAudit), 'pipeline: Retry-After interprété (parseRetryAfterMs)');
+  // Politique de scraping fixe centralisée dans config/scraping.js ; le pipeline
+  // la consomme via getScrapingPolicy()/clampConcurrency().
   const presetsAudit = fs.readFileSync(path.join(base, 'config/scraping.js'), 'utf8');
-  assert(/concurrency: 25, minDelayMs: 50/.test(presetsAudit), 'config/scraping: presets historiques (ultra-rapide 25/50)');
-  assert(/getSpeedPreset/.test(pipeAudit), 'pipeline: consomme getSpeedPreset() (presets centralisés)');
+  assert(/concurrency:\s*MAX_CONCURRENCY/.test(presetsAudit) && /const MAX_CONCURRENCY = 25/.test(presetsAudit),
+    'config/scraping: concurrence bornée à MAX_CONCURRENCY = 25');
+  assert(/pageDelayMs:\s*400/.test(presetsAudit), 'config/scraping: délai nominal 400 ms');
+  assert(/getScrapingPolicy/.test(pipeAudit), 'pipeline: consomme getScrapingPolicy() (politique centralisée)');
 
   // renderer : les nouveaux états restent tolérés (aucune régression UI).
   const scraperAudit = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/scraperModule.js'), 'utf8');
@@ -2496,16 +2513,37 @@ console.log('\n[31] Audit 403 : compteurs + backoff + Retry-After');
   await rl2.waitAfter({ durationMs: 100, blocked: true, status: 403 });
   assert(rl2.currentDelayMs() === 6000, '[31] backoff historique: plafonné à maxDelayMs');
 
-  // 31.3 Presets historiques centralisés (config/scraping.js) + pas de Retry-After.
+  // 31.3 Politique de scraping FIXE centralisée + Retry-After implémenté.
   const pipe = fs.readFileSync(path.join(__dirname, '..', 'src/main/services/scraping/leboncoin-pipeline.js'), 'utf8');
-  assert(!/noWait: true/.test(pipe), '[31] pipeline: plus de noWait (moteur historique)');
-  assert(!/pendingRetryAfterMs/.test(pipe), '[31] pipeline: plus de pause Retry-After (moteur historique)');
-  // Presets historiques : moyen 10/500, rapide 15/200, ultra-rapide 25/50.
+  assert(!/noWait: true/.test(pipe), '[31] pipeline: plus de noWait (délai adaptatif toujours appliqué)');
+  assert(/pendingRetryAfterMs/.test(pipe), '[31] pipeline: pause Retry-After appliquée (pendingRetryAfterMs)');
+  assert(/parseRetryAfterMs/.test(pipe), '[31] pipeline: en-tête Retry-After interprété');
+  // Politique fixe : concurrence 25 max, délai nominal 400 ms.
   const presetsSrc = fs.readFileSync(path.join(__dirname, '..', 'src/main/config/scraping.js'), 'utf8');
-  const presetMatch = presetsSrc.match(/moyen:\s*\{ concurrency: (\d+),\s*minDelayMs: (\d+)/);
-  assert(presetMatch && parseInt(presetMatch[1], 10) === 10, '[31] presets: « moyen » = concurrence 10 (historique)');
-  assert(presetMatch && parseInt(presetMatch[2], 10) === 500, '[31] presets: « moyen » = délai de base 500ms (historique)');
-  assert(/concurrency: 25, minDelayMs: 50/.test(presetsSrc), '[31] presets: « ultra-rapide » 25/50 (historique)');
+  assert(/const MAX_CONCURRENCY = 25/.test(presetsSrc), '[31] config: MAX_CONCURRENCY = 25');
+  assert(/concurrency:\s*MAX_CONCURRENCY/.test(presetsSrc), '[31] config: politique concurrence = MAX_CONCURRENCY');
+  assert(/pageDelayMs:\s*400/.test(presetsSrc), '[31] config: délai nominal 400 ms');
+
+  // 31.3b parseRetryAfterMs : formes delta-seconds et date HTTP.
+  const { parseRetryAfterMs } = require('../src/main/services/scraping/leboncoin-pipeline');
+  assert(parseRetryAfterMs('120') === 120000, '[31] Retry-After delta-seconds → 120000 ms');
+  assert(parseRetryAfterMs('0') === 0, '[31] Retry-After 0 → 0 ms');
+  assert(parseRetryAfterMs(null) === null && parseRetryAfterMs('') === null, '[31] Retry-After absent → null');
+  assert(parseRetryAfterMs('pas une date') === null, '[31] Retry-After invalide → null');
+  const futureDate = new Date(Date.now() + 60000).toUTCString();
+  const parsed = parseRetryAfterMs(futureDate);
+  assert(typeof parsed === 'number' && parsed > 55000 && parsed <= 60000, '[31] Retry-After date HTTP → ~60000 ms');
+  assert(parseRetryAfterMs('999999999') === 24 * 3600 * 1000, '[31] Retry-After plafonné à 24h (anti-boucle infinie)');
+
+  // 31.3c Politique fixe : clampConcurrency ne dépasse jamais 25.
+  const cfg = require('../src/main/config/scraping');
+  assert(cfg.clampConcurrency(1000) === 25, '[31] clampConcurrency(1000) → 25 (jamais dépassé)');
+  assert(cfg.clampConcurrency(7) === 7, '[31] clampConcurrency(7) → 7 (valeur valide conservée)');
+  assert(cfg.clampConcurrency('abc') === 25 && cfg.clampConcurrency(-3) === 25, '[31] clampConcurrency invalide → défaut 25');
+  assert(cfg.getScrapingPolicy().concurrency === 25 && cfg.getScrapingPolicy().pageDelayMs === 400,
+    '[31] politique: concurrence 25 + délai 400 ms');
+  assert(cfg.getSpeedPreset().concurrency === 25 && cfg.getSpeedPreset().minDelayMs === 400,
+    '[31] getSpeedPreset (déprécié) renvoie la politique fixe');
 
   // 31.4 Métrique d'annonces extraites émise par le pipeline.
   assert(/\[METRICS\] \$\{ads\.length\} annonces extraites uniques/.test(pipe), '[31] pipeline: ligne [METRICS] annonces extraites');
@@ -2589,12 +2627,12 @@ console.log('\n[33] Roadmap fiabilité (disjoncteur, journal, reprise, config)')
 // 33.1 config/scraping : source unique des presets (pas d'electron requis).
 {
   const cfg = require('../src/main/config/scraping');
-  assert(cfg.SPEED_PRESETS.moyen.concurrency === 10 && cfg.SPEED_PRESETS.moyen.minDelayMs === 500,
-    'config/scraping: preset « moyen » 10/500 (historique)');
-  assert(cfg.SPEED_PRESETS['ultra-rapide'].concurrency === 25 && cfg.SPEED_PRESETS['ultra-rapide'].minDelayMs === 50,
-    'config/scraping: preset « ultra-rapide » 25/50 (historique)');
-  assert(cfg.getSpeedPreset('inconnu') === cfg.SPEED_PRESETS.moyen,
-    'config/scraping: getSpeedPreset retombe sur « moyen » (défaut)');
+  // Politique fixe (source unique) : concurrence 25, délai nominal 400 ms.
+  assert(cfg.getScrapingPolicy().concurrency === 25 && cfg.getScrapingPolicy().pageDelayMs === 400,
+    'config/scraping: politique fixe concurrence 25 / délai 400 ms');
+  assert(cfg.SCRAPING_POLICY.mode === 'ultra-rapide', 'config/scraping: mode ultra-rapide');
+  assert(cfg.getSpeedPreset().concurrency === 25 && cfg.getSpeedPreset().minDelayMs === 400,
+    'config/scraping: getSpeedPreset (déprécié) = politique fixe');
   assert(cfg.BLOCK_THRESHOLD >= 1 && cfg.CIRCUIT_STATES.STOPPED === 'stopped',
     'config/scraping: seuil de blocage + états du disjoncteur définis');
   // Le module ne doit PAS dépendre d'electron (importable par le pipeline forké).
@@ -2842,6 +2880,17 @@ console.log('\n[35] Intégration pipeline (fixture HAR → annonces.json)');
     'pipeline: report.json structuré (schemaVersion, exitCode, counts.ads)');
   assert(report.journal && typeof report.journal.detailRequests === 'number',
     'pipeline: report.json embarque le journal réseau');
+
+  // Mesures de performance observées (comparaison avant/après reproductible).
+  assert(report.performance && typeof report.performance.totalMs === 'number' && report.performance.totalMs >= 0,
+    'pipeline: report.json contient performance.totalMs (durée observée)');
+  assert(report.performance.adsProcessed === 2,
+    'pipeline: performance.adsProcessed = nombre réel d\'annonces');
+  assert(typeof report.performance.adsPerMinute === 'number' && report.performance.adsPerMinute > 0,
+    'pipeline: performance.adsPerMinute calculé (débit)');
+  assert(typeof report.performance.peakRssMb === 'number' && report.performance.peakRssMb > 0,
+    'pipeline: performance.peakRssMb mesuré (pic mémoire)');
+  assert(report.speed === 'ultra-rapide', 'pipeline: report.speed = politique fixe ultra-rapide');
 
   // Les codes d'erreur PARSE_NO_ADS ne doivent PAS apparaître (HAR exploitable).
   assert(!/PARSE_NO_ADS/.test(stdout), 'pipeline: aucune erreur PARSE_NO_ADS sur HAR valide');
@@ -3325,10 +3374,13 @@ console.log('\n[38] Modules main (settings, logger, fileManager, storageCleaner,
     logRetentionDays: 14, includeSellerData: false,
     __injected: 'x', autoCleanJobsDays_evil: 999999,
   });
-  assert(clean.autoCleanHarDays === 30 && clean.logLevel === 'warn' && clean.scrapeSpeed === 'rapide',
+  assert(clean.autoCleanHarDays === 30 && clean.logLevel === 'warn',
     'settings: patch valide conservé');
-  assert(clean.headless === false && clean.pageDelayMs === 2500 && clean.includeSellerData === false,
-    'settings: booléens + pageDelay conservés');
+  assert(clean.headless === false && clean.includeSellerData === false && clean.autoCleanJobsDays === 10,
+    'settings: booléens + entiers conservés');
+  // Vitesse/délai : refusés (configuration de scraping fixe).
+  assert(clean.scrapeSpeed === undefined && clean.pageDelayMs === undefined,
+    'settings: scrapeSpeed/pageDelayMs refusés (config fixe)');
   assert(!('__injected' in clean) && !('autoCleanJobsDays_evil' in clean),
     'settings: clés inconnues rejetées (anti-injection)');
   const rejected = settings.sanitizeSettingsPatch({
@@ -3339,15 +3391,16 @@ console.log('\n[38] Modules main (settings, logger, fileManager, storageCleaner,
     'settings: valeurs hors plage / hors enum rejetées');
   assert(settings.sanitizeSettingsPatch(null) && Object.keys(settings.sanitizeSettingsPatch(null)).length === 0,
     'settings: patch null → objet vide');
-  assert(settings.SETTINGS_DEFAULTS.logLevel === 'debug' && settings.SETTINGS_DEFAULTS.scrapeSpeed === 'moyen',
-    'settings: valeurs par défaut présentes');
+  assert(settings.SETTINGS_DEFAULTS.logLevel === 'debug' && !('scrapeSpeed' in settings.SETTINGS_DEFAULTS),
+    'settings: valeurs par défaut présentes (sans vitesse configurable)');
 
   const saved = settings.saveSettings({ logLevel: 'error', autoCleanJobsDays: 3 });
   assert(saved.logLevel === 'error' && saved.autoCleanJobsDays === 3, 'settings: saveSettings renvoie le fusionné');
   const reloaded = settings.loadSettings();
   assert(reloaded.logLevel === 'error' && reloaded.autoCleanJobsDays === 3,
     'settings: relecture depuis le disque (persistance)');
-  assert(reloaded.scrapeSpeed === 'moyen', 'settings: défauts préservés après fusion');
+  assert(!('scrapeSpeed' in reloaded) && !('pageDelayMs' in reloaded),
+    'settings: aucune clé de vitesse héritée après relecture');
 
   // 38.2 logger : configuration, écriture sans crash, fermeture.
   const { logger } = require('../src/main/utils/logger');
@@ -3856,6 +3909,438 @@ console.log('\n[40] Extraction des données manquantes (vendeur, détail, fusion
 }
 
 console.log('\n[40] OK');
+
+// ═══════════════════════════════════════════════════════════════════════════
+// [41] POLITIQUE DE SCRAPING FIXE (non modifiable) — invariants obligatoires
+//   concurrence max 25 · délai nominal 400 ms · mode ultra-rapide
+//   migration des anciens réglages · réduction adaptative · Retry-After
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n[41] Politique de scraping fixe');
+{
+  const fs = require('fs');
+  const path = require('path');
+  const cfg = require('../src/main/config/scraping');
+  const { parseRetryAfterMs, nextConcurrencyAfterBlock } = require('../src/main/services/scraping/leboncoin-pipeline');
+
+  // 41.1 Valeurs obligatoires.
+  const pol = cfg.getScrapingPolicy();
+  assert(pol.concurrency === 25, '[41] concurrence cible = 25');
+  assert(pol.pageDelayMs === 400, '[41] délai nominal entre pages = 400 ms');
+  assert(pol.mode === 'ultra-rapide', '[41] mode de performance = ultra-rapide');
+  assert(cfg.MAX_CONCURRENCY === 25, '[41] MAX_CONCURRENCY exporté = 25');
+  assert(Object.isFrozen(cfg.SCRAPING_POLICY), '[41] SCRAPING_POLICY figé (immuable)');
+
+  // 41.2 La concurrence ne dépasse JAMAIS 25, quelle que soit la demande.
+  for (const asked of [26, 50, 100, 999999, Infinity, '99', 25.9]) {
+    assert(cfg.clampConcurrency(asked) <= 25, `[41] clampConcurrency(${String(asked)}) ≤ 25`);
+  }
+  assert(cfg.clampConcurrency(25) === 25, '[41] clampConcurrency(25) = 25');
+
+  // 41.3 getSpeedPreset (déprécié) ne permet plus de relever le débit.
+  for (const legacySpeed of ['moyen', 'rapide', 'ultra-rapide', 'turbo', undefined, null]) {
+    const p = cfg.getSpeedPreset(legacySpeed);
+    assert(p.concurrency === 25 && p.minDelayMs === 400,
+      `[41] getSpeedPreset(${String(legacySpeed)}) → politique fixe 25/400`);
+  }
+
+  // 41.4 Le pipeline force la politique : impossible de la surcharger via opts.
+  const pipeSrc = fs.readFileSync(path.join(__dirname, '..', 'src/main/services/scraping/leboncoin-pipeline.js'), 'utf8');
+  assert(/opts\.concurrency = clampConcurrency\(policy\.concurrency\)/.test(pipeSrc),
+    '[41] pipeline: concurrence forcée via clampConcurrency(policy.concurrency)');
+  assert(/opts\.minDelayMs = policy\.enrichMinDelayMs/.test(pipeSrc),
+    '[41] pipeline: délai d\'enrichissement forcé depuis la politique');
+  assert(!/getSpeedPreset\(opts\.speed\)/.test(pipeSrc),
+    '[41] pipeline: n\'utilise plus opts.speed pour choisir le preset');
+
+  // 41.5 Le main process transmet la politique (jamais une valeur utilisateur).
+  const ipcSrc = fs.readFileSync(path.join(__dirname, '..', 'src/main/core/ipcHandlers.js'), 'utf8');
+  assert(/getScrapingPolicy\(\)/.test(ipcSrc), '[41] ipcHandlers: consomme getScrapingPolicy()');
+  assert(/minPageDelayMs: pageDelay/.test(ipcSrc) && /maxPageDelayMs: pageDelay/.test(ipcSrc),
+    '[41] ipcHandlers: délai de capture = politique (min=max=400 ms)');
+  assert(/speed: policy\.mode/.test(ipcSrc), '[41] ipcHandlers: mode pipeline = politique');
+  assert(!/userSettings\.scrapeSpeed/.test(ipcSrc), '[41] ipcHandlers: ne lit plus scrapeSpeed utilisateur');
+  assert(!/userSettings\.pageDelayMs/.test(ipcSrc), '[41] ipcHandlers: ne lit plus pageDelayMs utilisateur');
+
+  // 41.6 harCapturer : délai par défaut = politique (400 ms).
+  const harSrc = fs.readFileSync(path.join(__dirname, '..', 'src/main/services/scraping/harCapturer.js'), 'utf8');
+  assert(/options\.minPageDelayMs \?\? SCRAPING_POLICY\.pageDelayMs/.test(harSrc),
+    '[41] harCapturer: délai min par défaut = politique');
+  assert(/options\.maxPageDelayMs \?\? SCRAPING_POLICY\.pageDelayMs/.test(harSrc),
+    '[41] harCapturer: délai max par défaut = politique');
+
+  // 41.7 Réglages de vitesse supprimés des defaults + refusés par le sanitizer.
+  const settings = require('../src/main/core/settings');
+  assert(!('scrapeSpeed' in settings.SETTINGS_DEFAULTS) && !('pageDelayMs' in settings.SETTINGS_DEFAULTS),
+    '[41] settings: aucune clé de vitesse dans les défauts');
+  assert(Object.keys(settings.sanitizeSettingsPatch({ scrapeSpeed: 'ultra-rapide', pageDelayMs: 1 })).length === 0,
+    '[41] settings: patch de vitesse entièrement rejeté (IPC non fiable)');
+
+  // 41.8 Migration : un ancien user-settings.json ne rétablit PAS la vitesse.
+  {
+    const migrated = settings.migrateSettings({ scrapeSpeed: 'moyen', pageDelayMs: 99999, headless: false });
+    assert(!('scrapeSpeed' in migrated) && !('pageDelayMs' in migrated),
+      '[41] migration: clés de vitesse héritées supprimées');
+    assert(migrated.headless === false, '[41] migration: préférences légitimes conservées');
+    assert(migrated.logLevel === 'debug' && migrated.autoCleanHarDays === 7,
+      '[41] migration: défauts appliqués pour les clés absentes');
+    assert(!('scrapeSpeed' in settings.migrateSettings(null)),
+      '[41] migration: entrée nulle gérée sans clé de vitesse');
+  }
+
+  // 41.9 L'interface ne propose plus de contrôle modifiable de vitesse/délai.
+  const html = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/index.html'), 'utf8');
+  assert(!/id="cfgScrapeSpeed"/.test(html), '[41] UI: plus de sélecteur de vitesse');
+  assert(!/id="cfgPageDelay"/.test(html), '[41] UI: plus de champ de délai');
+  assert(/scraping-mode-readonly/.test(html), '[41] UI: affichage lecture seule du mode fixe');
+  const scraperSrc = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/scraperModule.js'), 'utf8');
+  assert(!/scrapeSpeed/.test(scraperSrc) && !/pageDelayMs/.test(scraperSrc),
+    '[41] UI: scraperModule ne lit/écrit plus la vitesse ni le délai');
+
+  // 41.10 Réduction adaptative de la concurrence (fonction pure).
+  assert(nextConcurrencyAfterBlock(25, { is429: true }) === 12, '[41] 429: concurrence 25 → 12 (÷2)');
+  assert(nextConcurrencyAfterBlock(25, { is429: false }) === 18, '[41] 403: concurrence 25 → 18 (−25 %)');
+  assert(nextConcurrencyAfterBlock(1, { is429: true }) === 1, '[41] réduction bornée à 1 (jamais 0)');
+  assert(nextConcurrencyAfterBlock(0, { is429: false }) === 1, '[41] entrée invalide → 1');
+  assert(nextConcurrencyAfterBlock(3, { is429: true }) === 1, '[41] 3 → 1 (floor)');
+  // Jamais d'augmentation.
+  let c = 25;
+  for (let i = 0; i < 10; i++) {
+    const n = nextConcurrencyAfterBlock(c, { is429: true });
+    assert(n <= c, '[41] la concurrence ne remonte jamais');
+    c = n;
+  }
+  assert(c === 1, '[41] après réductions répétées → plancher 1');
+
+  // 41.11 Retry-After borné (pas de boucle infinie ni de pause démesurée).
+  assert(parseRetryAfterMs('999999999') <= 24 * 3600 * 1000, '[41] Retry-After plafonné à 24 h');
+  assert(parseRetryAfterMs('-5') === null || parseRetryAfterMs('-5') >= 0, '[41] Retry-After négatif géré');
+
+  // 41.12 Le pipeline applique la pause Retry-After (pause inter-batch).
+  assert(/await sleep\(pendingRetryAfterMs\)/.test(pipeSrc), '[41] pipeline: pause Retry-After effective');
+
+  // 41.13 report.json et logs reflètent la politique FIXE, jamais un mode
+  // utilisateur hérité. Un ancien `--speed` ne doit pas réapparaître.
+  assert(/speed: policy\.mode/.test(pipeSrc), '[41] pipeline: report.speed = politique fixe');
+  assert(!/opts\.speed \|\| 'moyen'/.test(pipeSrc), '[41] pipeline: plus de repli « moyen » depuis opts.speed');
+
+  // 41.14 Mesures de performance reproductibles dans report.json (durée totale,
+  // débit, durée moyenne, pic mémoire) — observées, jamais estimées.
+  assert(/report\.performance = \{/.test(pipeSrc), '[41] pipeline: bloc performance écrit dans report.json');
+  for (const field of ['totalMs', 'adsPerMinute', 'avgMsPerAd', 'peakRssMb']) {
+    assert(new RegExp('\\b' + field + '\\b').test(pipeSrc), `[41] pipeline: mesure performance "${field}" présente`);
+  }
+}
+console.log('\n[41] OK');
+
+// ═══════════════════════════════════════════════════════════════════════════
+// [42] EXPORTS JSON/TXT — contenu RÉEL des fichiers (pas seulement présence)
+//   Le pipeline est exécuté sur un HAR synthétique puis on analyse les octets
+//   écrits : validité JSON, types, Unicode, nulls, dédup, profils, TXT lisible.
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n[42] Exports JSON/TXT (contenu réel)');
+{
+  const os = require('os');
+  const { execFileSync } = require('child_process');
+  const pipelinePath = path.join(base, 'services/scraping/leboncoin-pipeline.js');
+
+  // Annonce « riche » : accents, Unicode, apostrophe, emoji, sauts de ligne.
+  const richAd = {
+    list_id: 'rich-1',
+    subject: 'Vélo électrique « Vintage » 🚲 — état neuf',
+    body: 'Ligne 1 avec accent é\nLigne 2 avec emoji 🎉 et caractère <script>\nLigne 3 : guillemets "doubles" et \'simples\'',
+    price: [{ value: 1290.5 }],
+    location: { city: 'Saint-Étienne', zipcode: '42000' },
+    owner: { name: 'Amélie', type: 'private', user_id: 'u-é-1', rating: 4.7, nb_ratings: 42 },
+    has_option: { shipping: true },
+    images: { urls: ['https://img.leboncoin.fr/a.jpg', 'https://img.leboncoin.fr/a.jpg', 'https://img.leboncoin.fr/b.jpg'] },
+    favorites_count: 3,
+    index_date: '2024-03-01T10:00:00Z',
+  };
+  // Annonce « partielle » : champs absents → doivent valoir null, jamais inventés.
+  // (URL présente pour que l'annonce soit détectable, mais ni prix, ni vendeur,
+  //  ni localisation, ni images.)
+  const partialAd = {
+    list_id: 'partial-1',
+    subject: 'Objet sans prix ni vendeur',
+    url: 'https://www.leboncoin.fr/ad/partial-1.htm',
+  };
+  const payload = { data: { ads: [richAd, partialAd] } };
+
+  function runHar(adsPayload, profileArgs, outName) {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), `lbc-exp-${outName}-`));
+    const outDir = path.join(tmp, 'results');
+    fs.mkdirSync(outDir, { recursive: true });
+    const harPath = path.join(tmp, 'capture.har');
+    fs.writeFileSync(harPath, JSON.stringify({
+      log: {
+        version: '1.2', creator: { name: 't', version: '1' },
+        entries: [{ request: { method: 'GET', url: 'https://www.leboncoin.fr/recherche' }, response: { status: 200, content: { mimeType: 'application/json', text: JSON.stringify(adsPayload) } } }],
+      },
+    }), 'utf8');
+    let code = 0;
+    try {
+      execFileSync(process.execPath, [pipelinePath, harPath, '--out', outDir, '--no-desc', '--fresh', ...profileArgs], { encoding: 'utf8', timeout: 60000 });
+    } catch (err) { code = err.status; }
+    const jsonRaw = fs.existsSync(path.join(outDir, 'annonces.json')) ? fs.readFileSync(path.join(outDir, 'annonces.json'), 'utf8') : null;
+    const txtRaw = fs.existsSync(path.join(outDir, 'annonces.txt')) ? fs.readFileSync(path.join(outDir, 'annonces.txt'), 'utf8') : null;
+    fs.rmSync(tmp, { recursive: true, force: true });
+    return { code, jsonRaw, txtRaw };
+  }
+
+  // 42.1 JSON profil Maximum : valide, analysable, toutes les annonces présentes.
+  const max = runHar(payload, ['--profile-id', 'maximum'], 'max');
+  assert(max.code === 0 && max.jsonRaw, '42: export Maximum généré (exit 0)');
+  let maxAds = null;
+  try { maxAds = JSON.parse(max.jsonRaw); } catch { /* échec signalé ci-dessous */ }
+  assert(Array.isArray(maxAds) && maxAds.length === 2, `42: JSON Maximum = 2 annonces (obtenu ${maxAds ? maxAds.length : 'parse-error'})`);
+  const rich = maxAds && maxAds.find((a) => a.id === 'rich-1');
+  assert(rich && rich.title.includes('🚲') && rich.title.includes('«'), '42: Unicode/emoji/accent conservés dans le titre');
+  assert(rich && rich.description.includes('🎉') && rich.description.includes('<script>'),
+    '42: description multi-lignes + emoji + balise conservés TELS QUELS (échappés uniquement à l\'affichage)');
+  assert(rich && typeof rich.prix === 'number' && rich.prix === 1290.5, '42: prix = nombre (pas de chaîne, pas d\'objet)');
+  assert(rich && rich.city === 'Saint-Étienne' && rich.zipcode === '42000', '42: localisation accentuée préservée');
+  assert(rich && rich.photosCount === 2, '42: photos dédupliquées (3 URLs dont 1 doublon → 2)');
+  assert(rich && rich.vendeurNom === 'Amélie' && rich.nombreAvis === 42, '42: données vendeur présentes en Maximum');
+
+  // 42.2 Annonce partielle : champs absents = null, JAMAIS 0/''/inventé.
+  const part = maxAds && maxAds.find((a) => a.id === 'partial-1');
+  assert(part, '42: annonce partielle présente dans l\'export');
+  assert(part && part.prix === null, '42: prix absent → null (pas 0)');
+  assert(part && part.vendeurNom === null, '42: vendeur absent → null (pas chaîne vide)');
+  assert(part && part.city === null && part.zipcode === null, '42: localisation absente → null');
+  assert(part && part.photosCount === null, '42: photosCount absent → null (pas 0)');
+  assert(part && part.deliveryType === 'inconnu', '42: deliveryType non renseigné → inconnu');
+
+  // 42.3 Aucun champ interne ne fuit dans le JSON.
+  assert(maxAds && maxAds.every((a) => !('raw' in a) && !('extractionErrors' in a) && !('livraison' in a) && !('mainPropre' in a)),
+    '42: aucun champ interne (raw, extractionErrors, livraison, mainPropre) dans l\'export');
+
+  // 42.4 Profil Défaut : champs essentiels uniquement, valeurs traduites présentes.
+  const def = runHar(payload, ['--profile-id', 'default'], 'def');
+  const defAds = def.jsonRaw ? JSON.parse(def.jsonRaw) : null;
+  const defRich = defAds && defAds.find((a) => a.id === 'rich-1');
+  assert(defRich && defRich.ville === 'Saint-Étienne' && defRich.codePostal === '42000',
+    '42: profil Défaut → ville/codePostal traduits et présents (pas perdus)');
+  assert(defRich && !('likes' in defRich) && !('vendeurId' in defRich),
+    '42: profil Défaut → champs non essentiels exclus (likes, vendeurId)');
+
+  // 42.5 Profil Personnalisé : uniquement les champs demandés.
+  const cus = runHar(payload, ['--profile-id', 'custom', '--profile-fields', 'id,title,prix'], 'cus');
+  const cusAds = cus.jsonRaw ? JSON.parse(cus.jsonRaw) : null;
+  const cusRich = cusAds && cusAds.find((a) => a.id === 'rich-1');
+  assert(cusRich && Object.keys(cusRich).sort().join(',') === 'id,prix,title',
+    `42: profil Personnalisé → exactement id,prix,title (obtenu ${cusRich ? Object.keys(cusRich).sort().join(',') : 'null'})`);
+
+  // 42.6 TXT : lisible, labels alignés, accents + valeurs présentes.
+  assert(max.txtRaw && /===== ANNONCE 1 =====/.test(max.txtRaw), '42: TXT contient l\'en-tête d\'annonce');
+  assert(max.txtRaw && max.txtRaw.includes('Saint-Étienne'), '42: TXT préserve les accents');
+  assert(max.txtRaw && /Prix\s+:\s+1290\.5 €/.test(max.txtRaw), '42: TXT formate le prix en euros');
+  assert(max.txtRaw && max.txtRaw.includes('🚲'), '42: TXT préserve les emojis');
+  assert(max.txtRaw && max.txtRaw.split('===== ANNONCE').length - 1 === 2,
+    '42: TXT contient une fiche par annonce (2)');
+
+  // 42.7 TXT : les valeurs absentes sont explicites (null), pas vides.
+  const txtLines = (max.txtRaw || '').split('\n');
+  const prixLine = txtLines.find((l) => /^Prix\s+:/.test(l));
+  assert(prixLine, '42: TXT expose la ligne Prix');
+
+  // 42.8 Cohérence JSON↔TXT : même nombre d'annonces des deux côtés.
+  const txtCount = (max.txtRaw || '').split('===== ANNONCE').length - 1;
+  assert(maxAds && txtCount === maxAds.length, `42: JSON et TXT ont le même nombre d'annonces (${txtCount})`);
+}
+console.log('\n[42] OK');
+
+// ═══════════════════════════════════════════════════════════════════════════
+// [43] ROBUSTESSE — entrées dégradées sans crash ni perte silencieuse
+//   JSON invalide, HAR corrompu, annonce incomplète, 429/403, page vide répétée,
+//   données historiques corrompues. Aucune donnée ne doit disparaître en silence.
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n[43] Robustesse (entrées dégradées)');
+{
+  const os = require('os');
+  const { execFileSync } = require('child_process');
+  const pipelinePath = path.join(base, 'services/scraping/leboncoin-pipeline.js');
+  const { normalizeAd, looksLikeAd } = require('../src/main/services/scraping/leboncoin-pipeline');
+
+  function writeHar(entries) {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lbc-rob-'));
+    const harPath = path.join(tmp, 'c.har');
+    fs.writeFileSync(harPath, JSON.stringify({ log: { version: '1.2', creator: { name: 't', version: '1' }, entries } }), 'utf8');
+    return { tmp, harPath };
+  }
+  function runPipeline(harPath, outDir, extra = []) {
+    let code = 0;
+    try {
+      execFileSync(process.execPath, [pipelinePath, harPath, '--out', outDir, '--no-desc', '--fresh', ...extra], { encoding: 'utf8', timeout: 60000 });
+    } catch (err) { code = err.status; }
+    return code;
+  }
+
+  // 43.1 JSON invalide dans une réponse : ne casse PAS le pipeline, exit 2.
+  {
+    const { tmp, harPath } = writeHar([{ request: { url: 'https://www.leboncoin.fr/recherche' }, response: { status: 200, content: { mimeType: 'application/json', text: '{ this is : not valid json' } } }]);
+    const outDir = path.join(tmp, 'r'); fs.mkdirSync(outDir, { recursive: true });
+    const code = runPipeline(harPath, outDir);
+    assert(code === 2, `43: JSON invalide → exit 2 (aucune donnée exploitable), obtenu ${code}`);
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+
+  // 43.2 HAR illisible (JSON corrompu) : erreur FATALE (exit 1), jamais un faux succès.
+  {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lbc-rob-bad-'));
+    const harPath = path.join(tmp, 'bad.har');
+    fs.writeFileSync(harPath, '<<< pas un HAR >>>', 'utf8');
+    const outDir = path.join(tmp, 'r'); fs.mkdirSync(outDir, { recursive: true });
+    const code = runPipeline(harPath, outDir);
+    assert(code === 1, `43: HAR illisible → exit 1 (erreur fatale explicite), obtenu ${code}`);
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+
+  // 43.3 Réponses HTTP non-200 (429/403) : aucune annonce extraite, pas de faux succès.
+  {
+    const { tmp, harPath } = writeHar([
+      { request: { url: 'https://www.leboncoin.fr/recherche?p=1' }, response: { status: 429, content: { mimeType: 'text/html', text: 'too many' } } },
+      { request: { url: 'https://www.leboncoin.fr/recherche?p=2' }, response: { status: 403, content: { mimeType: 'text/html', text: 'forbidden' } } },
+    ]);
+    const outDir = path.join(tmp, 'r'); fs.mkdirSync(outDir, { recursive: true });
+    const code = runPipeline(harPath, outDir);
+    assert(code === 2, `43: HAR 429/403 → exit 2, obtenu ${code}`);
+    assert(!fs.existsSync(path.join(outDir, 'annonces.json')), '43: aucune annonce.json fabriqué à partir d\'un blocage');
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+
+  // 43.4 Plusieurs pages vides consécutives → exit 2, jamais de boucle infinie.
+  {
+    const { tmp, harPath } = writeHar([
+      { request: { url: 'https://www.leboncoin.fr/recherche?p=1' }, response: { status: 200, content: { mimeType: 'application/json', text: JSON.stringify({ data: { ads: [] } }) } } },
+      { request: { url: 'https://www.leboncoin.fr/recherche?p=2' }, response: { status: 200, content: { mimeType: 'application/json', text: JSON.stringify({ data: { ads: [] } }) } } },
+    ]);
+    const outDir = path.join(tmp, 'r'); fs.mkdirSync(outDir, { recursive: true });
+    const code = runPipeline(harPath, outDir);
+    assert(code === 2, `43: pages vides → exit 2 (pas de faux succès), obtenu ${code}`);
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+
+  // 43.5 Annonce incomplète (juste list_id) : normalisée sans crash, champs null.
+  {
+    const ad = normalizeAd({ list_id: 999, subject: 'T', price: [{ value: 5 }], url: 'https://www.leboncoin.fr/ad/999.htm' });
+    assert(ad && ad.id === '999', '43: annonce minimale → id conservé (string)');
+    assert(ad.prix === 5 && ad.description === null && ad.city === null,
+      '43: annonce minimale → prix extrait, description/localisation absentes = null (jamais inventées)');
+    assert(looksLikeAd({ list_id: 1, subject: 'x', url: 'https://www.leboncoin.fr/ad/1.htm' }) === true,
+      '43: looksLikeAd tolère une annonce minimale valide (id + titre + url)');
+    assert(looksLikeAd({ list_id: 1, subject: 'x' }) === false,
+      '43: looksLikeAd rejette un objet sans prix ni url (pas une annonce)');
+
+    // 43.5b « inconnu » ≠ « zéro » : une annonce SANS champ images → photosCount
+    // null (information non récupérée) ; une annonce AVEC images vides → 0
+    // (information confirmée : aucune photo). L'ancien comportement renvoyait 0
+    // dans les deux cas, transformant une donnée inconnue en absence confirmée.
+    const noImages = normalizeAd({ list_id: 1, subject: 'T', url: 'https://www.leboncoin.fr/ad/1.htm' });
+    assert(noImages.photosCount === null && noImages.photosUrls === null,
+      '43: annonce sans champ images → photosCount null (inconnu, pas 0)');
+    const emptyImages = normalizeAd({ list_id: 2, subject: 'T', url: 'https://www.leboncoin.fr/ad/2.htm', images: { urls: [] } });
+    assert(emptyImages.photosCount === 0 && Array.isArray(emptyImages.photosUrls) && emptyImages.photosUrls.length === 0,
+      '43: annonce avec images vides → photosCount 0 (absence confirmée)');
+  }
+
+  // 43.6 Entrées HAR non-JSON (HTML, réponse nulle, objet vide) : le pipeline
+  // les ignore sans planter (il ne garde que les réponses JSON exploitables).
+  {
+    const { tmp, harPath } = writeHar([
+      { request: { url: 'https://www.leboncoin.fr/' }, response: { status: 200, content: { mimeType: 'text/html', text: '<html>x</html>' } } },
+      { request: { url: 'https://www.leboncoin.fr/api' }, response: { status: 200, content: { mimeType: 'application/json', text: JSON.stringify({ data: { ads: [{ list_id: 'ok1', subject: 'Ok', url: 'https://www.leboncoin.fr/ad/ok1.htm' }] } }) } } },
+      { request: { url: 'https://www.leboncoin.fr/x' }, response: null },
+      {},
+    ]);
+    const outDir = path.join(tmp, 'r'); fs.mkdirSync(outDir, { recursive: true });
+    const code = runPipeline(harPath, outDir);
+    assert(code === 0, `43: entrées non-JSON ignorées, JSON valide conservé (exit 0), obtenu ${code}`);
+    const ads = JSON.parse(fs.readFileSync(path.join(outDir, 'annonces.json'), 'utf8'));
+    assert(ads.length === 1 && ads[0].id === 'ok1', '43: seule l\'annonce de la réponse JSON est extraite');
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+
+  // 43.7 annonces.json corrompu (historique) : reprise re-scrape au lieu de crasher.
+  {
+    const { tmp, harPath } = writeHar([{ request: { url: 'https://www.leboncoin.fr/recherche' }, response: { status: 200, content: { mimeType: 'application/json', text: JSON.stringify({ data: { ads: [{ list_id: 'x1', subject: 'Objet', price: [{ value: 10 }] }] } }) } } }]);
+    const outDir = path.join(tmp, 'r'); fs.mkdirSync(outDir, { recursive: true });
+    // Écrit un annonces.json corrompu SANS --fresh → le pipeline doit le détecter
+    // et re-scraper depuis le HAR (pas de crash, pas de perte de données).
+    fs.writeFileSync(path.join(outDir, 'annonces.json'), '{{{ corrompu', 'utf8');
+    const code = runPipeline(harPath, outDir, []); // sans --fresh
+    assert(code === 0, `43: annonces.json corrompu → re-scraping automatique (exit 0), obtenu ${code}`);
+    const fixed = JSON.parse(fs.readFileSync(path.join(outDir, 'annonces.json'), 'utf8'));
+    assert(Array.isArray(fixed) && fixed.length === 1 && fixed[0].id === 'x1',
+      '43: données récupérées après corruption (aucune perte silencieuse)');
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+console.log('\n[43] OK');
+
+// ═══════════════════════════════════════════════════════════════════════════
+// [44] SÉCURITÉ — anti-SSRF du chemin Playwright (URL de recherche + sous-req.)
+
+console.log('\n[44] Sécurité anti-SSRF (harCapturer)');
+{
+  const { HarCapturer } = require('../src/main/services/scraping/harCapturer');
+  const harSrc = fs.readFileSync(path.join(__dirname, '..', 'src/main/services/scraping/harCapturer.js'), 'utf8');
+
+  // 44.1 Le garde-fou réseau est installé dans CHAQUE contexte navigateur.
+  assert(/async _installNetworkGuard\(ctx\)/.test(harSrc), '[44] harCapturer: _installNetworkGuard défini');
+  assert(/_installNetworkGuard\(ctx\)/.test(harSrc), '[44] harCapturer: garde-fou installé dans _newStealthContext');
+  assert(/route\('\*\*\/\*'/.test(harSrc), '[44] harCapturer: interception de toutes les sous-requêtes');
+
+  // 44.2 L'URL de recherche est validée AVANT le lancement de Chromium.
+  const cap = new HarCapturer();
+  const badUrls = [
+    'http://169.254.169.254/latest/meta-data/', // link-local (métadonnées cloud)
+    'http://127.0.0.1/x',
+    'http://10.0.0.5/x',
+    'https://evil.example.com/',
+    'https://leboncoin.fr.attacker.com/x', // suffixe trompeur
+    'ftp://leboncoin.fr/x',
+    'file:///etc/passwd',
+    'not-a-url',
+  ];
+  let rejected = 0;
+  for (const u of badUrls) {
+    try {
+      await cap.capture({ searchUrl: u, maxPages: 1, outputHarPath: path.join('/tmp', 'nope-ssrf', 'capture.har') });
+      // Si on arrive ici, Chromium a été « lancé » (stub → throw) : le test
+      // précédent a échoué à rejeter l'URL, on ne doit jamais l'atteindre.
+    } catch (e) {
+      if (/refusée|requise/.test(e.message)) rejected++;
+      else if (/playwright stub/.test(e.message)) {
+        assert(false, `[44] URL dangereuse non refusée avant lancement : ${u}`);
+      }
+    }
+  }
+  assert(rejected === badUrls.length, `[44] toutes les URLs dangereuses refusées (${rejected}/${badUrls.length})`);
+
+  // 44.3 Une URL Leboncoin légitime n'est PAS refusée par le contrôle de
+  // destination : elle atteint le lancement Chromium (stub → erreur de lancement,
+  // dont le libellé varie selon la section ; on vérifie donc l'ABSENCE de refus).
+  let legitThrew = false;
+  try {
+    await cap.capture({ searchUrl: 'https://www.leboncoin.fr/recherche?text=velo', maxPages: 1, outputHarPath: path.join('/tmp', 'nope-ssrf', 'capture.har') });
+  } catch (e) {
+    legitThrew = true;
+    assert(!/refusée/.test(e.message), `[44] URL leboncoin légitime non refusée (msg=${e.message})`);
+  }
+  assert(legitThrew, '[44] URL légitime atteint le lancement navigateur (contrôle de destination non bloquant)');
+
+  // 44.4 Le contrôle de destination couvre protocoles, IP privées et allowlist.
+  const { isSafeFetchDestination } = require('../src/main/utils/urlSecurity');
+  assert(isSafeFetchDestination('data:text/html,x').safe === false, '[44] data: refusé par le contrôle de destination');
+  assert(isSafeFetchDestination('https://www.leboncoin.fr/x', ['leboncoin.fr']).safe === true, '[44] leboncoin.fr autorisé');
+  assert(isSafeFetchDestination('https://sub.leboncoin.fr/x', ['leboncoin.fr']).safe === true, '[44] sous-domaine autorisé');
+
+  // 44.5 Défense en profondeur aussi dans l'enrichissement (route handler).
+  const pipeSrc = fs.readFileSync(path.join(__dirname, '..', 'src/main/services/scraping/leboncoin-pipeline.js'), 'utf8');
+  assert(/isSafeFetchDestination\(checkUrl\)/.test(pipeSrc), '[44] pipeline: contrôle anti-SSRF des sous-requêtes d\'enrichissement');
+}
+console.log('\n[44] OK');
 
 console.log(`\n=== RÉSULTAT : ${pass} réussis, ${fail} échoués ===`);
 process.exit(fail > 0 ? 1 : 0);

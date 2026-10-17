@@ -12,6 +12,14 @@ const { getRandomUserAgent } = require('./userAgents');
 const { ErrorCodes, createError } = require('./errorCodes');
 const { NetworkJournal } = require('./networkJournal');
 const { readProgress, writeProgress, mergeHarFiles } = require('./captureState');
+const { SCRAPING_POLICY } = require('../../config/scraping');
+const { isSafeFetchDestination } = require('../../utils/urlSecurity');
+
+// Domaines autorisés comme source de scraping. L'URL de recherche saisie par
+// l'utilisateur doit pointer vers l'un de ces domaines (ou un sous-domaine) :
+// toute autre destination est refusée AVANT le lancement de Chromium (anti-SSRF).
+// Les sous-requêtes sont en outre filtrées par `_installNetworkGuard`.
+const LEBONCOIN_SOURCE_HOSTS = ['leboncoin.fr', 'leboncoin.com', 'leboncoindirect.com'];
 
 function buildPageUrl(baseUrl, pageNumber) {
   try {
@@ -30,8 +38,11 @@ class HarCapturer extends EventEmitter {
     // lors du pré-check captcha (voir _warmupSession).
     this.headless = options.headless !== undefined ? options.headless : true;
     this.proxyUrl = options.proxyUrl || null;
-    this.minPageDelayMs = options.minPageDelayMs || 800;
-    this.maxPageDelayMs = options.maxPageDelayMs || 1500;
+    // Délai entre pages de recherche : politique fixe (400 ms nominal).
+    // Le délai est un délai NOMINAL, pas une autorisation de contourner une
+    // limitation explicite du site (cf. gestion 403/429 pendant la capture).
+    this.minPageDelayMs = options.minPageDelayMs ?? SCRAPING_POLICY.pageDelayMs;
+    this.maxPageDelayMs = options.maxPageDelayMs ?? SCRAPING_POLICY.pageDelayMs;
     this.isCancelled = false;
     // Journal réseau structuré (compteurs objectifs pour report.json) : compte
     // les navigations, pages réussies/échouées et blocages avec leur URL.
@@ -55,7 +66,13 @@ class HarCapturer extends EventEmitter {
   }
 
   _launchOptions(headless) {
-    const opts = { headless };
+    // `channel: 'chromium'` force l'utilisation du build Chromium complet
+    // embarqué (chrome-<platform>) au lieu du « headless shell » séparé. Depuis
+    // Playwright 1.49+, les deux sont distribués séparément et seul le Chromium
+    // complet est embarqué par electron-builder (extraResources → browsers/) :
+    // sans ce canal, `chromium.launch()` chercherait un headless-shell absent de
+    // l'installeur (« Executable doesn't exist »).
+    const opts = { headless, channel: 'chromium' };
     if (this.proxyUrl) opts.proxy = { server: this.proxyUrl };
     return opts;
   }
@@ -71,11 +88,43 @@ class HarCapturer extends EventEmitter {
 
   async _newStealthContext(browser, contextOptions) {
     const ctx = await browser.newContext(contextOptions);
+    // Défense en profondeur (anti-SSRF) : filtre CHAQUE sous-requête du contexte.
+    // Une navigation/redirection/sous-ressource vers une destination
+    // structurellement dangereuse (IP privée, schéma exotique) est bloquée.
+    await this._installNetworkGuard(ctx);
     await ctx.addInitScript(() => {
       Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
     });
     const p = await ctx.newPage();
     return { ctx, p };
+  }
+
+  /**
+   * Installe un filtre réseau sur toutes les requêtes du contexte. Bloque les
+   * destinations dangereuses identifiables sans DNS (IP privées, protocoles
+   * exotiques, hostnames locaux). N'impose PAS l'allowlist Leboncoin ici : les
+   * sous-ressources légitimes (CDN images, APIs) peuvent utiliser d'autres
+   * domaines ; l'allowlist stricte ne s'applique qu'à l'URL de recherche saisie.
+   * @param {import('playwright').BrowserContext} ctx
+   */
+  async _installNetworkGuard(ctx) {
+    // Schémas internes au navigateur (données, blob, about, devtools) : ils ne
+    // génèrent aucune connexion réseau et ne doivent pas être bloqués.
+    const INTERNAL_SCHEMES = ['data:', 'blob:', 'about:', 'devtools:', 'chrome:', 'chrome-extension:'];
+    await ctx.route('**/*', (route) => {
+      const reqUrl = route.request().url();
+      if (INTERNAL_SCHEMES.some((s) => reqUrl.startsWith(s))) return route.continue();
+      // WebSocket : ramené à http(s) pour réutiliser le même contrôle de
+      // destination (ws:// vers une IP privée doit être bloqué lui aussi).
+      let checkUrl = reqUrl;
+      if (reqUrl.startsWith('ws://')) checkUrl = 'http://' + reqUrl.slice(5);
+      else if (reqUrl.startsWith('wss://')) checkUrl = 'https://' + reqUrl.slice(6);
+      const check = isSafeFetchDestination(checkUrl);
+      if (check.safe) return route.continue();
+      this.journal.recordBlock(reqUrl, null);
+      this.emit('log', { level: 'warn', message: `[security] Sous-requête bloquée (${check.reason}) : ${reqUrl.slice(0, 120)}` });
+      return route.abort();
+    });
   }
 
   // Détecte un CAPTCHA / blocage sur la page. Vérifie plusieurs vecteurs :
@@ -374,6 +423,13 @@ class HarCapturer extends EventEmitter {
 
   async capture({ searchUrl, maxPages = 1, outputHarPath, resumeFrom = null }) {
     if (!searchUrl) throw new Error("L'URL de recherche est requise.");
+    // Anti-SSRF : l'URL de recherche (entrée utilisateur) doit viser un domaine
+    // Leboncoin légitime et non une IP privée/locale. Contrôle AVANT le
+    // lancement de Chromium (aucune connexion réseau n'est tentée si invalide).
+    const destCheck = isSafeFetchDestination(searchUrl, LEBONCOIN_SOURCE_HOSTS);
+    if (!destCheck.safe) {
+      throw new Error(`URL de recherche refusée (${destCheck.reason}). Utilisez une URL de recherche leboncoin.fr.`);
+    }
     const targetDir = path.dirname(outputHarPath);
     fs.mkdirSync(targetDir, { recursive: true });
     const statePath = path.join(targetDir, 'session-state.json');

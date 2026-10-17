@@ -20,6 +20,29 @@ if (process.env.NODE_ENV === 'production' || app.isPackaged) {
   const browsersPath = path.join(process.resourcesPath, 'browsers');
   if (fs.existsSync(browsersPath)) {
     process.env.PLAYWRIGHT_BROWSERS_PATH = browsersPath;
+  } else {
+    console.error(`⚠️ Dossier des navigateurs Playwright introuvable : ${browsersPath} — le scraping échouera.`);
+  }
+}
+
+/**
+ * Vérifie que le Chromium embarqué (Chrome for Testing) est présent et
+ * exécutable, et renvoie un diagnostic clair en cas d'absence. Empêche le
+ * message cryptique « Executable doesn't exist » au premier chromium.launch().
+ * @returns {{ok:boolean, path?:string, error?:string}}
+ */
+function checkEmbeddedChromium() {
+  try {
+    const { chromium } = require('playwright');
+    const exe = chromium.executablePath();
+    if (exe && fs.existsSync(exe)) return { ok: true, path: exe };
+    return {
+      ok: false,
+      error: `Chromium Playwright introuvable (chemin attendu : ${exe || 'inconnu'}). `
+        + `PLAYWRIGHT_BROWSERS_PATH=${process.env.PLAYWRIGHT_BROWSERS_PATH || '(non défini)'}.`,
+    };
+  } catch (err) {
+    return { ok: false, error: `Impossible de localiser Playwright/Chromium : ${err.message}` };
   }
 }
 
@@ -158,7 +181,91 @@ function createWindow() {
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
+
+  // Mode sonde E2E (uniquement avec --e2e-probe) : après chargement, exécute une
+  // sonde DOM dans le renderer réel et écrit le rapport JSON sur stdout, puis
+  // quitte. N'est JAMAIS actif en usage normal (le flag n'est pas passé par
+  // l'installeur). Permet des tests E2E réels sans dépendance à un driver
+  // externe.
+  if (process.argv.includes('--e2e-probe')) {
+    mainWindow.webContents.once('did-finish-load', async () => {
+      try {
+        const probe = await mainWindow.webContents.executeJavaScript(E2E_PROBE_SCRIPT);
+        console.log(`[E2E_PROBE] ${JSON.stringify(probe)}`);
+      } catch (err) {
+        console.log(`[E2E_PROBE] ${JSON.stringify({ error: String(err && err.message || err) })}`);
+      } finally {
+        setTimeout(() => app.exit(0), 200);
+      }
+    });
+  }
 }
+
+/**
+ * Sonde DOM exécutée dans le renderer pour les tests E2E. Renvoie un objet
+ * factuel sur l'état de l'UI : titre, onglets, pont preload, modales, contrôles
+ * de vitesse (doivent être absents). Isolée ici pour rester proche du mode
+ * --e2e-probe qui l'utilise.
+ */
+const E2E_PROBE_SCRIPT = `(async () => {
+  const out = {};
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  try {
+    out.title = document.title || '';
+    // Laisse le temps au premier-lancement (écran légal, init modules) de se faire.
+    await sleep(900);
+    // Écran d'information légale (1er lancement) : doit s'afficher puis être
+    // refermable — on le teste explicitement avant de poursuivre.
+    const legal = document.getElementById('legalNoticeModal');
+    out.legalShown = !!legal && !legal.classList.contains('hidden');
+    const legalAccept = document.getElementById('legalNoticeAcceptBtn');
+    if (legalAccept) { legalAccept.click(); await sleep(50); }
+    out.legalDismissed = !!legal && legal.classList.contains('hidden');
+
+    const navs = Array.from(document.querySelectorAll('[data-tab]'));
+    out.navCount = navs.length;
+    out.hasApi = typeof window.api === 'object' && window.api !== null;
+    out.apiKeys = out.hasApi ? Object.keys(window.api) : [];
+    out.nodeIntegration = typeof require !== 'undefined' || typeof process !== 'undefined';
+    out.contextIsolated = typeof window.api === 'object';
+    // Contrôles de vitesse/délai qui ne doivent PLUS exister.
+    out.speedControls = document.querySelectorAll('#cfgScrapeSpeed, #cfgPageDelay, [data-speed], select[name="speed"]').length;
+    out.readonlyPolicy = !!document.querySelector('.scraping-mode-readonly, [data-scraping-policy], .scraping-config');
+    // Active chaque onglet et vérifie qu'il devient visible.
+    let switched = 0;
+    for (const nav of navs) {
+      nav.click();
+      await sleep(20);
+      const tabId = nav.getAttribute('data-tab');
+      const panel = document.getElementById(tabId);
+      if (panel) {
+        const style = window.getComputedStyle(panel);
+        if (style.display !== 'none' && style.visibility !== 'hidden') switched++;
+      }
+    }
+    out.tabsSwitched = switched;
+    const isVisible = (el) => !!el && !el.classList.contains('hidden') && window.getComputedStyle(el).display !== 'none';
+    // FAQ
+    const faqBtn = document.getElementById('openFaqBtn');
+    if (faqBtn) {
+      faqBtn.click(); await sleep(50);
+      out.faqOpened = isVisible(document.getElementById('faqModal'));
+      out.faqItems = document.querySelectorAll('#faqModal .faq-item, #faqAccordion .faq-item').length;
+      document.getElementById('faqModal')?.classList.add('hidden');
+    }
+    // Paramètres
+    const setBtn = document.getElementById('openSettingsModalBtn');
+    if (setBtn) {
+      setBtn.click(); await sleep(50);
+      out.settingsOpened = isVisible(document.getElementById('settingsModal'));
+      document.getElementById('settingsModal')?.classList.add('hidden');
+    }
+    out.bodyText = (document.body.innerText || '').slice(0, 4000);
+  } catch (e) {
+    out.error = String(e && e.message || e);
+  }
+  return out;
+})()`;
 
 // Single-instance lock : empêche plusieurs instances concurrentes (qui se
 // battraient pour la session globale et les fichiers de job).
@@ -178,6 +285,16 @@ if (!gotSingleLock) {
 
 app.whenReady().then(() => {
   console.log('✅ Electron app ready !');
+  // Préflight Chromium : si le navigateur embarqué manque (installeur tronqué,
+  // antivirus, extraction incomplète), on le signale immédiatement au lieu de
+  // laisser échouer le premier scraping avec « Executable doesn't exist ».
+  const chromiumCheck = checkEmbeddedChromium();
+  if (!chromiumCheck.ok) {
+    console.error(`❌ Préflight Chromium : ${chromiumCheck.error}`);
+    logger.error(`Préflight Chromium échoué : ${chromiumCheck.error}`);
+  } else {
+    logger.info(`Préflight Chromium OK : ${chromiumCheck.path}`);
+  }
   // Enregistre les handlers IPC UNE SEULE FOIS (évite "second handler" au
   // recréation de fenêtre). Le getter permet de toujours cibler la fenêtre
   // courante même après recréation.

@@ -28,27 +28,26 @@ stabilisation. Pour chaque entrée : impact, circonstances, prochaines étapes.
   exécuter l'installeur sur Windows 10/11 x64, lancer l'app, vérifier le
   démarrage hors ligne, un job de scraping complet, puis la désinstallation.
 
-## KI-2 — Tests d'interface graphique absents *(P2)*
+## KI-2 — Tests d'interface graphique : partiellement couverts *(P3, tests)*
 
-- **Impact** : les bugs purement UI (rendu, événements DOM) ne sont pas couverts
-  automatiquement ; seuls la syntaxe et des invariants de code sont testés.
-- **Constat aggravant (phase 3)** : plusieurs bugs UI réels et silencieux ont été
-  découverts uniquement par relecture — **navigation par onglets totalement
-  morte** (sélecteur `.tab-btn` obsolète), éléments DOM absents
-  (`statMedPrice`, `structureWarning`), `applySellerDataVisibility` jamais
-  appelée, bandeau structure jamais masqué, graphiques fantômes. Aucun n'aurait
-  été attrapé par la suite actuelle. Ils sont corrigés, mais le manque de tests
-  UI reste une source de risque de régression.
-- **Circonstances** : toute modification des modules `src/renderer/`.
-- **Prochaines étapes** : ajouter un harnais DOM léger (jsdom) *si* le bénéfice
-  est avéré ; sinon maintenir une checklist manuelle (démarrage de job, arrêt,
-  suppression de job, changement de thème, mode hors-ligne, navigation entre
-  tous les onglets).
-- **Mitigation partielle (phase 3)** : un test statique `[25]` vérifie que tous
-  les `getElementById('X')` littéraux des modules renderer ciblent un `id`
-  présent dans `index.html`, et que chaque `[data-tab="X"]` pointe vers un
-  `.tab-content` d'id `X` existant. Cela couvre la classe exacte des bugs P3-1
-  (navigation morte) et P3-5 (éléments DOM absents) sans exécuter de DOM.
+- **Statut (mise à jour 2026-10-17)** : un harnais **E2E Electron réel** a été
+  ajouté (`test/e2e.electron.test.js`, exécuté via `npm run test:e2e`). Il
+  **lance réellement** l'application (main process + renderer) en mode headless
+  (`--ozone-platform=headless`) et vérifie : démarrage sans écran blanc, présence
+  des onglets, **navigation entre les onglets**, ouverture des modales
+  (Paramètres/FAQ), absence de contrôle de vitesse modifiable, affichage en
+  lecture seule de la politique, et l'absence de fuite Node dans le renderer
+  (`require`/`process`/`fs`/`child_process`/`eval`, `nodeIntegration` désactivé,
+  `contextIsolation` actif). Il est intégré au workflow CI (`checks`).
+- **Impact résiduel** : les parcours **métier complets** (création d'un job avec
+  capture réseau réelle, progression, annulation, export depuis l'UI) ne sont pas
+  encore couverts de bout en bout car ils exigent un accès réseau à Leboncoin ou
+  une injection de fixtures dans le processus principal. Les tests de pipeline
+  (`[35]`/`[36]`/`[42]`/`[43]`) couvrent en revanche la chaîne
+  HAR→normalisation→export sur fixtures.
+- **Circonstances** : toute modification des modules `src/renderer/` ou de `main.js`.
+- **Prochaines étapes** : étendre le harnais E2E à un job simulé (fixture HAR
+  injectée) couvrant progression → arrêt → export, en environnement CI sans réseau.
 
 ## KI-3 — `urlSecurity` : couverture DNS incomplète sur le chemin navigateur *(P2, sécurité)*
 
@@ -76,21 +75,26 @@ stabilisation. Pour chaque entrée : impact, circonstances, prochaines étapes.
   `SecretStore.isUsingOsKeychain()`) et, à terme, refuser le stockage plutôt que
   de dégrader silencieusement.
 
-## KI-5 — Dépendances vulnérables non corrigeables sans majeur *(P2)*
+## KI-5 — Dépendances vulnérables non corrigeables sans majeur *(P3)*
 
-- **Impact** : `npm audit` (phase 2) → **15 vulnérabilités** (4 modérées, 10
-  élevées, 1 critique) après les correctifs en plage. Détail :
-  - `tar` (critique, transitive electron-builder) → nécessite electron-builder@26 ;
-  - `playwright` (élevée, **directe**) → nécessite playwright@1.64 (chemin
-    Chromium/`extraResources` à revalider) ; CVE « téléchargement sans vérif TLS »
-    **hors** du chemin runtime ;
-  - `electron` + `@electron/get`/`global-agent`/`roarr`/`sprintf-js` → nécessitent
-    electron@44 (majeur) ;
-  - `electron-builder` et ses sous-paquets → outils de **build** (non embarqués
-    dans le binaire final), mise à jour majeure.
-- **Corrigé en phase 2** (en plage) : `brace-expansion`, `http-cache-semantics`.
-- **Prochaines étapes** : planifier un lot « dépendances » avec majeur Playwright
-  + Electron + electron-builder, et une campagne de packaging/capture après.
+- **Impact** : `npm audit` (mise à jour 2026-10-17) → **8 vulnérabilités
+  modérées**, toutes dans la chaîne **devDependencies** `electron-builder`
+  (`sprintf-js` ← `roarr` ← `global-agent` ← `@electron/get` ← `app-builder-lib`
+  / `dmg-builder` / `electron-builder-squirrel-windows`). **Aucune vulnérabilité
+  dans les dépendances de production** (`npm audit --omit=dev` → *found 0
+  vulnerabilities*). Les outils de build ne sont **pas embarqués** dans le
+  binaire final (l'installeur ne contient que `src/`, `node_modules/playwright*`
+  et le Chromium).
+- **Corrigé dans cette mission** : `playwright` porté à `^1.64.1` (dépendance
+  **directe** de production, la plus critique), `electron` à `^44.9.0` et
+  `electron-builder` à `^26.15.3` (build). La CVE « téléchargement sans
+  vérification TLS » de Playwright est **hors** du chemin runtime.
+- **Reste à faire** : les 8 avis modérés ne sont corrigeables que par une
+  montée majeure de `electron-builder` (`npm audit fix --force` → 26.5.0, en
+  réalité une régression de version ici). Impact limité au build ; à planifier
+  avec une campagne de packaging Windows.
+- **Prochaines étapes** : suivre les correctifs amont d'`@electron/get` ; ne PAS
+  lancer `npm audit fix --force` sans revalider le packaging complet.
 
 ## KI-7 — ~~Icône de build manquante~~ *(RÉSOLU, packaging)*
 

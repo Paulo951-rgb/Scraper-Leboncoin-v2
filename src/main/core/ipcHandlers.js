@@ -9,6 +9,7 @@ const { FileManager } = require('../infrastructure/fileManager');
 const { JobHistoryManager } = require('../services/jobs/jobHistory');
 const { StorageCleaner } = require('../services/maintenance/storageCleaner');
 const { JOBS_DIR, BASE_OUT_DIR } = require('../config/constants');
+const { getScrapingPolicy } = require('../config/scraping');
 const { summarizeAds, formatBytes, describeError } = require('../utils/diagnostics');
 const { readWithChecksum } = require('../utils/integrity');
 const { loadSettings, saveSettings } = require('./settings');
@@ -174,15 +175,17 @@ function setupIpcHandlers(getMainWindow) {
       sendLog({ level: 'info', message: '--- DÉMARRAGE DU SCRAPING ---' });
       const t0Total = Date.now();
 
-      // Le HarCapturer gère lui-même la bascule headless/visible (pré-check captcha).
-      const pageDelay = parseInt(userSettings.pageDelayMs, 10) || 1000;
+      // Politique de scraping FIXE (config/scraping.js) : concurrence 25 max,
+      // délai nominal 400 ms entre pages. Non modifiable par l'utilisateur.
+      const policy = getScrapingPolicy();
+      const pageDelay = policy.pageDelayMs;
       activeCapturer = new HarCapturer({
         proxyUrl,
         headless: userSettings.headless !== false,
         minPageDelayMs: pageDelay,
-        maxPageDelayMs: pageDelay + 700,
+        maxPageDelayMs: pageDelay,
       });
-      sendLog({ level: 'debug', message: `[job:start] Vitesse=${userSettings.scrapeSpeed} | headless=${userSettings.headless !== false} | délai pages=${pageDelay}ms` });
+      sendLog({ level: 'debug', message: `[job:start] Mode=${policy.label} | concurrence=${policy.concurrency} | délai pages=${pageDelay}ms | headless=${userSettings.headless !== false}` });
 
       activeCapturer.on('log', sendLog);
       activeCapturer.on('progress', ({ currentPage, totalPages, percent, status }) => {
@@ -288,7 +291,7 @@ function setupIpcHandlers(getMainWindow) {
         noDesc,
         fresh: true,
         limit: limit ? parseInt(limit, 10) : undefined,
-        speed: userSettings.scrapeSpeed || 'moyen',
+        speed: policy.mode,
         headless: userSettings.headless !== false,
         userAgent: captureUserAgent,
         // BASE_OUT_DIR : le pipeline forké n'a pas accès à electron → on lui
