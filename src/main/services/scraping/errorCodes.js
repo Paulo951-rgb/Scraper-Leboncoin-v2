@@ -31,6 +31,10 @@ const ErrorCodes = {
   HTTP_ACCESS_REFUSED: 'HTTP_ACCESS_REFUSED', // HTTP 403 : accès refusé par le serveur
   HTTP_RATE_LIMITED: 'HTTP_RATE_LIMITED',     // HTTP 429 : limitation de débit (Retry-After respecté)
   ACCESS_UNVERIFIED: 'ACCESS_UNVERIFIED',     // session non validée : impossible de confirmer l'accès
+  // Page officielle Leboncoin « Accès temporairement restreint » (HTTP 200, pas
+  // un CAPTCHA) : le site a classé le client/le réseau comme suspect. Aucun défi
+  // humain ne rétablit l'accès → arrêt propre (attendre / changer de réseau).
+  ACCESS_RESTRICTED: 'ACCESS_RESTRICTED',
 
   // Parsing
   PARSE_HAR_INVALID: 'PARSE_HAR_INVALID',
@@ -99,6 +103,7 @@ function classifyError(code) {
   if (code.startsWith('HTTP_5')) return 'global_error';
   if (code.startsWith('CAPTCHA_')) return 'session_error';
   if (code === 'ACCESS_UNVERIFIED') return 'session_error';
+  if (code === 'ACCESS_RESTRICTED') return 'session_error';
   if (code.startsWith('PARSE_')) return 'global_error';
   if (code.startsWith('EXTRACTOR_')) return 'ad_error';
   if (code.startsWith('SESSION_')) return 'session_error';

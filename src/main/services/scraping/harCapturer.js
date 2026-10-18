@@ -19,6 +19,8 @@ const {
   applyStealthToContext,
   clientHeadersFor,
   detectCloudFrontBlock,
+  detectRestrictionPage,
+  looksLikeResultsPage,
 } = require('./stealthProfile');
 
 // Domaines autorisés comme source de scraping. L'URL de recherche saisie par
@@ -155,11 +157,13 @@ class HarCapturer extends EventEmitter {
 
   /**
    * Classe le refus d'accès d'une page. Distingue un CAPTCHA (défi humain) d'une
-   * page de refus CloudFront/anti-bot (blocage périphérique, sans défi résoluble)
-   * et d'un blocage HTTP nu (403/429 sans contenu exploitable).
+   * page de refus CloudFront/anti-bot (blocage périphérique, sans défi résoluble),
+   * de la page officielle « Accès temporairement restreint » (HTTP 200, refus
+   * durable que la résolution d'un défi ne lève PAS) et d'un blocage HTTP nu
+   * (403/429 sans contenu exploitable).
    * @param {import('playwright').Page} page
    * @param {number|null} [httpStatus]
-   * @returns {Promise<{blocked:boolean, kind:'cloudfront'|'captcha'|'http'|null, marker:string|null, provider:string|null, reason:string|null}>}
+   * @returns {Promise<{blocked:boolean, kind:'cloudfront'|'restricted'|'captcha'|'http'|null, marker:string|null, provider:string|null, reason:string|null}>}
    */
   async _detectAccessBlock(page, httpStatus = null) {
     const none = { blocked: false, kind: null, marker: null, provider: null, reason: null };
@@ -183,10 +187,27 @@ class HarCapturer extends EventEmitter {
 
         const cfChallenge = !!document.querySelector('#challenge-form, .cf-turnstile, #cf-challenge-running, .cf-challenge-form');
 
-        return { text, matched, hasCaptchaIframe: !!captchaIframe, cfChallenge };
+        // Cartes d'annonces : une page qui en contient est une VRAIE page de
+        // résultats (elle ne peut pas être une page de restriction).
+        const adCards = document.querySelectorAll('a[href*="/ad/"], [data-test-id*="ad"], [data-role="ad-card"]').length;
+
+        return { text, matched, hasCaptchaIframe: !!captchaIframe, cfChallenge, adCards };
       });
 
-      // 1) Refus CloudFront / anti-bot (page d'erreur servie même en HTTP 200).
+      // 1) Page officielle « Accès temporairement restreint » : c'est un refus
+      //    DURABLE, PAS un CAPTCHA. La résolution d'un défi humain n'y change
+      //    rien → on ne doit JAMAIS ouvrir une fenêtre CAPTCHA pour cette page.
+      //    (Détectée AVANT le CAPTCHA car elle contient les mots « robot » et
+      //    « vitesse surhumaine » qui, seuls, la feraient classer comme CAPTCHA.)
+      const restriction = detectRestrictionPage(result.text);
+      if (restriction.restricted && result.adCards === 0) {
+        const reason = `page « Accès temporairement restreint » (marqueur « ${restriction.marker} »)`;
+        const err = createError(ErrorCodes.ACCESS_RESTRICTED, `Blocage détecté — ${reason}`, { url: currentUrl, reason, marker: restriction.marker });
+        this.emit('log', { level: 'debug', message: `[access] [${err.code}] ${reason}.` });
+        return { blocked: true, kind: 'restricted', marker: restriction.marker, provider: 'leboncoin', reason };
+      }
+
+      // 2) Refus CloudFront / anti-bot (page d'erreur servie même en HTTP 200).
       const cf = detectCloudFrontBlock(result.text);
       if (cf.blocked) {
         const reason = `page de refus ${cf.provider} (marqueur « ${cf.marker} »)`;
@@ -197,7 +218,7 @@ class HarCapturer extends EventEmitter {
         return { blocked: true, kind: cf.provider === 'cloudfront' ? 'cloudfront' : 'captcha', marker: cf.marker, provider: cf.provider, reason };
       }
 
-      // 2) CAPTCHA / défi humain.
+      // 3) CAPTCHA / défi humain.
       const captchaBlocked = !!(result.matched || result.hasCaptchaIframe || result.cfChallenge || captchaUrlMatch);
       if (captchaBlocked) {
         const reason = result.matched ? `texte "${result.matched}"`
@@ -209,7 +230,7 @@ class HarCapturer extends EventEmitter {
         return { blocked: true, kind: 'captcha', marker: result.matched || null, provider: 'anti-bot', reason };
       }
 
-      // 3) Blocage HTTP nu (403/429) sans CAPTCHA ni page CloudFront identifiable.
+      // 4) Blocage HTTP nu (403/429) sans CAPTCHA ni page CloudFront identifiable.
       if (typeof httpStatus === 'number' && httpStatus >= 400) {
         const reason = `HTTP ${httpStatus}`;
         return { blocked: true, kind: 'http', marker: null, provider: null, reason };
@@ -224,12 +245,14 @@ class HarCapturer extends EventEmitter {
   /**
    * Vérification OBJECTIVE d'accès : rejoue une requête HTTP (avec les cookies et
    * les en-têtes client du contexte) vers l'URL de recherche et renvoie le statut
-   * réellement observé. Sert à CONFIRMER que l'accès est rétabli (HTTP 200) avant
-   * de relancer le scraping — ne jamais se contenter de la disparition visuelle
-   * d'un défi. Best-effort : ne jette jamais.
+   * réellement observé AINSI QUE la nature du contenu. Sert à CONFIRMER que
+   * l'accès est réellement rétabli — ne jamais se contenter de la disparition
+   * visuelle d'un défi NI du seul code HTTP : Leboncoin sert sa page « Accès
+   * temporairement restreint » en HTTP 200, donc un 200 peut cacher un refus.
+   * Best-effort : ne jette jamais.
    * @param {import('playwright').BrowserContext} ctx
    * @param {string} url
-   * @returns {Promise<{status:number|null, ok:boolean}>}
+   * @returns {Promise<{status:number|null, ok:boolean, restricted:boolean, cloudfront:boolean, hasResults:boolean, marker:string|null}>}
    */
   async _probeAccessStatus(ctx, url) {
     try {
@@ -241,10 +264,24 @@ class HarCapturer extends EventEmitter {
         timeout: 15000,
       });
       const status = resp.status();
-      return { status, ok: status >= 200 && status < 400 };
+      let body = '';
+      try { body = await resp.text(); } catch { /* corps illisible → contenu inconnu */ }
+      const restricted = detectRestrictionPage(body).restricted;
+      const cloudfront = detectCloudFrontBlock(body).blocked;
+      // `ok` = accès réellement rétabli : HTTP < 400 ET pas de page de refus.
+      // Un HTTP 200 « Accès temporairement restreint » n'est PAS un accès OK.
+      const ok = status >= 200 && status < 400 && !restricted && !cloudfront;
+      return {
+        status,
+        ok,
+        restricted,
+        cloudfront,
+        hasResults: looksLikeResultsPage(body),
+        marker: restricted ? detectRestrictionPage(body).marker : (cloudfront ? detectCloudFrontBlock(body).marker : null),
+      };
     } catch (e) {
       this.emit('log', { level: 'debug', message: `[access] Sonde HTTP impossible : ${e.message}` });
-      return { status: null, ok: false };
+      return { status: null, ok: false, restricted: false, cloudfront: false, hasResults: false, marker: null };
     }
   }
 
@@ -309,6 +346,16 @@ class HarCapturer extends EventEmitter {
     if (!blocked && warmupStatus === null) {
       const probe = await this._probeAccessStatus(ctx, checkUrl);
       this.emit('log', { level: 'debug', message: `[warmup] Statut de navigation inconnu — sonde objective : HTTP ${probe.status ?? '?'}.` });
+      if (probe.restricted) {
+        const restrictedErr = createError(
+          ErrorCodes.ACCESS_RESTRICTED,
+          `Accès restreint : page officielle « ${probe.marker} » (HTTP ${probe.status ?? '?'}) — aucun défi à résoudre.`,
+          { url: checkUrl, status: probe.status, marker: probe.marker });
+        this.emit('log', { level: 'warn', message: `⛔ [${restrictedErr.code}] ${restrictedErr.message}` });
+        await p.close().catch(() => {});
+        await ctx.close().catch(() => {});
+        return { verified: false, reason: 'restricted', blockKind: 'restricted', blockCode: ErrorCodes.ACCESS_RESTRICTED };
+      }
       if (!probe.ok) {
         const unverifiedErr = createError(
           ErrorCodes.ACCESS_UNVERIFIED,
@@ -336,20 +383,29 @@ class HarCapturer extends EventEmitter {
       return { verified: true, reason: 'no_captcha' };
     }
 
-    // Refus CloudFront / anti-bot OU blocage HTTP nu (403/429) sans défi
-    // résoluble : ouvrir une fenêtre CAPTCHA serait stérile (rien à résoudre).
-    // On arrête proprement avec un état explicite « accès non vérifié ».
-    if (accessBlock.kind === 'cloudfront' || accessBlock.kind === 'http') {
+    // Refus CloudFront / anti-bot, page « Accès temporairement restreint » OU
+    // blocage HTTP nu (403/429) sans défi résoluble : ouvrir une fenêtre CAPTCHA
+    // serait stérile (rien à résoudre, ou la restriction ne dépend PAS d'un défi).
+    // On arrête proprement avec un état explicite.
+    if (accessBlock.kind === 'cloudfront' || accessBlock.kind === 'http' || accessBlock.kind === 'restricted') {
+      const isRestricted = accessBlock.kind === 'restricted';
       const unverifiedErr = createError(
-        ErrorCodes.ACCESS_UNVERIFIED,
-        accessBlock.kind === 'cloudfront'
-          ? `Accès non vérifié : page de refus ${accessBlock.provider} (${accessBlock.marker}). Nouvelle tentative plus tard.`
-          : `Accès non vérifié : blocage HTTP ${accessBlock.reason} sans défi résoluble. Nouvelle tentative plus tard.`,
+        isRestricted ? ErrorCodes.ACCESS_RESTRICTED : ErrorCodes.ACCESS_UNVERIFIED,
+        isRestricted
+          ? `Accès restreint : page officielle « ${accessBlock.marker} » (${accessBlock.provider}). Aucun défi à résoudre — attendez ou changez de réseau.`
+          : accessBlock.kind === 'cloudfront'
+            ? `Accès non vérifié : page de refus ${accessBlock.provider} (${accessBlock.marker}). Nouvelle tentative plus tard.`
+            : `Accès non vérifié : blocage HTTP ${accessBlock.reason} sans défi résoluble. Nouvelle tentative plus tard.`,
         { url: checkUrl, kind: accessBlock.kind, marker: accessBlock.marker });
       this.emit('log', { level: 'warn', message: `⛔ [${unverifiedErr.code}] ${unverifiedErr.message}` });
       await p.close().catch(() => {});
       await ctx.close().catch(() => {});
-      return { verified: false, reason: accessBlock.kind === 'cloudfront' ? 'cloudfront_blocked' : 'http_blocked', blockKind: accessBlock.kind, blockCode: ErrorCodes.ACCESS_UNVERIFIED };
+      return {
+        verified: false,
+        reason: isRestricted ? 'restricted' : accessBlock.kind === 'cloudfront' ? 'cloudfront_blocked' : 'http_blocked',
+        blockKind: accessBlock.kind,
+        blockCode: isRestricted ? ErrorCodes.ACCESS_RESTRICTED : ErrorCodes.ACCESS_UNVERIFIED,
+      };
     }
 
     // Blocage CAPTCHA (défi humain) : ferme le contexte invisible avant d'ouvrir
@@ -400,8 +456,13 @@ class HarCapturer extends EventEmitter {
       // il reste à 403 même après résolution car la navigation initiale est restée
       // bloquée. On se fie au contenu (iframe/texte/URL) qui change quand
       // l'utilisateur résout le CAPTCHA → la page se redirige vers les résultats.
+      // `detectAccessBlock` classe aussi la page « Accès temporairement restreint »
+      // (HTTP 200) : un défi qui disparaît en laissant cette page n'est PAS résolu.
+      let restrictedDuringResolve = null;
       const checkVBlocked = async () => {
-        return this._checkCaptcha(vPage);
+        const block = await this._detectAccessBlock(vPage, null);
+        if (block.blocked && block.kind === 'restricted') restrictedDuringResolve = block;
+        return block.blocked;
       };
 
       let isBlocked = await checkVBlocked();
@@ -436,6 +497,15 @@ class HarCapturer extends EventEmitter {
         // suite à une redirection automatique).
         const stillBlocked = await checkVBlocked();
 
+        // 🛑 Si la page « Accès temporairement restreint » est apparue, la
+        // résolution du défi n'a PAS rétabli l'accès (refus durable). Continuer à
+        // attendre ne servirait à rien : on sort de la boucle pour arrêter
+        // proprement au lieu de faire patienter l'utilisateur 10 minutes.
+        if (restrictedDuringResolve) {
+          this.emit('log', { level: 'warn', message: `[warmup] Le défi a laissé place à la page « ${restrictedDuringResolve.marker} » — accès toujours restreint, arrêt.` });
+          break;
+        }
+
         if (!stillBlocked) {
           // 🛑 FIX : confirmation pour éviter les faux positifs.
           // Leboncoin peut brièvement retirer l'iframe CAPTCHA pendant une
@@ -464,6 +534,20 @@ class HarCapturer extends EventEmitter {
       }
 
       if (!confirmedClear) {
+        // Page « Accès temporairement restreint » apparue après la résolution :
+        // le défi a disparu mais l'accès reste refusé. On ne persiste PAS la
+        // session et on arrête avec un état explicite (attendre / changer de
+        // réseau). Surtout, on ne relance PAS le scraping.
+        if (restrictedDuringResolve) {
+          const restrictedErr = createError(
+            ErrorCodes.ACCESS_RESTRICTED,
+            `CAPTCHA résolu mais accès toujours restreint (page « ${restrictedDuringResolve.marker} ») — session non persistée.`,
+            { url: checkUrl, marker: restrictedDuringResolve.marker });
+          this.emit('log', { level: 'warn', message: `[warmup] [${restrictedErr.code}] ${restrictedErr.message}` });
+          await vPage.close().catch(() => {});
+          await vCtx.close().catch(() => {});
+          return { verified: false, reason: 'restricted', blockKind: 'restricted', blockCode: ErrorCodes.ACCESS_RESTRICTED };
+        }
         // Timeout atteint sans résolution — on ne persiste pas la session.
         const timeoutErr = createError(ErrorCodes.CAPTCHA_TIMEOUT, `CAPTCHA non résolu dans le délai (${Math.round(MAX_WAIT_MS / 60000)} min) — session non persistée`);
         this.emit('log', { level: 'warn', message: `[warmup] [${timeoutErr.code}] CAPTCHA non résolu dans le délai — session non persistée.` });
@@ -487,9 +571,20 @@ class HarCapturer extends EventEmitter {
       await sleep(1500);
 
       // Re-vérifie une dernière fois : Leboncoin peut afficher un 2e CAPTCHA
-      // consécutif (anti-bot agressif). Si oui, on ne persiste PAS.
+      // consécutif (anti-bot agressif) OU la page « Accès temporairement
+      // restreint ». Dans les deux cas, on ne persiste PAS.
       const stillBlocked = await checkVBlocked();
       if (stillBlocked) {
+        if (restrictedDuringResolve) {
+          const restrictedErr = createError(
+            ErrorCodes.ACCESS_RESTRICTED,
+            `CAPTCHA résolu mais accès toujours restreint (page « ${restrictedDuringResolve.marker} ») — session non persistée.`,
+            { url: checkUrl, marker: restrictedDuringResolve.marker });
+          this.emit('log', { level: 'warn', message: `[warmup] [${restrictedErr.code}] ${restrictedErr.message}` });
+          await vPage.close().catch(() => {});
+          await vCtx.close().catch(() => {});
+          return { verified: false, reason: 'restricted', blockKind: 'restricted', blockCode: ErrorCodes.ACCESS_RESTRICTED };
+        }
         const secondCaptchaErr = createError(ErrorCodes.CAPTCHA_UNRESOLVED, 'Un 2e CAPTCHA consécutif est apparu — session non persistée. Relancez le scraping.');
         this.emit('log', { level: 'warn', message: `[warmup] [${secondCaptchaErr.code}] Un 2e CAPTCHA consécutif est apparu — session non persistée. Relancez le scraping.` });
         await vPage.close().catch(() => {});
@@ -498,11 +593,22 @@ class HarCapturer extends EventEmitter {
       }
 
       // CONFIRMATION OBJECTIVE DE L'ACCÈS (anti-fausse-réussite) : la disparition
-      // visuelle du défi ne PROUVE pas l'autorisation (CloudFront/Arkose peuvent
-      // retirer l'iframe pendant une transition tout en continuant à répondre
-      // 403/429). On rejoue une requête HTTP réelle avec les cookies du contexte :
-      // la session n'est persistée QUE si le serveur répond réellement < 400.
+      // visuelle du défi ne PROUVE pas l'autorisation. On rejoue une requête HTTP
+      // réelle avec les cookies du contexte ET on inspecte son CONTENU : la
+      // session n'est persistée QUE si le serveur répond < 400 ET que la page
+      // n'est NI « Accès temporairement restreint » NI une page de refus. Un
+      // HTTP 200 « Accès temporairement restreint » n'est PAS un accès rétabli.
       const probe = await this._probeAccessStatus(vCtx, checkUrl);
+      if (probe.restricted) {
+        const restrictedErr = createError(
+          ErrorCodes.ACCESS_RESTRICTED,
+          `CAPTCHA résolu mais le serveur renvoie la page « ${probe.marker} » (HTTP ${probe.status ?? '?'}) — session non persistée.`,
+          { url: checkUrl, status: probe.status, marker: probe.marker });
+        this.emit('log', { level: 'warn', message: `[warmup] [${restrictedErr.code}] ${restrictedErr.message}` });
+        await vPage.close().catch(() => {});
+        await vCtx.close().catch(() => {});
+        return { verified: false, reason: 'restricted', blockKind: 'restricted', blockCode: ErrorCodes.ACCESS_RESTRICTED };
+      }
       if (!probe.ok) {
         const notConfirmedErr = createError(
           ErrorCodes.CAPTCHA_NOT_CONFIRMED,
@@ -513,7 +619,7 @@ class HarCapturer extends EventEmitter {
         await vCtx.close().catch(() => {});
         return { verified: false, reason: 'not_confirmed', status: probe.status };
       }
-      this.emit('log', { level: 'debug', message: `[warmup] Accès confirmé objectivement (HTTP ${probe.status}) — persistance de la session.` });
+      this.emit('log', { level: 'debug', message: `[warmup] Accès confirmé objectivement (HTTP ${probe.status}${probe.hasResults ? ', page de résultats détectée' : ''}) — persistance de la session.` });
 
       // Persiste la session validée pour les jobs suivants (plus de fenêtre visible).
       await vCtx.storageState({ path: GLOBAL_SESSION_PATH });
@@ -542,12 +648,17 @@ class HarCapturer extends EventEmitter {
         return { count, matched, text };
       });
       if (info.count > 0) return { empty: false };
-      // Aucune carte : soit blocage (marqueur d'erreur OU page CloudFront), soit
-      // recherche réellement vide. La page CloudFront « Request blocked » est
-      // servie même en HTTP 200 → sans ce contrôle elle passerait pour un succès.
+      // Aucune carte : soit blocage (marqueur d'erreur OU page CloudFront/restriction),
+      // soit recherche réellement vide. La page CloudFront « Request blocked » et la
+      // page « Accès temporairement restreint » sont servies même en HTTP 200 → sans
+      // ce contrôle elles passeraient pour un succès (ou une simple recherche vide).
       const cf = detectCloudFrontBlock(info.text);
       if (cf.blocked) {
         return { empty: true, blocked: true, marker: cf.marker, provider: cf.provider, kind: cf.provider === 'cloudfront' ? 'cloudfront' : 'anti-bot' };
+      }
+      const restriction = detectRestrictionPage(info.text);
+      if (restriction.restricted) {
+        return { empty: true, blocked: true, marker: restriction.marker, provider: 'leboncoin', kind: 'restricted' };
       }
       return { empty: true, blocked: !!info.matched, marker: info.matched };
     } catch (e) {
@@ -631,7 +742,7 @@ class HarCapturer extends EventEmitter {
         await browser.close().catch(() => {});
         throw Object.assign(
           new Error(`Session non validée (${warmup.reason}) : capture annulée pour éviter une boucle de CAPTCHA.`),
-          { code: stopCode, accessUnverified: stopCode === ErrorCodes.ACCESS_UNVERIFIED });
+          { code: stopCode, accessUnverified: stopCode === ErrorCodes.ACCESS_UNVERIFIED || stopCode === ErrorCodes.ACCESS_RESTRICTED });
       }
       if (this.isCancelled) {
         this.emit('log', { level: 'debug', message: '[capture] Capture annulée après pré-check (isCancelled=true).' });
@@ -732,6 +843,19 @@ class HarCapturer extends EventEmitter {
             this.emit('log', { level: 'warn', message: `⚠️ [Page ${pageNum}] [${blockErr.code}] BLOCAGE DÉTECTÉ (${reason}) — tentative de résolution interactive...` });
             this.journal.recordBlock(targetUrl, typeof httpStatus === 'number' ? httpStatus : null);
 
+            // 🛑 Page « Accès temporairement restreint » : refus DURABLE, aucun
+            // défi humain à résoudre. Ouvrir une fenêtre CAPTCHA serait stérile et
+            // trompeur. On arrête proprement ; les pages déjà capturées restent
+            // dans le HAR (elles seront conservées).
+            if (accessBlock.kind === 'restricted') {
+              this.emit('log', { level: 'warn', message: `⛔ [Page ${pageNum}] [${ErrorCodes.ACCESS_RESTRICTED}] Accès restreint par le site (${reason}) — arrêt de la capture, données déjà acquises conservées.` });
+              this.journal.recordPageResult(false);
+              fatalError = Object.assign(
+                new Error(`Accès restreint par le site (${reason}) : arrêt de la capture.`),
+                { code: ErrorCodes.ACCESS_RESTRICTED, accessUnverified: true });
+              break;
+            }
+
             // Au lieu d'abandonner, on tente une résolution interactive :
             // ferme le contexte HAR, ouvre une fenêtre visible, puis relance
             // la capture depuis la page bloquée.
@@ -766,7 +890,7 @@ class HarCapturer extends EventEmitter {
               this.emit('log', { level: 'warn', message: `[capture] Résolution non validée (${retryWarmup.reason}) — arrêt de la capture (pas de boucle CAPTCHA).` });
               fatalError = Object.assign(
                 new Error(`Accès non validé (${retryWarmup.reason}) : arrêt de la capture.`),
-                { code: stopCode, accessUnverified: stopCode === ErrorCodes.ACCESS_UNVERIFIED });
+                { code: stopCode, accessUnverified: stopCode === ErrorCodes.ACCESS_UNVERIFIED || stopCode === ErrorCodes.ACCESS_RESTRICTED });
               break;
             }
 
@@ -798,10 +922,19 @@ class HarCapturer extends EventEmitter {
             const emptyCheck = await this._looksLikeEmptyResults(page);
             if (emptyCheck.empty) {
               if (emptyCheck.blocked) {
-                const emptyCode = emptyCheck.kind === 'cloudfront' ? ErrorCodes.HTTP_ACCESS_REFUSED : ErrorCodes.CAPTCHA_DETECTED;
+                const emptyCode = emptyCheck.kind === 'cloudfront' ? ErrorCodes.HTTP_ACCESS_REFUSED
+                  : emptyCheck.kind === 'restricted' ? ErrorCodes.ACCESS_RESTRICTED
+                  : ErrorCodes.CAPTCHA_DETECTED;
                 const emptyErr = createError(emptyCode, `Page de résultats vide (marqueur « ${emptyCheck.marker} ») — blocage probable`, { page: pageNum, httpStatus, kind: emptyCheck.kind });
                 this.emit('log', { level: 'warn', message: `⚠️ [Page ${pageNum}] [${emptyErr.code}] Page 200 vide (marqueur « ${emptyCheck.marker} ») — blocage probable, arrêt préventif.` });
                 this.journal.recordPageResult(false);
+                // Page « Accès temporairement restreint » : refus durable → on
+                // remonte un état explicite (les pages déjà capturées restent).
+                if (emptyCheck.kind === 'restricted') {
+                  fatalError = Object.assign(
+                    new Error(`Accès restreint par le site (marqueur « ${emptyCheck.marker} ») : arrêt de la capture.`),
+                    { code: ErrorCodes.ACCESS_RESTRICTED, accessUnverified: true });
+                }
                 break;
               }
               this.emit('log', { level: 'warn', message: `[Page ${pageNum}] Aucune annonce détectée sur cette page (recherche sans résultat ou fin de pagination).` });
