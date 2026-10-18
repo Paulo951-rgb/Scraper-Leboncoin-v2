@@ -5872,6 +5872,92 @@ console.log('\n[58] Contournement CloudFront + état de session honnête');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// [64] REPRISE BORNÉE DU PRÉ-CHECK (restauration du comportement historique)
+//   Régression : le pré-check récent s'arrêtait sur le PREMIER refus anti-bot
+//   (403/429), là où l'ancien moteur (778b562) enchaînait naturellement
+//   plusieurs navigations (pré-check PUIS capture) et absorbait ainsi un refus
+//   TRANSITOIRE. On restaure cette résilience par un nombre BORNÉ de tentatives
+//   de navigation de pré-check (jamais une boucle, aucune fenêtre CAPTCHA
+//   ouverte pour un 403 nu, session NON persistée sur refus).
+//   Vérifie : (1) un 403 transitoire suivi d'un 200 est absorbé (session
+//   validée) ; (2) un 403 PERSISTANT reste classé « accès non vérifié » et
+//   n'ouvre AUCUNE fenêtre CAPTCHA ; (3) le nombre de navigations est borné.
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n[64] Reprise bornée du pré-check (refus anti-bot transitoire)');
+{
+  const { HarCapturer } = require('../src/main/services/scraping/harCapturer');
+
+  // Construit un faux navigateur/contexte. `statuses` est la suite des statuts
+  // HTTP renvoyés par les navigations successives (le dernier est répété).
+  const mkBrowser = (statuses, bodyHtml = '') => {
+    const state = { navigations: 0, launchedVisible: false };
+    const makeCtx = () => ({
+      async route() {}, async setExtraHTTPHeaders() {}, async addInitScript() {},
+      async newPage() {
+        return {
+          async goto() {
+            const s = statuses[Math.min(state.navigations, statuses.length - 1)];
+            state.navigations++;
+            return { status: () => s };
+          },
+          url() { return 'https://www.leboncoin.fr/recherche?text=rtx'; },
+          async evaluate() {
+            return { text: bodyHtml, matched: null, hasCaptchaIframe: false, cfChallenge: false, adCards: /\/ad\//.test(bodyHtml) ? 1 : 0 };
+          },
+          async close() {},
+        };
+      },
+      async close() {},
+      async storageState() { /* pas d'écriture disque */ },
+      request: { async get() { return { status: () => 200, async text() { return bodyHtml; } }; } },
+    });
+    return {
+      state,
+      async newContext() { return makeCtx(); },
+      async launch() { state.launchedVisible = true; },
+      async close() {},
+    };
+  };
+
+  // Cas A : 403 (transitoire) puis 200 avec page de résultats → absorbé.
+  {
+    const cap = new HarCapturer();
+    const browser = mkBrowser([403, 200], '<html><body><a href="https://www.leboncoin.fr/ad/velos/1">Vélo</a></body></html>');
+    const res = await cap._warmupSession(browser, 'https://www.leboncoin.fr/recherche?text=rtx');
+    assert(res.verified === true,
+      '[64] 403 transitoire suivi d\'un 200 → pré-check validé (régression corrigée)');
+    assert(browser.state.navigations === 2,
+      '[64] le 403 transitoire est bien absorbé par une 2e navigation');
+    assert(browser.state.launchedVisible === false,
+      '[64] aucun 403 nu n\'ouvre de fenêtre CAPTCHA');
+  }
+
+  // Cas B : 403 PERSISTANT → accès non vérifié, AUCUNE fenêtre CAPTCHA, borné.
+  {
+    const cap = new HarCapturer();
+    const browser = mkBrowser([403], 'contenu vide');
+    const res = await cap._warmupSession(browser, 'https://www.leboncoin.fr/recherche?text=rtx');
+    assert(res.verified === false && res.reason === 'http_blocked',
+      '[64] 403 persistant → accès non vérifié (jamais un faux OK)');
+    assert(browser.state.navigations === 3,
+      '[64] les tentatives de pré-check sont BORNÉES (3 navigations max, pas de boucle)');
+    assert(browser.state.launchedVisible === false,
+      '[64] 403 persistant n\'ouvre AUCUNE fenêtre CAPTCHA inutile');
+  }
+
+  // Cas C : succès immédiat → une seule navigation (aucun surcoût).
+  {
+    const cap = new HarCapturer();
+    const browser = mkBrowser([200], '<html><body><a href="https://www.leboncoin.fr/ad/velos/1">Vélo</a></body></html>');
+    const res = await cap._warmupSession(browser, 'https://www.leboncoin.fr/recherche?text=rtx');
+    assert(res.verified === true && browser.state.navigations === 1,
+      '[64] accès immédiat → une seule navigation (aucun surcoût sur le chemin nominal)');
+  }
+
+  console.log('\n[64] OK');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // [59] CAPTCHA RÉSOLU MAIS « ACCÈS TEMPORAIREMENT RESTREINT »
 //   Bug : après résolution du CAPTCHA, la même fenêtre affiche la page
 //   officielle « Accès temporairement restreint » (HTTP 200). L'ancien code
