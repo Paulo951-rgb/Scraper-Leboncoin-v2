@@ -82,19 +82,68 @@ function setupIpcHandlers(getMainWindow) {
   const sendProgress = (data) => { const w = getWin(); if (w) w.webContents.send('progress', data); };
   const sendStatus = (status) => { const w = getWin(); if (w) w.webContents.send('status', currentJobId ? { ...status, jobId: currentJobId } : status); };
 
+  // Lit annonces.json (checksum) et renvoie les annonces valides, ou null.
+  // On ne compte JAMAIS un fichier corrompu (checksum invalide → null).
+  function readValidAds(resultsDir) {
+    const jsonPath = path.join(resultsDir, 'annonces.json');
+    if (!fs.existsSync(jsonPath)) return null;
+    try {
+      const { data: ads, valid } = readWithChecksum(jsonPath);
+      return valid && Array.isArray(ads) && ads.length > 0 ? ads : null;
+    } catch { return null; }
+  }
+
+  // Ingestion des annonces dans la base historique « Évolution des prix ».
+  // Appelée aussi bien après un succès COMPLET qu'après un succès PARTIEL (le
+  // pipeline écrit annonces.json AVANT l'enrichissement) : les annonces déjà
+  // collectées doivent alimenter l'historique même si l'enrichissement a échoué.
+  // Une erreur du moteur historique ne fait JAMAIS échouer la collecte.
+  function ingestHistory(ads, jobId) {
+    if (!Array.isArray(ads) || ads.length === 0) return;
+    try {
+      const { getService } = require('../services/history/priceHistoryService');
+      const histService = getService();
+      const ingestResult = histService.ingest(ads, {
+        sourceJob: jobId,
+        observedAt: new Date().toISOString(),
+      });
+      if (ingestResult.ok) {
+        const s = ingestResult.summary;
+        sendLog({ level: 'info', message: `[historique] ${s.processed} annonce(s) ingérée(s) — ${s.linked} associée(s), ${s.pending} incertaine(s), ${s.rejected} exclue(s), ${s.pricesExcluded} prix écarté(s).` });
+        if (s.errors > 0) sendLog({ level: 'warn', message: `[historique] ${s.errors} annonce(s) non traitée(s) par le moteur (isolées, sans impact sur le job).` });
+      } else {
+        sendLog({ level: 'warn', message: `[historique] ingestion ignorée : ${ingestResult.error}` });
+      }
+    } catch (histErr) {
+      // Isolation stricte : l'historique est un enrichissement optionnel.
+      sendLog({ level: 'warn', message: `[historique] moteur indisponible (${histErr.message}) — le scraping reste valide.` });
+    }
+  }
+
   // ─── Suivi de session pour le résumé de fin de scraping ────────────────────
   // Les compteurs sont incrémentés au fil du job (via l'écoute des logs du
   // pipeline). À la fin, un résumé formaté est envoyé.
   function newSessionStats() {
     return {
       t0: 0, pagesRequested: 0, pagesScraped: 0,
+      // Compteurs SÉPARÉS (ne pas les confondre) :
+      //   rawAds               : objets annonce bruts détectés dans le HAR
+      //   adsFound             : annonces uniques extraites (après dédup)
+      //   adsKept              : annonces réellement écrites dans annonces.json
+      //   descriptionsExtracted: descriptions récupérées via l'enrichissement
+      //   descriptionsFailed   : enrichissements échoués (cible sans description)
+      rawAds: 0,
       adsFound: 0, adsKept: 0, adsDuplicates: 0,
-      descriptionsExtracted: 0, descriptionsBlocked: 0,
+      descriptionsExtracted: 0, descriptionsFailed: 0, descriptionsBlocked: 0,
+      adsIgnored: 0, adsIgnoredReason: null,
       errors: 0, warnings: 0, debugs: 0,
       stoppedEarly: false,
       // Blocage d'accès détecté pendant l'enrichissement (403/429) : permet de
       // rapporter un « succès partiel » honnête plutôt qu'un succès complet.
       accessBlocked: false, accessCode: null,
+      // Refus d'accès CloudFront (page « Request blocked ») ou accès non
+      // vérifiable au pré-check : état explicite « accès non vérifié ».
+      accessUnverified: false,
     };
   }
   let sessionStats = newSessionStats();
@@ -116,15 +165,22 @@ function setupIpcHandlers(getMainWindow) {
       `  ⏱  Durée totale        : ${formatDuration(dur)}`,
       `  📄 Pages demandées      : ${sessionStats.pagesRequested}`,
       `  📄 Pages scrapées      : ${sessionStats.pagesScraped}`,
-      `  🔍 Annonces extraites   : ${sessionStats.adsFound} (uniques)`,
-      `  ✅ Annonces conservées  : ${sessionStats.adsKept}`,
+      `  🔍 Annonces brutes      : ${sessionStats.rawAds}`,
+      `  🧹 Annonces uniques      : ${sessionStats.adsFound} (après déduplication)`,
+      `  ✅ Annonces enregistrées : ${sessionStats.adsKept}`,
       `  🔄 Doublons fusionnés   : ${sessionStats.adsDuplicates}`,
-      `  📝 Descriptions extraites: ${sessionStats.descriptionsExtracted}`,
+      `  📝 Descriptions récupérées: ${sessionStats.descriptionsExtracted}`,
+      `  ⚠️  Enrichissements échoués: ${sessionStats.descriptionsFailed}`,
       `  🛑 Blocages d'accès     : ${sessionStats.descriptionsBlocked} (HTTP 403/429)`,
+      `  🚫 Annonces ignorées     : ${sessionStats.adsIgnored}${sessionStats.adsIgnoredReason ? ` (${sessionStats.adsIgnoredReason})` : ''}`,
       `  ❌ Erreurs              : ${sessionStats.errors}`,
       `  ⚠️  Avertissements      : ${sessionStats.warnings}`,
       `  🐛 Logs debug           : ${sessionStats.debugs}`,
-      sessionStats.stoppedEarly ? '  ⚠️  Terminé en avance (interruption IP/CAPTCHA)' : '  ✅ Terminé normalement',
+      sessionStats.accessUnverified
+        ? '  ⛔ Accès NON vérifié (refus CloudFront/anti-bot) — scraping interrompu proprement'
+        : sessionStats.stoppedEarly
+          ? '  ⚠️  Terminé en avance (interruption IP/CAPTCHA)'
+          : '  ✅ Terminé normalement',
       '═══════════════════════════════════════════════════════════',
     ];
     for (const line of lines) {
@@ -278,6 +334,31 @@ function setupIpcHandlers(getMainWindow) {
         // Compat : ancien format « N annonce(s) unique(s) ».
         const adsMatch = msg.match(/(\d+)\s+annonce\(s\)\s+(?:unique|extrait)/i);
         if (adsMatch) sessionStats.adsFound = Math.max(sessionStats.adsFound, parseInt(adsMatch[1], 10));
+        // Annonces BRUTES détectées dans le HAR (avant déduplication) :
+        //   « N objet(s) annonce brut(s) trouvé(s) dans … »
+        const rawMatch = msg.match(/(\d+)\s+objet\(s\)\s+annonce\s+brut/i);
+        if (rawMatch) sessionStats.rawAds = Math.max(sessionStats.rawAds, parseInt(rawMatch[1], 10));
+        // Annonces IGNORÉES après normalisation (sans ID ni titre) :
+        //   « N objet(s) sans ID ni titre supprimé(s) après normalisation »
+        const ignoredMatch = msg.match(/(\d+)\s+objet\(s\)\s+sans\s+ID\s+ni\s+titre/i);
+        if (ignoredMatch) {
+          sessionStats.adsIgnored = Math.max(sessionStats.adsIgnored, parseInt(ignoredMatch[1], 10));
+          sessionStats.adsIgnoredReason = 'sans ID ni titre';
+        }
+        // Enrichissements ÉCHOUÉS (cible sans description trouvée) :
+        //   « ⚠️ [x/y] Description non trouvée sur … »
+        if (/Description non trouvée sur/.test(msg)) sessionStats.descriptionsFailed++;
+        // Page de refus CloudFront détectée (blocage d'accès, pas un ad_error).
+        if (/\[HTTP_ACCESS_REFUSED\].*cloudfront/i.test(msg) || /page de refus cloudfront/i.test(msg)) {
+          sessionStats.accessBlocked = true;
+          sessionStats.accessCode = 'HTTP_ACCESS_REFUSED';
+        }
+        // Accès non vérifié au pré-check (refus CloudFront sans CAPTCHA).
+        if (/\[ACCESS_UNVERIFIED\]/.test(msg)) {
+          sessionStats.accessUnverified = true;
+          sessionStats.accessBlocked = true;
+          sessionStats.accessCode = 'ACCESS_UNVERIFIED';
+        }
         // Compter les doublons fusionnés. Deux formats possibles :
         //   « N doublon(s) fusionné(s) » (pipeline)  |  « N doublon » (générique)
         const dupMatch = msg.match(/(\d+)\s+doublon/i);
@@ -364,24 +445,7 @@ function setupIpcHandlers(getMainWindow) {
       // historique sans import manuel. Une erreur du moteur historique NE DOIT
       // PAS faire échouer la collecte : on capture et on journalise.
       if (adsToIngest && adsToIngest.length > 0) {
-        try {
-          const { getService } = require('../services/history/priceHistoryService');
-          const histService = getService();
-          const ingestResult = histService.ingest(adsToIngest, {
-            sourceJob: currentJobId,
-            observedAt: new Date().toISOString(),
-          });
-          if (ingestResult.ok) {
-            const s = ingestResult.summary;
-            sendLog({ level: 'info', message: `[historique] ${s.processed} annonce(s) ingérée(s) — ${s.linked} associée(s), ${s.pending} incertaine(s), ${s.rejected} exclue(s), ${s.pricesExcluded} prix écarté(s).` });
-            if (s.errors > 0) sendLog({ level: 'warn', message: `[historique] ${s.errors} annonce(s) non traitée(s) par le moteur (isolées, sans impact sur le job).` });
-          } else {
-            sendLog({ level: 'warn', message: `[historique] ingestion ignorée : ${ingestResult.error}` });
-          }
-        } catch (histErr) {
-          // Isolation stricte : l'historique est un enrichissement optionnel.
-          sendLog({ level: 'warn', message: `[historique] moteur indisponible (${histErr.message}) — le scraping reste valide.` });
-        }
+        ingestHistory(adsToIngest, currentJobId);
       }
 
       const latestJob = JobHistoryManager.getLatestJob();
@@ -422,6 +486,29 @@ function setupIpcHandlers(getMainWindow) {
         sendLog({ level: 'warn', message: `⏹️ ${err.message}` });
         sendSessionSummary();
         sendStatus({ state: 'cancelled', message: 'Scraping annulé par l\'utilisateur.' });
+      } else if (err && (err.accessUnverified || err.code === 'ACCESS_UNVERIFIED')) {
+        // Accès NON vérifié : refus CloudFront/anti-bot au pré-check (aucun défi
+        // humain résoluble). On affiche un état EXPLICITE — jamais un « succès ».
+        // Si des annonces avaient déjà été extraites (blocage en cours de capture
+        // après quelques pages), on les CONSERVE et on le dit.
+        sessionStats.accessUnverified = true;
+        sessionStats.accessBlocked = true;
+        sessionStats.errors++;
+        sendLog({ level: 'error', message: `⛔ Accès non vérifié : ${err.message}` });
+        sendLog({ level: 'debug', message: `[job:start] Détail accès non vérifié : ${describeError(err)}` });
+        const unverifiedAds = readValidAds(resultsDir);
+        const unverifiedPartial = unverifiedAds ? unverifiedAds.length : null;
+        if (unverifiedPartial != null) {
+          sessionStats.adsKept = unverifiedPartial;
+          ingestHistory(unverifiedAds, currentJobId);
+        }
+        sendSessionSummary();
+        sendStatus({
+          state: 'access_unverified',
+          message: unverifiedPartial != null
+            ? `Accès non vérifié (CloudFront/anti-bot) : ${unverifiedPartial} annonce(s) déjà extraite(s) conservée(s), collecte interrompue. Réessayez plus tard ou depuis un autre réseau.`
+            : `Accès non vérifié : le site (CloudFront/anti-bot) a refusé la session. Aucune donnée extraite. Réessayez plus tard ou depuis un autre réseau.`,
+        });
       } else {
         sendLog({ level: 'error', message: `❌ Erreur : ${err.message}` });
         sendLog({ level: 'debug', message: `[job:start] Détail erreur fatale : ${describeError(err)}` });
@@ -430,15 +517,14 @@ function setupIpcHandlers(getMainWindow) {
         // d'enrichissement. Si l'échec survient après (ex. enrichissement bloqué),
         // les annonces déjà extraites restent valides — on les signale au lieu de
         // les perdre derrière une erreur générique.
-        const partialJson = path.join(resultsDir, 'annonces.json');
-        let partialAds = null;
-        if (fs.existsSync(partialJson)) {
-          const r = readWithChecksum(partialJson);
-          if (r.valid && Array.isArray(r.data) && r.data.length > 0) partialAds = r.data.length;
-        }
+        const partialAdsList = readValidAds(resultsDir);
+        const partialAds = partialAdsList ? partialAdsList.length : null;
         sendSessionSummary();
         if (partialAds != null) {
           sessionStats.adsKept = partialAds;
+          // Les annonces déjà collectées alimentent l'historique même si
+          // l'enrichissement a échoué (résultat partiel honnête).
+          ingestHistory(partialAdsList, currentJobId);
           sendLog({ level: 'warn', message: `[job:start] ${partialAds} annonce(s) déjà extraite(s) conservée(s) malgré l'échec de l'enrichissement.` });
           sendStatus({ state: 'partial', message: `Succès partiel : ${partialAds} annonce(s) extraite(s) et conservée(s). ${err.message}`, latestJob: JobHistoryManager.getLatestJob() });
         } else {

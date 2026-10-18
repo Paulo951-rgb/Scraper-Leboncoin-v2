@@ -208,12 +208,14 @@
     window.widgetApi.onStatus((data) => {
       const st = data.state || 'idle';
       // Le widget mappe chaque état sur une classe visuelle EXISTANTE. Les états
-      // non listés (capturing, processing, cancelled, refused, rate_limited)
-      // retombaient sur 'status-' + st → classes CSS inexistantes (status-capturing…)
-      // → le point de statut perdait toute couleur. On mappe désormais TOUS les
-      // états connus explicitement, avec 'status-idle' en repli sûr.
+      // non listés (capturing, processing, cancelled, refused, rate_limited,
+      // access_unverified) retombaient sur 'status-' + st → classes CSS
+      // inexistantes (status-capturing…) → le point de statut perdait toute
+      // couleur. On mappe désormais TOUS les états connus explicitement, avec
+      // 'status-idle' en repli sûr.
+      const isError = st === 'error' || st === 'refused' || st === 'rate_limited' || st === 'access_unverified';
       const dotClass = (st === 'completed' || st === 'partial') ? 'status-completed'
-        : (st === 'error' || st === 'refused' || st === 'rate_limited') ? 'status-error'
+        : isError ? 'status-error'
         : (st === 'capturing' || st === 'processing') ? 'status-running'
         : 'status-idle';
       statusDot.className = 'widget-status-dot ' + dotClass;
@@ -223,7 +225,7 @@
       if (st === 'completed' || st === 'partial') {
         percentText.textContent = st === 'partial' ? '~' : '✓';
         progressFill.style.width = '100%';
-      } else if (st === 'error' || st === 'refused' || st === 'rate_limited') {
+      } else if (isError) {
         percentText.textContent = '!';
         progressFill.style.width = '0%';
       }

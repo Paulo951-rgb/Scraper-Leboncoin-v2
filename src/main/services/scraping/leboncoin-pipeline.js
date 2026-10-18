@@ -16,6 +16,12 @@ const path = require('path');
 const { sleep, atomicWriteFileSync, cleanText } = require('../../utils/helpers');
 const { summarizeAds, summarizeHarEntries, truncate, formatBytes, formatMs, describeError } = require('../../utils/diagnostics');
 const { getRandomUserAgent } = require('./userAgents');
+const {
+  createStealthProfile,
+  applyStealthToContext,
+  clientHeadersFor,
+  detectCloudFrontBlock,
+} = require('./stealthProfile');
 const { writeWithChecksum } = require('../../utils/integrity');
 const { AdaptiveRateLimiter } = require('../../utils/rateLimiter');
 const adFields = require('./adFields');
@@ -618,6 +624,9 @@ class DescriptionEnricher {
     // peut être fourni par HarCapturer (opts.userAgent) pour garantir la cohérence
     // d'empreinte avec la phase de capture (mêmes cookies + même UA → 403 évité).
     this._userAgent = opts.userAgent || getRandomUserAgent();
+    // Empreinte client cohérente (UA ↔ Sec-CH-UA ↔ JS) partagée par tous les
+    // contextes d'enrichissement ET utilisée pour les fetch de page de détail.
+    this._profile = createStealthProfile(this._userAgent);
     // Annulation coopérative : le PipelineRunner envoie SIGINT au sous-processus.
     // Sans ce drapeau, Node quittait immédiatement (pas de handler SIGINT) →
     // les checkpoints d'enrichissement n'étaient pas rejoués. On intercepte le
@@ -656,7 +665,11 @@ class DescriptionEnricher {
 
     const sequential = this.opts.sequential === true;
     const fetchTimeoutMs = this.opts.fetchTimeoutMs || 15000;
-    return await page.evaluate(async ({ items, seq, timeoutMs }) => {
+    // En-têtes client crédibles (Accept, Accept-Language, Sec-CH-UA, Sec-Fetch-*,
+    // Referer). Un fetch « nu » (sans ces en-têtes) est un signal de robot que
+    // CloudFront/anti-bot exploite ; on reproduit la requête d'un vrai clic.
+    const headers = clientHeadersFor(this._profile);
+    return await page.evaluate(async ({ items, seq, timeoutMs, headers }) => {
       const results = {};
       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -684,9 +697,7 @@ class DescriptionEnricher {
               results[item.id] = { error: 'BLOCKED_URL' };
               continue;
             }
-            const res = await fetchWithTimeout(item.url, {
-              headers: { 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' },
-            }, timeoutMs);
+            const res = await fetchWithTimeout(item.url, { headers }, timeoutMs);
             if (!res.ok) {
               if (res.status === 403) {
                 results[item.id] = { error: 'BLOCKED_403', status: 403 };
@@ -720,9 +731,7 @@ class DescriptionEnricher {
               results[item.id] = { error: 'BLOCKED_URL' };
               return;
             }
-            const res = await fetchWithTimeout(item.url, {
-              headers: { 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' },
-            }, timeoutMs);
+            const res = await fetchWithTimeout(item.url, { headers }, timeoutMs);
             if (!res.ok) {
               if (res.status === 403) {
                 results[item.id] = { error: 'BLOCKED_403', status: 403 };
@@ -742,7 +751,7 @@ class DescriptionEnricher {
         await Promise.all(promises);
       }
       return results;
-    }, { items: safeItems, seq: sequential, timeoutMs: fetchTimeoutMs });
+    }, { items: safeItems, seq: sequential, timeoutMs: fetchTimeoutMs, headers });
   }
 
   parseHtmlDescription(html, adId) {
@@ -793,8 +802,9 @@ class DescriptionEnricher {
     const createStealthContext = async () => {
       const contextOptions = {
         userAgent: this._userAgent,
-        locale: 'fr-FR',
-        viewport: { width: 1366, height: 850 },
+        locale: this._profile.locale,
+        timezoneId: this._profile.timezoneId,
+        viewport: { ...this._profile.viewport },
       };
 
       const sessionToUse = fs.existsSync(globalStatePath) ? globalStatePath : (fs.existsSync(statePath) ? statePath : null);
@@ -806,8 +816,17 @@ class DescriptionEnricher {
       }
 
       const ctx = await browser.newContext(contextOptions);
+
+      // Empreinte client cohérente : en-têtes Sec-CH-UA/Accept-Language + script
+      // d'init anti-détection. Appliquée AVANT la création de la page pour que le
+      // script d'init couvre la toute première navigation. Sans cela, le contexte
+      // d'enrichissement se présentait comme un robot (webdriver, plugins vides,
+      // pas de client hints) et se faisait bloquer (403 CloudFront) après
+      // quelques dizaines de pages.
+      await applyStealthToContext(ctx, this._profile);
+
       const p = await ctx.newPage();
-      
+
       await p.route('**/*', (route) => {
         if (['image', 'media', 'font', 'stylesheet'].includes(route.request().resourceType())) {
           return route.abort();
@@ -887,6 +906,24 @@ class DescriptionEnricher {
         const res = results[ad.id];
 
         if (res && res.html) {
+          // Page de refus CloudFront servie en HTTP 200 : ce n'est PAS une page de
+          // détail valide. On la classe comme un blocage d'accès (compté + circuit)
+          // au lieu de la traiter comme une description introuvable.
+          const cfBlock = detectCloudFrontBlock(res.html);
+          if (cfBlock.blocked) {
+            blockedCount++;
+            this.journal.recordBlock(ad.url, 403);
+            const cfErr = createError(ErrorCodes.HTTP_ACCESS_REFUSED,
+              `Page de refus ${cfBlock.provider} (marqueur « ${cfBlock.marker} ») sur ${ad.id}`,
+              { adId: ad.id, url: ad.url, provider: cfBlock.provider, marker: cfBlock.marker });
+            this.logger.warn(`🛑 [${done}/${targets.length}] [${cfErr.code}] ${cfErr.message}`);
+            const mustStop = this.circuit.recordBlock(403, ErrorCodes.HTTP_403);
+            if (mustStop) {
+              this.logger.warn('\n🛑 Blocage détecté. Arrêt préventif.');
+              break;
+            }
+            continue;
+          }
           const parsed = this.parseHtmlDescription(res.html, ad.id);
           // Enrichissement des champs extraits de la page de détail, sans jamais
           // écraser une valeur déjà renseignée (voir applyDetailFields).
