@@ -181,6 +181,18 @@ Causes DÉMONTRABLES dans le code corrigées :
 5. **Page CloudFront servie en HTTP 200** : `detectCloudFrontBlock(html)` classe
    cette page comme refus d'accès (pré-check, page de recherche vide, page de
    détail en enrichissement) au lieu de la traiter comme un résultat valide.
+6. **`--enable-automation` (fuite au niveau MOTEUR)** : Playwright ajoute ce
+   commutateur par défaut → le MOTEUR force `navigator.webdriver === true` AVANT
+   tout script de page (mesuré sur le Chromium embarqué : `true` par défaut,
+   `false` après retrait). Le masquage JS seul ne suffit pas ; l'ancienne valeur
+   `undefined` était elle-même incohérente (`'webdriver' in navigator` reste vrai
+   et un vrai Chrome renvoie `false`). `launchOptionsFor(headless, proxy)`
+   centralise : `ignoreDefaultArgs: ['--enable-automation']` + args
+   anti-détection (`--disable-blink-features=AutomationControlled`,
+   `--no-first-run`, `--no-default-browser-check`, `--disable-infobars`). Il est
+   utilisé par la capture (`harCapturer._launchOptions`) ET l'enrichissement
+   (`chromium.launch` du pipeline) — aucun lancement « nu » ne subsiste. Le script
+   d'init renvoie désormais `webdriver = false` (comme un vrai Chrome).
 
 `Accept` n'est PAS imposé globalement au contexte (uniquement sur les fetch de
 détail) : l'imposer ferait renvoyer du HTML aux appels XHR/API JSON de la page de
@@ -196,11 +208,15 @@ capture et enrichissement. `locale: 'fr-FR'` + `timezoneId: 'Europe/Paris'`
 
 **Preuve d'efficacité** (pas seulement la théorie) : `test/regression.test.js`
 section `[58]` exécute `stealthInitScript` DANS un realm jsdom réel et vérifie
-que `navigator.webdriver === undefined`, `languages = fr-FR`, `platform` aligné
-sur l'UA et `userAgentData.brands` cohérent avec `Sec-CH-UA`. Une vérification
-manuelle (Chromium embarqué + serveur local) confirme la même empreinte et les
-en-têtes réellement émis sur le fetch de détail (`sec-ch-ua`, `sec-fetch-*`,
-`referer`, UA réel) sans jamais contacter Le Bon Coin.
+que `navigator.webdriver === false` (comme un vrai Chrome), `languages = fr-FR`,
+`platform` aligné sur l'UA et `userAgentData.brands` cohérent avec `Sec-CH-UA`.
+La section `[61]` verrouille le durcissement du lancement (`launchOptionsFor`) et,
+avec `VENDRA_REAL_BROWSER_TEST=1`, lance le Chromium embarqué et mesure la valeur
+EFFECTIVE `navigator.webdriver === false` (contrôle : `true` si
+`--enable-automation` est conservé). Une vérification manuelle (Chromium embarqué
++ serveur local) confirme la même empreinte et les en-têtes réellement émis sur le
+fetch de détail (`sec-ch-ua`, `sec-fetch-*`, `referer`, UA réel) sans jamais
+contacter Le Bon Coin.
 
 Ce que cela NE fait PAS (limites honnêtes) : aucun solveur de CAPTCHA, aucun
 proxy. Si le blocage persiste malgré l'empreinte cohérente, l'app s'arrête
@@ -523,8 +539,19 @@ historique de prix par produit. **Aucune IA** : tout est déterministe.
   page « Accès temporairement restreint » servie en HTTP 200, sonde qui lit le
   corps, non-persistance de la session restreinte, arrêt propre, 4 états
   distingués : résolu/rétabli, résolu/restreint, CAPTCHA encore présent,
-  indéterminé ; état `access_restricted` terminal côté main + renderer + widget).
+  indéterminé ; état `access_restricted` terminal côté main + renderer + widget),
+  `[60]` **SESSION RESTREINTE NON RÉUTILISÉE** (marqueur `session-restricted.flag`,
+  `isSessionRestricted`/`resolveSessionPath`, comptage STRICT des cartes
+  `AD_CARD_TEST_IDS` — plus de `[data-test-id*="ad"]` qui comptait `header`/`badge`,
+  handler IPC `session:reset`, diagnostic d'accès masqué sans secret),
+  `[61]` **DURCISSEMENT DU LANCEMENT CHROMIUM** (`launchOptionsFor` partagé :
+  `ignoreDefaultArgs:['--enable-automation']` + args anti-détection ;
+  `navigator.webdriver === false` côté moteur, mesuré sur le Chromium embarqué
+  si `VENDRA_REAL_BROWSER_TEST=1`).
 - Le test stub `electron` : BrowserWindow a `webContents.send` mais PAS `isDestroyed`.
+- Test navigateur réel (opt-in) : `VENDRA_REAL_BROWSER_TEST=1 node test/regression.test.js`
+  lance le Chromium embarqué et vérifie la valeur EFFECTIVE de `navigator.webdriver`
+  (section `[61]`). Désactivé par défaut pour garder la CI rapide/déterministe.
 - Avant tout commit : `node --check` sur les fichiers modifiés + lancer la suite.
 
 ## Intégration continue (GitHub Actions)
@@ -772,6 +799,30 @@ Sans Wine, `-c.win.signAndEditExecutable=false` permet de produire `dist/win-unp
 - **Boucle de fenêtres CAPTCHA** : la capture ne relance la reprise QUE si
   `_warmupSession` renvoie `verified === true`. Sinon elle `break` (arrêt) — ne
   jamais ré-ouvrir une fenêtre en boucle pour chaque page bloquée.
+- **Session restreinte RÉUTILISÉE = boucle de restriction** : une fois qu'un job
+  a conclu à une restriction (`access_restricted`), la session globale
+  (`global-session.json`, cookies anti-bot) NE DOIT PAS être réutilisée : elle
+  contient les cookies du client que le site a classé comme suspect → la
+  restriction se re-déclenche au job suivant. `harCapturer` pose un marqueur
+  (`RESTRICTED_SESSION_FLAG_PATH`) ; `sessionPaths.resolveSessionPath` et le
+  pipeline l'honorent (`isSessionRestricted` → contexte VIERGE). Le marqueur est
+  retiré dès qu'un accès est confirmé (`_clearSessionRestricted`). Recours
+  utilisateur : IPC `session:reset` (bouton « Réinitialiser la session ») qui
+  supprime session + marqueur — chemins reconstruits côté main, jamais fournis
+  par le renderer. Test `[60]`.
+- **Comptage des cartes d'annonces STRICT** : `countAdCards`/`looksLikeResultsPage`
+  ne doivent PAS matcher `[data-test-id*="ad"]` (sous-chaîne) — cela comptait
+  `header`, `badge`, `advertisement`… et faisait passer une page de refus pour une
+  page de résultats (faux négatif). Utiliser les identifiants EXACTS
+  (`AD_CARD_TEST_IDS`) + les liens de détail `/ad/`. Test `[60]`.
+- **`--enable-automation` = `navigator.webdriver === true` au niveau MOTEUR** :
+  Playwright l'ajoute par défaut ; le masquage JS ne suffit pas (et l'ancienne
+  valeur `undefined` était elle-même incohérente — un vrai Chrome renvoie
+  `false`). `stealthProfile.launchOptionsFor` retire ce commutateur
+  (`ignoreDefaultArgs`) et ajoute les args anti-détection ; il est utilisé par la
+  capture ET l'enrichissement (aucun `chromium.launch` « nu »). Preuve réelle :
+  `VENDRA_REAL_BROWSER_TEST=1` (section `[61]`) mesure `webdriver === false` sur
+  le Chromium embarqué.
 - **Succès partiel vs succès** : si l'enrichissement est bloqué (403/429) ou si
   des pages sont perdues, `ipcHandlers` DOIT émettre `state: 'partial'` (jamais
   `completed`) et préserver `annonces.json`. Exit codes pipeline `3` (403) / `4`

@@ -197,6 +197,25 @@ setProfile(loadExportConfig().mode);
 // Presets
 const presetsRow = document.getElementById('presetsRow');
 const savePresetBtn = document.getElementById('savePresetBtn');
+const resetSessionBtn = document.getElementById('resetSessionBtn');
+
+// Réinitialise la session de scraping (cookies + marqueur de restriction).
+// Recours explicite quand le site refuse l'accès de façon persistante : la
+// prochaine collecte repart d'un contexte vierge. Le renderer ne fournit aucun
+// chemin — le main supprime les fichiers qu'il connaît (anti path-traversal).
+if (resetSessionBtn) {
+  resetSessionBtn.addEventListener('click', async () => {
+    try {
+      const res = await window.api.resetSession();
+      const removed = res && Array.isArray(res.removed) ? res.removed : [];
+      showToast(removed.length
+        ? `Session réinitialisée (${removed.join(', ')}). Relancez le scraping.`
+        : 'Aucune session à réinitialiser — relancez le scraping.', 'info');
+    } catch (e) {
+      showToast(`Réinitialisation impossible : ${e.message}`, 'error');
+    }
+  });
+}
 
 function renderPresets() {
   if (presets.length === 0) {

@@ -22,6 +22,7 @@ const {
   clientHeadersFor,
   detectCloudFrontBlock,
   detectRestrictionPage,
+  launchOptionsFor,
 } = require('./stealthProfile');
 const { writeWithChecksum } = require('../../utils/integrity');
 const { AdaptiveRateLimiter } = require('../../utils/rateLimiter');
@@ -32,7 +33,7 @@ const { DEFAULT_PROFILE_FIELDS } = require('../exporting/dataProfiles');
 const { PIPELINE_DEFAULTS, getScrapingPolicy, clampConcurrency, BLOCK_THRESHOLD } = require('../../config/scraping');
 const { CircuitBreaker } = require('./circuitBreaker');
 const { NetworkJournal } = require('./networkJournal');
-const { getJobSessionPathFromResults, getGlobalSessionPath } = require('./sessionPaths');
+const { getJobSessionPathFromResults, getGlobalSessionPath, isSessionRestricted } = require('./sessionPaths');
 const { isSafeFetchDestination } = require('../../utils/urlSecurity');
 
 // Valeurs par défaut du pipeline, centralisées dans config/scraping.js.
@@ -785,10 +786,11 @@ class DescriptionEnricher {
     const { chromium } = require('playwright');
     this.logger.debug(`[DescriptionEnricher] Lancement Chromium (headless=${this.opts.headless})...`);
     const t0Launch = Date.now();
-    // `channel: 'chromium'` → utilise le Chromium complet embarqué (et non le
-    // « headless shell » séparé, non présent dans l'installeur depuis
-    // Playwright 1.49+). Cf. harCapturer._launchOptions.
-    const browser = await chromium.launch({ headless: this.opts.headless, channel: 'chromium' });
+    // Options durcies partagées (cf. stealthProfile.launchOptionsFor) :
+    // `channel: 'chromium'` (Chromium complet embarqué) + `ignoreDefaultArgs`
+    // retire `--enable-automation` (navigator.webdriver forcé côté moteur) +
+    // args anti-détection. Même empreinte de lancement que la capture HAR.
+    const browser = await chromium.launch(launchOptionsFor(this.opts.headless, null));
     this.logger.debug(`[DescriptionEnricher] Chromium lancé en ${formatMs(Date.now() - t0Launch)}.`);
 
     // Résolution de session centralisée (sessionPaths.js) : la session globale
@@ -808,12 +810,15 @@ class DescriptionEnricher {
         viewport: { ...this._profile.viewport },
       };
 
-      const sessionToUse = fs.existsSync(globalStatePath) ? globalStatePath : (fs.existsSync(statePath) ? statePath : null);
+      const sessionToUse = (fs.existsSync(globalStatePath) && !isSessionRestricted(baseOutDir)) ? globalStatePath : (fs.existsSync(statePath) ? statePath : null);
       if (sessionToUse) {
         contextOptions.storageState = sessionToUse;
         this.logger.debug(`[DescriptionEnricher] Session utilisée : ${sessionToUse}`);
       } else {
-        this.logger.debug(`[DescriptionEnricher] Aucune session trouvée (ni ${path.basename(globalStatePath)}, ni ${path.basename(statePath)}) — contexte vierge.`);
+        if (fs.existsSync(globalStatePath) && isSessionRestricted(baseOutDir)) {
+          this.logger.warn('[DescriptionEnricher] Session globale marquée RESTREINTE — non réutilisée (contexte vierge).');
+        }
+        this.logger.debug(`[DescriptionEnricher] Aucune session exploitable (ni ${path.basename(globalStatePath)}, ni ${path.basename(statePath)}) — contexte vierge.`);
       }
 
       const ctx = await browser.newContext(contextOptions);

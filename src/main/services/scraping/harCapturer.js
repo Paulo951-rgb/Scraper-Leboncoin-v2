@@ -6,6 +6,7 @@ const { EventEmitter } = require('events');
 const { chromium } = require('playwright');
 const { sleep } = require('../../utils/helpers');
 const { GLOBAL_SESSION_PATH } = require('../../config/constants');
+const { RESTRICTED_SESSION_FLAG_PATH } = require('../../config/constants');
 const { formatBytes, formatMs, describeError } = require('../../utils/diagnostics');
 
 const { getRandomUserAgent } = require('./userAgents');
@@ -21,6 +22,9 @@ const {
   detectCloudFrontBlock,
   detectRestrictionPage,
   looksLikeResultsPage,
+  countAdCards,
+  ACCESS_BLOCK_MARKERS,
+  launchOptionsFor,
 } = require('./stealthProfile');
 
 // Domaines autorisés comme source de scraping. L'URL de recherche saisie par
@@ -36,6 +40,26 @@ function buildPageUrl(baseUrl, pageNumber) {
     return urlObj.toString();
   } catch (err) {
     throw new Error(`URL invalide : "${baseUrl}" (${err.message})`);
+  }
+}
+
+/**
+ * Masque les paramètres sensibles d'une URL pour la journalisation. On garde
+ * origine + chemin (utile au diagnostic) mais on remplace la valeur des
+ * paramètres de requête par `<masqué>` : une URL de recherche peut contenir des
+ * termes personnels, jamais des secrets de session (ceux-ci vivent dans les
+ * cookies, qu'on ne journalise JAMAIS).
+ * @param {string} rawUrl
+ * @returns {string}
+ */
+function sanitizeUrlForLog(rawUrl) {
+  try {
+    const u = new URL(String(rawUrl));
+    const keys = Array.from(u.searchParams.keys());
+    for (const k of keys) u.searchParams.set(k, '<masqué>');
+    return u.toString();
+  } catch {
+    return '(URL illisible)';
   }
 }
 
@@ -79,15 +103,14 @@ class HarCapturer extends EventEmitter {
   }
 
   _launchOptions(headless) {
-    // `channel: 'chromium'` force l'utilisation du build Chromium complet
-    // embarqué (chrome-<platform>) au lieu du « headless shell » séparé. Depuis
-    // Playwright 1.49+, les deux sont distribués séparément et seul le Chromium
-    // complet est embarqué par electron-builder (extraResources → browsers/) :
-    // sans ce canal, `chromium.launch()` chercherait un headless-shell absent de
-    // l'installeur (« Executable doesn't exist »).
-    const opts = { headless, channel: 'chromium' };
-    if (this.proxyUrl) opts.proxy = { server: this.proxyUrl };
-    return opts;
+    // Options durcies partagées (cf. stealthProfile.launchOptionsFor) :
+    //  - `channel: 'chromium'` force le build Chromium complet embarqué
+    //    (chrome-<platform>) au lieu du « headless shell » séparé (non embarqué
+    //    par electron-builder → « Executable doesn't exist » sinon) ;
+    //  - `ignoreDefaultArgs: ['--enable-automation']` retire le commutateur qui
+    //    force `navigator.webdriver` côté moteur ;
+    //  - args anti-détection (AutomationControlled désactivé, etc.).
+    return launchOptionsFor(headless, this.proxyUrl);
   }
 
   _baseContextOptions(extras = {}) {
@@ -142,6 +165,76 @@ class HarCapturer extends EventEmitter {
       return route.abort();
     });
   }
+  /**
+   * Diagnostic d'accès structuré et SANS SECRET. Journalise uniquement ce qui
+   * permet de comprendre une décision d'accès : URL masquée, statut HTTP,
+   * classification, présence/absence de marqueurs, décision de persistance et
+   * raison d'arrêt. Ne journalise JAMAIS les cookies/jetons/session.
+   * @param {object} info
+   */
+  _logAccessDiag(info) {
+    const safe = {
+      where: info.where || 'warmup',
+      url: info.url ? sanitizeUrlForLog(info.url) : null,
+      status: info.status ?? null,
+      outcome: info.outcome ?? null,
+      restricted: !!info.restricted,
+      restrictedMarker: info.restrictedMarker || null,
+      cloudfront: !!info.cloudfront,
+      captcha: !!info.captcha,
+      resultsMarkers: !!info.hasResults,
+      adCards: typeof info.adCards === 'number' ? info.adCards : null,
+      decision: info.decision || null,
+      persist: info.persist === true,
+      stopReason: info.stopReason || null,
+    };
+    this.emit('log', { level: 'info', message: `[ACCESS_DIAG] ${JSON.stringify(safe)}` });
+  }
+
+  /**
+   * Marque la session globale comme RESTREINTE : tant que ce fichier existe, la
+   * session n'est PAS réutilisée (elle porterait des cookies anti-bot qui
+   * re-déclencheraient la restriction). Fichier simple, sans secret.
+   */
+  _markSessionRestricted(reason) {
+    try {
+      fs.mkdirSync(path.dirname(RESTRICTED_SESSION_FLAG_PATH), { recursive: true });
+      fs.writeFileSync(RESTRICTED_SESSION_FLAG_PATH, JSON.stringify({ at: new Date().toISOString(), reason: reason || 'access_restricted' }));
+      this.emit('log', { level: 'warn', message: `[warmup] Session marquée RESTREINTE (${RESTRICTED_SESSION_FLAG_PATH}) — elle ne sera pas réutilisée tant qu'un accès normal n'est pas confirmé.` });
+    } catch (e) {
+      this.emit('log', { level: 'warn', message: `[warmup] Impossible d'écrire le marqueur de session restreinte : ${e.message}` });
+    }
+  }
+
+  /** Retire le marqueur de session restreinte (accès normal confirmé). */
+  _clearSessionRestricted() {
+    try {
+      if (fs.existsSync(RESTRICTED_SESSION_FLAG_PATH)) {
+        fs.unlinkSync(RESTRICTED_SESSION_FLAG_PATH);
+        this.emit('log', { level: 'info', message: '[warmup] Accès normal confirmé — marqueur de session restreinte retiré.' });
+      }
+    } catch (e) {
+      this.emit('log', { level: 'warn', message: `[warmup] Impossible de retirer le marqueur de session restreinte : ${e.message}` });
+    }
+  }
+
+  /**
+   * Renvoie le chemin de session globale à RÉUTILISER, ou null. Si la session est
+   * marquée restreinte, on ne la réutilise PAS : Vendra repart d'un contexte
+   * vierge (nouveaux cookies, nouvelle résolution CAPTCHA si nécessaire) au lieu
+   * de traîner des cookies anti-bot empoisonnés.
+   * @returns {string|null}
+   */
+  _reusableSessionPath() {
+    if (!fs.existsSync(GLOBAL_SESSION_PATH)) return null;
+    if (fs.existsSync(RESTRICTED_SESSION_FLAG_PATH)) {
+      this.emit('log', { level: 'warn', message: '[warmup] Session globale ignorée : elle est marquée RESTREINTE (accès refusé la dernière fois). Reprise sur un contexte vierge.' });
+      return null;
+    }
+    return GLOBAL_SESSION_PATH;
+  }
+
+
 
   // Détecte un CAPTCHA / blocage sur la page. Vérifie plusieurs vecteurs :
   // 1) texte de la page (BLOCK_MARKERS)
@@ -187,9 +280,13 @@ class HarCapturer extends EventEmitter {
 
         const cfChallenge = !!document.querySelector('#challenge-form, .cf-turnstile, #cf-challenge-running, .cf-challenge-form');
 
-        // Cartes d'annonces : une page qui en contient est une VRAIE page de
-        // résultats (elle ne peut pas être une page de restriction).
-        const adCards = document.querySelectorAll('a[href*="/ad/"], [data-test-id*="ad"], [data-role="ad-card"]').length;
+        // Cartes d'annonces : sélecteurs STRICTS. `[data-test-id*="ad"]` (sous-
+        // chaîne) comptait des éléments sans rapport (`header`, `badge`…) → une
+        // page de restriction était vue comme une page de résultats (faux négatif).
+        // On exige un lien de détail `/ad/` OU un `data-test-id` EXACT de carte.
+        const adCards = document.querySelectorAll(
+          'a[href*="/ad/"], [data-test-id="ad"], [data-test-id="adcard"], [data-test-id="ad-card"], [data-test-id="aditem"], [data-test-id="ad-item"], [data-test-id="listing"], [data-test-id="listing-card"]'
+        ).length;
 
         return { text, matched, hasCaptchaIframe: !!captchaIframe, cfChallenge, adCards };
       });
@@ -199,8 +296,11 @@ class HarCapturer extends EventEmitter {
       //    rien → on ne doit JAMAIS ouvrir une fenêtre CAPTCHA pour cette page.
       //    (Détectée AVANT le CAPTCHA car elle contient les mots « robot » et
       //    « vitesse surhumaine » qui, seuls, la feraient classer comme CAPTCHA.)
+      //    Le marqueur est AUTORITAIRE : on ne conditionne PAS la classification
+      //    au nombre de cartes détectées (un élément HTML parasite ne doit pas
+      //    pouvoir masquer une restriction explicitement affichée par le site).
       const restriction = detectRestrictionPage(result.text);
-      if (restriction.restricted && result.adCards === 0) {
+      if (restriction.restricted) {
         const reason = `page « Accès temporairement restreint » (marqueur « ${restriction.marker} »)`;
         const err = createError(ErrorCodes.ACCESS_RESTRICTED, `Blocage détecté — ${reason}`, { url: currentUrl, reason, marker: restriction.marker });
         this.emit('log', { level: 'debug', message: `[access] [${err.code}] ${reason}.` });
@@ -249,10 +349,20 @@ class HarCapturer extends EventEmitter {
    * l'accès est réellement rétabli — ne jamais se contenter de la disparition
    * visuelle d'un défi NI du seul code HTTP : Leboncoin sert sa page « Accès
    * temporairement restreint » en HTTP 200, donc un 200 peut cacher un refus.
+   *
+   * Renvoie un résultat STRUCTURÉ et explicite (`outcome`) :
+   *   - `results_ok`        : page de résultats normale confirmée (marqueurs réels) ;
+   *   - `captcha_required`  : défi de vérification réellement identifié ;
+   *   - `access_restricted` : restriction explicite du site (« Accès temporairement restreint ») ;
+   *   - `cloudfront_blocked`: refus CloudFront reconnu ;
+   *   - `network_error`     : échec réseau / navigation impossible ;
+   *   - `unknown_page`      : page reçue mais impossible à classifier avec certitude.
+   * RÈGLE IMPÉRATIVE : un HTTP 200 ne valide JAMAIS, à lui seul, l'accès. `ok`
+   * (rétro-compat) vaut `true` UNIQUEMENT pour `results_ok`.
    * Best-effort : ne jette jamais.
    * @param {import('playwright').BrowserContext} ctx
    * @param {string} url
-   * @returns {Promise<{status:number|null, ok:boolean, restricted:boolean, cloudfront:boolean, hasResults:boolean, marker:string|null}>}
+   * @returns {Promise<{status:number|null, ok:boolean, outcome:string, restricted:boolean, cloudfront:boolean, captcha:boolean, hasResults:boolean, adCards:number, marker:string|null}>}
    */
   async _probeAccessStatus(ctx, url) {
     try {
@@ -266,22 +376,37 @@ class HarCapturer extends EventEmitter {
       const status = resp.status();
       let body = '';
       try { body = await resp.text(); } catch { /* corps illisible → contenu inconnu */ }
-      const restricted = detectRestrictionPage(body).restricted;
-      const cloudfront = detectCloudFrontBlock(body).blocked;
-      // `ok` = accès réellement rétabli : HTTP < 400 ET pas de page de refus.
-      // Un HTTP 200 « Accès temporairement restreint » n'est PAS un accès OK.
-      const ok = status >= 200 && status < 400 && !restricted && !cloudfront;
+      const restriction = detectRestrictionPage(body);
+      const cf = detectCloudFrontBlock(body);
+      const adCards = countAdCards(body);
+      const hasResults = looksLikeResultsPage(body);
+      // CAPTCHA/défi réellement présent dans le corps (indépendant du contexte DOM).
+      const captcha = !restriction.restricted && !cf.blocked && ACCESS_BLOCK_MARKERS.some((m) => body.toLowerCase().includes(m));
+
+      let outcome;
+      if (restriction.restricted) outcome = 'access_restricted';
+      else if (cf.blocked) outcome = 'cloudfront_blocked';
+      else if (typeof status === 'number' && status >= 400) outcome = 'cloudfront_blocked';
+      else if (captcha) outcome = 'captcha_required';
+      else if (hasResults) outcome = 'results_ok';
+      else outcome = 'unknown_page';
+
       return {
         status,
-        ok,
-        restricted,
-        cloudfront,
-        hasResults: looksLikeResultsPage(body),
-        marker: restricted ? detectRestrictionPage(body).marker : (cloudfront ? detectCloudFrontBlock(body).marker : null),
+        // `ok` (rétro-compat) = accès réellement rétabli : page de résultats RÉELLE
+        // confirmée. Un HTTP 200 vide/indéterminé n'est PAS `ok`.
+        ok: outcome === 'results_ok',
+        outcome,
+        restricted: restriction.restricted,
+        cloudfront: cf.blocked,
+        captcha,
+        hasResults,
+        adCards,
+        marker: restriction.marker || cf.marker || null,
       };
     } catch (e) {
       this.emit('log', { level: 'debug', message: `[access] Sonde HTTP impossible : ${e.message}` });
-      return { status: null, ok: false, restricted: false, cloudfront: false, hasResults: false, marker: null };
+      return { status: null, ok: false, outcome: 'network_error', restricted: false, cloudfront: false, captcha: false, hasResults: false, adCards: 0, marker: null };
     }
   }
 
@@ -293,9 +418,12 @@ class HarCapturer extends EventEmitter {
     this.emit('log', { level: 'debug', message: `[warmup] URL de vérification : ${checkUrl} | session existante : ${fs.existsSync(GLOBAL_SESSION_PATH) ? 'OUI (' + formatBytes(fs.statSync(GLOBAL_SESSION_PATH).size) + ')' : 'NON'}` });
 
     const ctxOpts = this._baseContextOptions();
-    if (fs.existsSync(GLOBAL_SESSION_PATH)) {
-      ctxOpts.storageState = GLOBAL_SESSION_PATH;
+    const reusableSession = this._reusableSessionPath();
+    if (reusableSession) {
+      ctxOpts.storageState = reusableSession;
       this.emit('log', { level: 'info', message: '🔑 Chargement de la session globale (Master Session)...' });
+    } else if (fs.existsSync(GLOBAL_SESSION_PATH)) {
+      this.emit('log', { level: 'info', message: '🔑 Session globale présente mais ignorée (marquée restreinte) — contexte vierge.' });
     }
 
     const { ctx, p } = await this._newStealthContext(browser, ctxOpts);
@@ -345,23 +473,28 @@ class HarCapturer extends EventEmitter {
     // OBJECTIVE via une sonde HTTP réelle avant de dire « session validée ».
     if (!blocked && warmupStatus === null) {
       const probe = await this._probeAccessStatus(ctx, checkUrl);
-      this.emit('log', { level: 'debug', message: `[warmup] Statut de navigation inconnu — sonde objective : HTTP ${probe.status ?? '?'}.` });
-      if (probe.restricted) {
+      this.emit('log', { level: 'debug', message: `[warmup] Statut de navigation inconnu — sonde objective : HTTP ${probe.status ?? '?'} → ${probe.outcome}.` });
+      if (probe.outcome === 'access_restricted') {
         const restrictedErr = createError(
           ErrorCodes.ACCESS_RESTRICTED,
           `Accès restreint : page officielle « ${probe.marker} » (HTTP ${probe.status ?? '?'}) — aucun défi à résoudre.`,
           { url: checkUrl, status: probe.status, marker: probe.marker });
         this.emit('log', { level: 'warn', message: `⛔ [${restrictedErr.code}] ${restrictedErr.message}` });
+        this._markSessionRestricted('warmup_restricted');
+        this._logAccessDiag({ where: 'warmup', url: checkUrl, status: probe.status, outcome: probe.outcome, restricted: true, restrictedMarker: probe.marker, adCards: probe.adCards, decision: 'stop', persist: false, stopReason: 'access_restricted' });
         await p.close().catch(() => {});
         await ctx.close().catch(() => {});
         return { verified: false, reason: 'restricted', blockKind: 'restricted', blockCode: ErrorCodes.ACCESS_RESTRICTED };
       }
+      // Un accès n'est validé QUE si la sonde confirme une page de résultats RÉELLE.
+      // Un HTTP 200 vide/indéterminé n'est PAS une validation.
       if (!probe.ok) {
         const unverifiedErr = createError(
           ErrorCodes.ACCESS_UNVERIFIED,
-          `Accès non vérifié : aucune navigation valide observée (HTTP ${probe.status ?? '?'}).`,
-          { url: checkUrl, status: probe.status, navigationFailed });
+          `Accès non vérifié : aucune page de résultats confirmée (HTTP ${probe.status ?? '?'}, ${probe.outcome}).`,
+          { url: checkUrl, status: probe.status, outcome: probe.outcome, navigationFailed });
         this.emit('log', { level: 'warn', message: `⛔ [${unverifiedErr.code}] ${unverifiedErr.message}` });
+        this._logAccessDiag({ where: 'warmup', url: checkUrl, status: probe.status, outcome: probe.outcome, cloudfront: probe.cloudfront, captcha: probe.captcha, hasResults: probe.hasResults, adCards: probe.adCards, decision: 'stop', persist: false, stopReason: 'access_unverified' });
         await p.close().catch(() => {});
         await ctx.close().catch(() => {});
         return { verified: false, reason: 'unverified', blockKind: 'http', blockCode: ErrorCodes.ACCESS_UNVERIFIED };
@@ -369,17 +502,57 @@ class HarCapturer extends EventEmitter {
     }
 
     if (!blocked) {
-      // Pas de captcha : on persiste la session fraîche si elle n'existait pas,
-      // AVANT de fermer le contexte (storageState sur un contexte fermé échoue).
+      // 🛑 Un HTTP < 400 ne suffit PAS : on exige une page de résultats RÉELLE.
+      // On compte d'abord les cartes d'annonces STRICTES dans le DOM ; si le DOM
+      // ne prouve rien (page JS vide, structure inconnue), on confirme par la
+      // sonde HTTP objective. Un 200 sans résultats n'est PAS un accès validé.
+      let resultsConfirmed = false;
+      let confirmInfo = { where: 'warmup', url: checkUrl, status: warmupStatus };
+      try {
+        const domCardsRaw = await p.evaluate(() => {
+          try {
+            return document.querySelectorAll('a[href*="/ad/"], [data-test-id="ad"], [data-test-id="adcard"], [data-test-id="ad-card"], [data-test-id="aditem"], [data-test-id="ad-item"], [data-test-id="listing"], [data-test-id="listing-card"]').length;
+          } catch { return 0; }
+        });
+        const domCards = typeof domCardsRaw === 'number' ? domCardsRaw : 0;
+        confirmInfo.adCards = domCards;
+        if (domCards > 0) { resultsConfirmed = true; confirmInfo.outcome = 'results_ok'; }
+      } catch { /* DOM indisponible → confirmation par sonde */ }
+
+      if (!resultsConfirmed) {
+        const probe = await this._probeAccessStatus(ctx, checkUrl);
+        confirmInfo = { where: 'warmup', url: checkUrl, status: probe.status, outcome: probe.outcome, restricted: probe.restricted, restrictedMarker: probe.marker, cloudfront: probe.cloudfront, captcha: probe.captcha, hasResults: probe.hasResults, adCards: probe.adCards };
+        if (probe.outcome === 'access_restricted') {
+          this._markSessionRestricted('warmup_restricted');
+          this._logAccessDiag({ ...confirmInfo, decision: 'stop', persist: false, stopReason: 'access_restricted' });
+          await p.close().catch(() => {});
+          await ctx.close().catch(() => {});
+          return { verified: false, reason: 'restricted', blockKind: 'restricted', blockCode: ErrorCodes.ACCESS_RESTRICTED };
+        }
+        if (!probe.ok) {
+          this.emit('log', { level: 'warn', message: `⛔ [${ErrorCodes.ACCESS_UNVERIFIED}] Pré-check : aucune page de résultats confirmée (HTTP ${probe.status ?? '?'}, ${probe.outcome}) — session NON validée.` });
+          this._logAccessDiag({ ...confirmInfo, decision: 'stop', persist: false, stopReason: 'access_unverified' });
+          await p.close().catch(() => {});
+          await ctx.close().catch(() => {});
+          return { verified: false, reason: 'unverified', blockKind: 'http', blockCode: ErrorCodes.ACCESS_UNVERIFIED };
+        }
+        resultsConfirmed = true;
+      }
+
+      // Accès normal confirmé : on retire le marqueur de restriction et on
+      // persiste la session fraîche si elle n'existait pas, AVANT de fermer le
+      // contexte (storageState sur un contexte fermé échoue).
+      this._clearSessionRestricted();
       if (!fs.existsSync(GLOBAL_SESSION_PATH)) {
         await ctx.storageState({ path: GLOBAL_SESSION_PATH }).catch((e) => {
           this.emit('log', { level: 'warn', message: `[warmup] Sauvegarde session fraîche impossible : ${e.message}` });
         });
         this.emit('log', { level: 'debug', message: `[warmup] Session fraîche persistée : ${GLOBAL_SESSION_PATH}` });
       }
+      this._logAccessDiag({ ...confirmInfo, decision: 'validated', persist: true, stopReason: null });
       await p.close().catch(() => {});
       await ctx.close().catch(() => {});
-      this.emit('log', { level: 'info', message: '✅ Pré-check OK : accès confirmé (aucun CAPTCHA, HTTP < 400), reprise invisible.' });
+      this.emit('log', { level: 'info', message: '✅ Pré-check OK : page de résultats confirmée, reprise invisible.' });
       return { verified: true, reason: 'no_captcha' };
     }
 
@@ -398,6 +571,12 @@ class HarCapturer extends EventEmitter {
             : `Accès non vérifié : blocage HTTP ${accessBlock.reason} sans défi résoluble. Nouvelle tentative plus tard.`,
         { url: checkUrl, kind: accessBlock.kind, marker: accessBlock.marker });
       this.emit('log', { level: 'warn', message: `⛔ [${unverifiedErr.code}] ${unverifiedErr.message}` });
+      if (isRestricted) this._markSessionRestricted('warmup_restricted');
+      this._logAccessDiag({
+        where: 'warmup', url: checkUrl, status: warmupStatus, outcome: isRestricted ? 'access_restricted' : (accessBlock.kind === 'cloudfront' ? 'cloudfront_blocked' : 'unknown_page'),
+        restricted: isRestricted, restrictedMarker: isRestricted ? accessBlock.marker : null, cloudfront: accessBlock.kind === 'cloudfront',
+        decision: 'stop', persist: false, stopReason: isRestricted ? 'access_restricted' : 'access_unverified',
+      });
       await p.close().catch(() => {});
       await ctx.close().catch(() => {});
       return {
@@ -423,7 +602,8 @@ class HarCapturer extends EventEmitter {
     const visibleBrowser = await chromium.launch(this._launchOptions(false));
     try {
       const vOpts = this._baseContextOptions();
-      if (fs.existsSync(GLOBAL_SESSION_PATH)) vOpts.storageState = GLOBAL_SESSION_PATH;
+      const reusableVisible = this._reusableSessionPath();
+      if (reusableVisible) vOpts.storageState = reusableVisible;
       const { ctx: vCtx, p: vPage } = await this._newStealthContext(visibleBrowser, vOpts);
 
       // 🛑 FIX CRITIQUE : suivre le statut HTTP en temps réel via les responses.
@@ -593,33 +773,53 @@ class HarCapturer extends EventEmitter {
       }
 
       // CONFIRMATION OBJECTIVE DE L'ACCÈS (anti-fausse-réussite) : la disparition
-      // visuelle du défi ne PROUVE pas l'autorisation. On rejoue une requête HTTP
-      // réelle avec les cookies du contexte ET on inspecte son CONTENU : la
-      // session n'est persistée QUE si le serveur répond < 400 ET que la page
-      // n'est NI « Accès temporairement restreint » NI une page de refus. Un
-      // HTTP 200 « Accès temporairement restreint » n'est PAS un accès rétabli.
-      const probe = await this._probeAccessStatus(vCtx, checkUrl);
-      if (probe.restricted) {
-        const restrictedErr = createError(
-          ErrorCodes.ACCESS_RESTRICTED,
-          `CAPTCHA résolu mais le serveur renvoie la page « ${probe.marker} » (HTTP ${probe.status ?? '?'}) — session non persistée.`,
-          { url: checkUrl, status: probe.status, marker: probe.marker });
-        this.emit('log', { level: 'warn', message: `[warmup] [${restrictedErr.code}] ${restrictedErr.message}` });
-        await vPage.close().catch(() => {});
-        await vCtx.close().catch(() => {});
-        return { verified: false, reason: 'restricted', blockKind: 'restricted', blockCode: ErrorCodes.ACCESS_RESTRICTED };
+      // visuelle du défi ne PROUVE pas l'autorisation. On exige une page de
+      // résultats RÉELLE : cartes d'annonces STRICTES dans le DOM de la fenêtre
+      // visible, sinon sonde HTTP objective (statut + CONTENU). Un HTTP 200 vide,
+      // « Accès temporairement restreint » ou un document inattendu n'est PAS un
+      // accès rétabli → session NON persistée.
+      let postCards = 0;
+      try {
+        const raw = await vPage.evaluate(() => {
+          try {
+            return document.querySelectorAll('a[href*="/ad/"], [data-test-id="ad"], [data-test-id="adcard"], [data-test-id="ad-card"], [data-test-id="aditem"], [data-test-id="ad-item"], [data-test-id="listing"], [data-test-id="listing-card"]').length;
+          } catch { return 0; }
+        });
+        postCards = typeof raw === 'number' ? raw : 0;
+      } catch { /* DOM indisponible → sonde */ }
+
+      let probe = null;
+      let confirmedOk = postCards > 0;
+      if (!confirmedOk) {
+        probe = await this._probeAccessStatus(vCtx, checkUrl);
+        if (probe.outcome === 'access_restricted') {
+          const restrictedErr = createError(
+            ErrorCodes.ACCESS_RESTRICTED,
+            `CAPTCHA résolu mais le serveur renvoie la page « ${probe.marker} » (HTTP ${probe.status ?? '?'}) — session non persistée.`,
+            { url: checkUrl, status: probe.status, marker: probe.marker });
+          this.emit('log', { level: 'warn', message: `[warmup] [${restrictedErr.code}] ${restrictedErr.message}` });
+          this._markSessionRestricted('post_captcha_restricted');
+          this._logAccessDiag({ where: 'post_captcha', url: checkUrl, status: probe.status, outcome: probe.outcome, restricted: true, restrictedMarker: probe.marker, adCards: probe.adCards, decision: 'stop', persist: false, stopReason: 'access_restricted' });
+          await vPage.close().catch(() => {});
+          await vCtx.close().catch(() => {});
+          return { verified: false, reason: 'restricted', blockKind: 'restricted', blockCode: ErrorCodes.ACCESS_RESTRICTED };
+        }
+        if (!probe.ok) {
+          const notConfirmedErr = createError(
+            ErrorCodes.CAPTCHA_NOT_CONFIRMED,
+            `Défi disparu mais aucune page de résultats confirmée (HTTP ${probe.status ?? '?'}, ${probe.outcome}) — session non persistée.`,
+            { url: checkUrl, status: probe.status, outcome: probe.outcome });
+          this.emit('log', { level: 'warn', message: `[warmup] [${notConfirmedErr.code}] ${notConfirmedErr.message}` });
+          this._logAccessDiag({ where: 'post_captcha', url: checkUrl, status: probe.status, outcome: probe.outcome, cloudfront: probe.cloudfront, captcha: probe.captcha, hasResults: probe.hasResults, adCards: probe.adCards, decision: 'stop', persist: false, stopReason: 'not_confirmed' });
+          await vPage.close().catch(() => {});
+          await vCtx.close().catch(() => {});
+          return { verified: false, reason: 'not_confirmed', status: probe.status };
+        }
+        confirmedOk = true;
       }
-      if (!probe.ok) {
-        const notConfirmedErr = createError(
-          ErrorCodes.CAPTCHA_NOT_CONFIRMED,
-          `Défi disparu mais accès non confirmé (HTTP ${probe.status ?? '?'}) — session non persistée.`,
-          { url: checkUrl, status: probe.status });
-        this.emit('log', { level: 'warn', message: `[warmup] [${notConfirmedErr.code}] ${notConfirmedErr.message}` });
-        await vPage.close().catch(() => {});
-        await vCtx.close().catch(() => {});
-        return { verified: false, reason: 'not_confirmed', status: probe.status };
-      }
-      this.emit('log', { level: 'debug', message: `[warmup] Accès confirmé objectivement (HTTP ${probe.status}${probe.hasResults ? ', page de résultats détectée' : ''}) — persistance de la session.` });
+      this._clearSessionRestricted();
+      this._logAccessDiag({ where: 'post_captcha', url: checkUrl, status: probe ? probe.status : latestHttpStatus, outcome: 'results_ok', adCards: postCards || (probe ? probe.adCards : 0), decision: 'validated', persist: true, stopReason: null });
+      this.emit('log', { level: 'debug', message: `[warmup] Accès confirmé objectivement (HTTP ${probe ? probe.status : latestHttpStatus ?? '?'}${postCards > 0 ? `, ${postCards} carte(s) d'annonces` : ', page de résultats détectée'}) — persistance de la session.` });
 
       // Persiste la session validée pour les jobs suivants (plus de fenêtre visible).
       await vCtx.storageState({ path: GLOBAL_SESSION_PATH });
@@ -641,8 +841,10 @@ class HarCapturer extends EventEmitter {
     try {
       const info = await page.evaluate(() => {
         const text = (document.title + ' ' + (document.body ? document.body.innerText : '')).toLowerCase();
-        // Sélecteurs connus des cartes d'annonces Leboncoin.
-        const count = document.querySelectorAll('a[href*="/ad/"], article[data-test-id], [data-role="ad-card"], a[data-test-id="ad"]').length;
+        // Sélecteurs STRICTS des cartes d'annonces Leboncoin (pas de sous-chaîne
+        // `[data-test-id*="ad"]` qui compterait `header`/`badge` → faux « page
+        // de résultats » sur une page de blocage).
+        const count = document.querySelectorAll('a[href*="/ad/"], [data-test-id="ad"], [data-test-id="adcard"], [data-test-id="ad-card"], [data-test-id="aditem"], [data-test-id="ad-item"], [data-test-id="listing"], [data-test-id="listing-card"]').length;
         const errorMarkers = ['erreur', 'error', 'indisponible', 'unavailable', 'réessayez', 'service indisponible', 'try again', 'something went wrong', 'request blocked', 'could not be satisfied', 'generated by cloudfront'];
         const matched = errorMarkers.find((m) => text.includes(m)) || null;
         return { count, matched, text };
@@ -765,11 +967,12 @@ class HarCapturer extends EventEmitter {
         },
       });
 
-      if (fs.existsSync(GLOBAL_SESSION_PATH)) {
-        contextOptions.storageState = GLOBAL_SESSION_PATH;
+      const reusableCaptureSession = this._reusableSessionPath();
+      if (reusableCaptureSession) {
+        contextOptions.storageState = reusableCaptureSession;
         this.emit('log', { level: 'info', message: '🔑 Session validée chargée pour la capture.' });
       } else {
-        this.emit('log', { level: 'warn', message: '[capture] Aucune session globale trouvée pour la capture — risque de blocage captcha plus élevé.' });
+        this.emit('log', { level: 'warn', message: '[capture] Aucune session globale réutilisable pour la capture — risque de blocage captcha plus élevé.' });
       }
 
       ({ ctx: context, p: page } = await this._newStealthContext(browser, contextOptions));
@@ -849,6 +1052,8 @@ class HarCapturer extends EventEmitter {
             // dans le HAR (elles seront conservées).
             if (accessBlock.kind === 'restricted') {
               this.emit('log', { level: 'warn', message: `⛔ [Page ${pageNum}] [${ErrorCodes.ACCESS_RESTRICTED}] Accès restreint par le site (${reason}) — arrêt de la capture, données déjà acquises conservées.` });
+              this._markSessionRestricted('capture_restricted');
+              this._logAccessDiag({ where: `capture_page_${pageNum}`, url: targetUrl, status: typeof httpStatus === 'number' ? httpStatus : null, outcome: 'access_restricted', restricted: true, restrictedMarker: accessBlock.marker, decision: 'stop', persist: false, stopReason: 'access_restricted' });
               this.journal.recordPageResult(false);
               fatalError = Object.assign(
                 new Error(`Accès restreint par le site (${reason}) : arrêt de la capture.`),
@@ -902,8 +1107,9 @@ class HarCapturer extends EventEmitter {
             const retryCtxOpts = this._baseContextOptions({
               recordHar: { path: retryHarPath, mode: 'full', urlFilter: /recherche|api|items/i },
             });
-            if (fs.existsSync(GLOBAL_SESSION_PATH)) {
-              retryCtxOpts.storageState = GLOBAL_SESSION_PATH;
+            const reusableRetrySession = this._reusableSessionPath();
+            if (reusableRetrySession) {
+              retryCtxOpts.storageState = reusableRetrySession;
               this.emit('log', { level: 'info', message: '🔑 Session validée chargée pour reprise de capture.' });
             }
             ({ ctx: context, p: page } = await this._newStealthContext(browser, retryCtxOpts));
@@ -931,6 +1137,7 @@ class HarCapturer extends EventEmitter {
                 // Page « Accès temporairement restreint » : refus durable → on
                 // remonte un état explicite (les pages déjà capturées restent).
                 if (emptyCheck.kind === 'restricted') {
+                  this._markSessionRestricted('capture_empty_restricted');
                   fatalError = Object.assign(
                     new Error(`Accès restreint par le site (marqueur « ${emptyCheck.marker} ») : arrêt de la capture.`),
                     { code: ErrorCodes.ACCESS_RESTRICTED, accessUnverified: true });

@@ -44,6 +44,13 @@ const BASE_OUT_DIR = app.isPackaged
 // 🔑 Chemin unique pour la session globale (Master Session)
 const GLOBAL_SESSION_PATH = path.join(BASE_OUT_DIR, 'global-session.json');
 
+// 🚫 Marqueur « session restreinte » : créé quand le site a explicitement refusé
+// l'accès (page « Accès temporairement restreint »). Tant qu'il existe, la session
+// globale n'est PAS réutilisée (elle porterait des cookies anti-bot empoisonnés)
+// et Vendra repart d'un contexte vierge. Il est retiré dès qu'un accès normal est
+// confirmé. Fichier simple, sans secret (aucun cookie/token dedans).
+const RESTRICTED_SESSION_FLAG_PATH = path.join(BASE_OUT_DIR, 'session-restricted.flag');
+
 // 📁 Répertoires centralisés (cohérents en dev ET en version packagée .exe)
 const JOBS_DIR = path.join(BASE_OUT_DIR, 'jobs');
 // Note: les résultats de chaque job vont dans JOBS_DIR/job-<timestamp>/results
@@ -60,4 +67,5 @@ module.exports = {
   // toute confusion.
   THEMES: ['theme-dark', 'theme-light', 'theme-graphite'],
   GLOBAL_SESSION_PATH,
+  RESTRICTED_SESSION_FLAG_PATH,
 };
