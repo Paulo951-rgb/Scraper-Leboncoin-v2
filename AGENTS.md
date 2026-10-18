@@ -231,6 +231,17 @@ services/scraping/           harCapturer (Playwright) + pipelineRunner (fork) + 
 services/exporting/          exportFields.js (champs exportables + filtrage + TXT lisible)
                              dataProfiles.js (3 profils : Défaut/Maximum/Personnalisé)
 services/analysis/adStats.js statistiques de prix brutes (sans scoring)
+services/history/            ÉVOLUTION DES PRIX — moteur déterministe (aucune IA)
+                             normalizeText.js (normalisation reproductible)
+                             lexicons.js (descripteurs déclaratifs, extensibles)
+                             featureExtractor.js (extraction des caractéristiques)
+                             productIdentity.js (relations de référence, score, contradictions, décision)
+                             productRegistry.js (génération de candidats par index)
+                             priceRules.js (prix invalides/atypiques, devises, coûts)
+                             priceStats.js (moyenne/médiane/dispersion/évolution, séries, qualité)
+                             priceHistoryDb.js (SQLite node:sqlite — schéma versionné, migrations)
+                             priceHistoryEngine.js (orchestration ingestion → décision → persistance)
+                             priceHistoryService.js (façade : singleton main, ingestion, bootstrap)
 services/jobs/jobHistory.js  listing/lecture/suppression jobs, buildAdHistory
 services/maintenance/storageCleaner
 infrastructure/              fileManager (ouverture fichiers/dossiers)
@@ -251,6 +262,7 @@ historyModule.js            onglet Historique (jobs, ouverture, suppression)
 explorerModule.js           onglet Explorateur (table, grille, filtres, tri, fiche)
 statsModule.js               onglet Statistiques (cartes + 4 graphiques, sessions sélectionnables)
 mapModule.js                 onglet Carte (Leaflet, géocodage API Gouv, clusters, marqueurs)
+priceEvolutionModule.js      onglet Évolution des prix (produits, fiche, série, file incertaine)
 helpModule.js               module d'aide (FAQ, guide, feedback)
 styles.css                   habillage + 3 thèmes (Sombre/Clair/Graphite) + composants
 ```
@@ -332,6 +344,51 @@ styles.css                   habillage + 3 thèmes (Sombre/Clair/Graphite) + com
   par annonce (`MAX_OCCURRENCES_PER_AD`) : un `annonces.json` énorme/corrompu ne doit
   pas faire exploser la mémoire du main process.
 
+## Évolution des prix (base historique déterministe) — NE PAS régresser
+
+Fonctionnalité `services/history/` : transforme les annonces collectées en base
+historique de prix par produit. **Aucune IA** : tout est déterministe.
+
+- **Persistance** : SQLite via `node:sqlite` (natif Electron 44 / Node 24),
+  fichier `<BASE_OUT_DIR>/price-history.sqlite`. Aucun module natif, aucune
+  dépendance externe (compatible `npmRebuild:false`). Si `node:sqlite` manque,
+  `isAvailable()` renvoie `false` → la fonctionnalité se **désactive proprement**
+  (le reste de Vendra fonctionne). Test `[55]`.
+- **Dédup annonce** : `source_id` prioritaire, sinon `url_hash` (SHA-256 de
+  l'URL). **Jamais** le titre comme clé. Sans id ni URL → annonce refusée
+  (comptée `errors`), jamais fusionnée aveuglément.
+- **Observations** : une nouvelle ligne SEULEMENT si prix/état/offre/validité a
+  changé ; sinon `touchAd` (dernière vue). **Toute évolution de prix est
+  conservée**. Une observation identique n'est jamais dupliquée.
+- **`origin`** (migration v3) : `live` (collecte réelle) vs `imported` (amorçage
+  depuis un job). Un job **sans date exploitable** → observation `imported` datée
+  de la première vue : on ne fabrique JAMAIS une date historique.
+- **Rapprochement** (`productIdentity`) : relations de référence
+  `exact`/`partial`/`conflict`/`none`. **9600 ≠ 9600X**, **3060 ≠ 3060Ti**
+  (contradiction prioritaire, jamais annulée par un score textuel élevé). Les
+  lots/accessoires/pièces sont refusés (`offer_type_incompatible`). Un état
+  **hors service** associe l'annonce (fiche) mais l'**exclut de la série de prix**
+  (`condition_not_functional`) : il ne tire pas la médiane vers le bas. Une
+  annonce **vague sans contradiction** part en revue manuelle (jamais rejetée
+  silencieusement). Une référence inédite crée un produit **provisoire**.
+- **Décisions** : `confirmed` / `uncertain` (file manuelle) / `rejected`, +
+  recommandation `link`/`new`/`pending`/`reject`. Marge d'ambiguïté 8 →
+  pas de confirmation auto si deux candidats restent proches.
+- **Statistiques** (`priceStats`) : une annonce compte **une fois** (dernière obs.
+  par annonce) ; aucune période sans données **fabriquée** (trou, pas zéro) ;
+  aucun prix valide → `sufficient:false` (**jamais 0**) ; médiane paire = moyenne
+  des deux centrales ; % d'évolution seulement si initial ≠ 0. Cache
+  (`stats_cache`) **invalidé** à chaque ingestion/correction/recalcul.
+- **Corrections manuelles** : `link_status='manual'` — **jamais** écrasées par le
+  moteur auto lors d'une re-collecte. Test `[54]`.
+- **Performance** : index de candidats **construit une fois par lot** (pas par
+  annonce) + **requêtes préparées mises en cache** (`_stmt`). Sans ces deux
+  optimisations, l'ingestion était O(N×M) (~17 s pour 10 000 annonces).
+- **Sécurité** : le renderer n'a **aucun** accès SQL (canaux `history:*`
+  uniquement, options assainies `sanitizeHistoryOpts`, actions en liste blanche).
+  Ingestion **isolée** du job (une erreur du moteur n'échoue jamais la collecte).
+- **Détail complet** : `docs/PRICE_EVOLUTION.md`. Tests `[51]`-`[56]`.
+
 ## Tests
 - `node test/regression.test.js` → suite de non-régression (syntaxe + stubs Electron).
   Sections : logique métier, rendu, sécurité, `[27]` carte (logique pure), `[28]` distribution/packaging,
@@ -339,7 +396,9 @@ styles.css                   habillage + 3 thèmes (Sombre/Clair/Graphite) + com
   `[47]` pagination explorateur (DOM borné + navigation), `[48]` `sanitizeImageUrl` (anti-SSRF renderer),
   `[49]` audit intégral 2026-10-17 (prix FR, centroïde carte, verrou `job:start`, contamination détail),
   `[50]` audit 2e passe 2026-10-17 (SSRF renderer IPv4-mappée, HAR de reprise CAPTCHA, prix FR
-  historique/explorateur, annulation ≠ 403, réglages appliqués immédiatement).
+  historique/explorateur, annulation ≠ 403, réglages appliqués immédiatement),
+  `[51]`-`[56]` **ÉVOLUTION DES PRIX** (normalisation/extraction, rapprochement déterministe,
+  statistiques, persistance/migrations, intégration IPC/DOM/sécurité, règles de prix).
 - Le test stub `electron` : BrowserWindow a `webContents.send` mais PAS `isDestroyed`.
 - Avant tout commit : `node --check` sur les fichiers modifiés + lancer la suite.
 

@@ -25,6 +25,17 @@ contextBridge.exposeInMainWorld('api', {
   getAdHistory: () => ipcRenderer.invoke('job:getAdHistory'),
   deleteJob: (jobId) => ipcRenderer.invoke('job:delete', jobId),
 
+  // 📈 Évolution des prix — lecture paginée + corrections. Le renderer ne reçoit
+  // jamais d'accès direct à la base : uniquement ces opérations validées côté main.
+  historyStats: () => ipcRenderer.invoke('history:stats'),
+  historyBootstrap: () => ipcRenderer.invoke('history:bootstrap'),
+  historyListProducts: (opts) => ipcRenderer.invoke('history:listProducts', opts),
+  historyProductDetail: (productId, opts) => ipcRenderer.invoke('history:productDetail', productId, opts),
+  historyProductSeries: (productId, opts) => ipcRenderer.invoke('history:productSeries', productId, opts),
+  historyListPending: (opts) => ipcRenderer.invoke('history:listPending', opts),
+  historyCorrect: (payload) => ipcRenderer.invoke('history:correct', payload),
+  historyRecompute: (productId) => ipcRenderer.invoke('history:recompute', productId),
+
   openFolder: (pathStr) => ipcRenderer.invoke('file:openFolder', pathStr),
   openJobsFolder: () => ipcRenderer.invoke('jobs:openFolder'),
   openSessionFolder: (jobId) => ipcRenderer.invoke('job:openSessionFolder', jobId),

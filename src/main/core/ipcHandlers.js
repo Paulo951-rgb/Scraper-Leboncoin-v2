@@ -334,6 +334,10 @@ function setupIpcHandlers(getMainWindow) {
       }
 
       const jsonPath = path.join(resultsDir, 'annonces.json');
+      // Annonces retenues pour l'ingestion dans la base historique. Renseigné
+      // UNIQUEMENT si annonces.json est lisible et valide : une collecte
+      // corrompue ne doit jamais alimenter l'historique.
+      let adsToIngest = null;
 
       if (fs.existsSync(jsonPath)) {
         // Lecture via checksum : le pipeline écrit annonces.json avec
@@ -349,9 +353,35 @@ function setupIpcHandlers(getMainWindow) {
           sessionStats.adsKept = ads.length;
           if (sessionStats.adsFound === 0) sessionStats.adsFound = ads.length;
           sendLog({ level: 'debug', message: `[job:start] annonces.json lu : ${summarizeAds(ads)}.` });
+          adsToIngest = ads;
         }
       } else {
         sendLog({ level: 'warn', message: `[job:start] annonces.json introuvable après pipeline : ${jsonPath} — le scraping a peut-être échoué silencieusement.` });
+      }
+
+      // ─── Alimentation de la base historique « Évolution des prix » ──────────
+      // Après une collecte RÉUSSIE, les annonces admissibles alimentent la base
+      // historique sans import manuel. Une erreur du moteur historique NE DOIT
+      // PAS faire échouer la collecte : on capture et on journalise.
+      if (adsToIngest && adsToIngest.length > 0) {
+        try {
+          const { getService } = require('../services/history/priceHistoryService');
+          const histService = getService();
+          const ingestResult = histService.ingest(adsToIngest, {
+            sourceJob: currentJobId,
+            observedAt: new Date().toISOString(),
+          });
+          if (ingestResult.ok) {
+            const s = ingestResult.summary;
+            sendLog({ level: 'info', message: `[historique] ${s.processed} annonce(s) ingérée(s) — ${s.linked} associée(s), ${s.pending} incertaine(s), ${s.rejected} exclue(s), ${s.pricesExcluded} prix écarté(s).` });
+            if (s.errors > 0) sendLog({ level: 'warn', message: `[historique] ${s.errors} annonce(s) non traitée(s) par le moteur (isolées, sans impact sur le job).` });
+          } else {
+            sendLog({ level: 'warn', message: `[historique] ingestion ignorée : ${ingestResult.error}` });
+          }
+        } catch (histErr) {
+          // Isolation stricte : l'historique est un enrichissement optionnel.
+          sendLog({ level: 'warn', message: `[historique] moteur indisponible (${histErr.message}) — le scraping reste valide.` });
+        }
       }
 
       const latestJob = JobHistoryManager.getLatestJob();
@@ -685,6 +715,141 @@ function setupIpcHandlers(getMainWindow) {
       return { success: true };
     } catch (err) {
       return { success: false, error: err.message };
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 📈 ÉVOLUTION DES PRIX — handlers IPC
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Le renderer ne reçoit JAMAIS d'accès direct à la base : il appelle ces
+  // handlers, qui valident les entrées et délèguent à la façade. Aucune requête
+  // SQL arbitraire n'est possible depuis le renderer (pas de canal générique).
+  const { getService: getPriceHistoryService } = require('../services/history/priceHistoryService');
+
+  // Normalise/valide les options de lecture venant du renderer (pagination,
+  // filtres). Un renderer compromis ne peut donc pas demander un volume
+  // arbitraire ni injecter de valeurs inattendues.
+  function sanitizeHistoryOpts(raw) {
+    const o = (raw && typeof raw === 'object') ? raw : {};
+    const intInRange = (v, min, max, def) => {
+      const n = parseInt(v, 10);
+      return Number.isFinite(n) && n >= min && n <= max ? n : def;
+    };
+    const out = {
+      limit: intInRange(o.limit, 1, 500, 50),
+      offset: intInRange(o.offset, 0, 1_000_000, 0),
+      granularity: ['day', 'week', 'month'].includes(o.granularity) ? o.granularity : 'day',
+    };
+    if (typeof o.q === 'string' && o.q.trim() !== '') out.q = o.q.trim().slice(0, 120);
+    if (typeof o.family === 'string' && o.family.trim() !== '') out.family = o.family.trim().slice(0, 60);
+    if (o.days != null) out.days = intInRange(o.days, 1, 3650, 30);
+    return out;
+  }
+
+  ipcMain.handle('history:stats', async () => {
+    try {
+      const svc = getPriceHistoryService();
+      if (!svc.isReady()) {
+        return { ok: false, error: svc.lastError ? svc.lastError.message : 'Base historique indisponible.', counts: null };
+      }
+      return svc.stats();
+    } catch (err) {
+      return { ok: false, error: err.message, counts: null };
+    }
+  });
+
+  // Amorçage : intègre les jobs DÉJÀ présents sur le disque (migration sûre,
+  // sans relancer de collecte). Idempotent.
+  ipcMain.handle('history:bootstrap', async () => {
+    try {
+      const svc = getPriceHistoryService();
+      const res = svc.bootstrapFromExistingJobs();
+      if (!res.ok) return res;
+      sendLog({ level: 'info', message: `[historique] amorçage depuis ${res.jobs} session(s) : ${res.ads} annonce(s) traitée(s).` });
+      return { ...res, ...svc.stats() };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('history:listProducts', async (event, rawOpts) => {
+    try {
+      const svc = getPriceHistoryService();
+      if (!svc.isReady()) return { ok: false, error: svc.lastError ? svc.lastError.message : 'Base historique indisponible.', products: [] };
+      return svc.listProducts(sanitizeHistoryOpts(rawOpts));
+    } catch (err) {
+      return { ok: false, error: err.message, products: [] };
+    }
+  });
+
+  ipcMain.handle('history:productDetail', async (event, productId, rawOpts) => {
+    try {
+      const id = parseInt(productId, 10);
+      if (!Number.isFinite(id) || id <= 0) return { ok: false, error: 'Identifiant de produit invalide.' };
+      const svc = getPriceHistoryService();
+      if (!svc.isReady()) return { ok: false, error: svc.lastError ? svc.lastError.message : 'Base historique indisponible.' };
+      return svc.getProductDetail(id, sanitizeHistoryOpts(rawOpts));
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('history:productSeries', async (event, productId, rawOpts) => {
+    try {
+      const id = parseInt(productId, 10);
+      if (!Number.isFinite(id) || id <= 0) return { ok: false, error: 'Identifiant de produit invalide.' };
+      const svc = getPriceHistoryService();
+      if (!svc.isReady()) return { ok: false, error: svc.lastError ? svc.lastError.message : 'Base historique indisponible.' };
+      return svc.getProductSeries(id, sanitizeHistoryOpts(rawOpts));
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('history:listPending', async (event, rawOpts) => {
+    try {
+      const svc = getPriceHistoryService();
+      if (!svc.isReady()) return { ok: false, error: svc.lastError ? svc.lastError.message : 'Base historique indisponible.', pending: [] };
+      return svc.listPending(sanitizeHistoryOpts(rawOpts));
+    } catch (err) {
+      return { ok: false, error: err.message, pending: [] };
+    }
+  });
+
+  // Correction manuelle d'une association (persistée + recalcul des stats).
+  const CORRECTION_ACTIONS = new Set(['confirm', 'reject', 'move', 'create']);
+  ipcMain.handle('history:correct', async (event, payload) => {
+    try {
+      const p = (payload && typeof payload === 'object') ? payload : {};
+      const adId = parseInt(p.adId, 10);
+      if (!Number.isFinite(adId) || adId <= 0) return { ok: false, error: 'Identifiant d\'annonce invalide.' };
+      const action = { type: p.action };
+      if (!CORRECTION_ACTIONS.has(action.type)) return { ok: false, error: 'Action de correction inconnue.' };
+      if (p.productId != null) {
+        const pid = parseInt(p.productId, 10);
+        if (!Number.isFinite(pid) || pid <= 0) return { ok: false, error: 'Identifiant de produit cible invalide.' };
+        action.productId = pid;
+      }
+      const note = typeof p.note === 'string' ? p.note.slice(0, 500) : null;
+      const svc = getPriceHistoryService();
+      if (!svc.isReady()) return { ok: false, error: svc.lastError ? svc.lastError.message : 'Base historique indisponible.' };
+      const res = svc.correct(adId, action, { note });
+      if (res.ok) sendLog({ level: 'info', message: `[historique] association corrigée manuellement (annonce ${adId}, action ${action.type}).` });
+      return res;
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('history:recompute', async (event, productId) => {
+    try {
+      const svc = getPriceHistoryService();
+      if (!svc.isReady()) return { ok: false, error: svc.lastError ? svc.lastError.message : 'Base historique indisponible.' };
+      const id = productId == null ? null : parseInt(productId, 10);
+      if (id != null && (!Number.isFinite(id) || id <= 0)) return { ok: false, error: 'Identifiant de produit invalide.' };
+      return svc.recompute(id);
+    } catch (err) {
+      return { ok: false, error: err.message };
     }
   });
 

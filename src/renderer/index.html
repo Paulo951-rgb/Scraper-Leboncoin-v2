@@ -93,6 +93,10 @@
           <span class="nav-item-icon"><svg class="nav-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M9 4 3.6 6.2A1 1 0 0 0 3 7.1v12.3a.5.5 0 0 0 .7.46L9 18"/><path d="M9 4v14"/><path d="M15 6v14"/><path d="M9 18l6 2 5.4-2.2a1 1 0 0 0 .6-.9V4.6a.5.5 0 0 0-.7-.46L15 6"/><path d="M15 6 9 4"/></svg></span>
           <span class="nav-item-label">Carte</span>
         </button>
+        <button class="nav-item" data-tab="tab-price-evolution">
+          <span class="nav-item-icon"><svg class="nav-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 3v18h18"/><path d="M7 15l3.5-4 3 2.5L20 7"/><path d="M20 7h-4"/><path d="M20 7v4"/></svg></span>
+          <span class="nav-item-label">Évolution des prix</span>
+        </button>
       </nav>
 
       <div class="sidebar-divider"></div>
@@ -581,6 +585,124 @@
         </div>
       </section>
 
+      <!-- PAGE : ÉVOLUTION DES PRIX (base historique déterministe) -->
+      <section id="tab-price-evolution" class="tab-content">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Évolution des prix</h1>
+            <p class="page-subtitle">Historique des prix par produit identifié (moteur déterministe, sans IA)</p>
+          </div>
+          <div class="pe-header-actions">
+            <span id="peCountsBadge" class="badge pe-counts-badge hidden"></span>
+            <button class="btn btn-secondary btn-small" id="peBootstrapBtn" title="Intégrer les sessions déjà collectées dans la base historique (sans relancer de scraping)">Importer les sessions existantes</button>
+          </div>
+        </div>
+
+        <!-- État : base indisponible / vide / erreur -->
+        <div id="peEmptyState" class="card pe-empty hidden"></div>
+
+        <!-- Barre de filtres -->
+        <div class="card pe-filters" id="peFilters">
+          <div class="pe-filters-row">
+            <input type="text" id="peSearch" class="filter-input pe-search" placeholder="Rechercher un produit (référence, marque, libellé)…" autocomplete="off">
+            <select id="peFamilyFilter" class="filter-select"><option value="">Toutes les familles</option></select>
+            <select id="pePeriodSelect" class="filter-select">
+              <option value="7">7 jours</option>
+              <option value="30" selected>30 jours</option>
+              <option value="90">90 jours</option>
+              <option value="365">365 jours</option>
+              <option value="0">Tout l'historique</option>
+            </select>
+            <select id="peGranularitySelect" class="filter-select">
+              <option value="day">Par jour</option>
+              <option value="week">Par semaine</option>
+              <option value="month">Par mois</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Vue principale : liste des produits + fiche détail -->
+        <div class="pe-layout">
+          <div class="card pe-list-card">
+            <div class="history-header">
+              <h2>Produits identifiés</h2>
+              <span id="peListStatus" class="pe-list-status"></span>
+            </div>
+            <div class="pe-table-container">
+              <table class="history-table pe-products-table">
+                <thead>
+                  <tr>
+                    <th>Produit</th>
+                    <th>Référence</th>
+                    <th>Annonces</th>
+                    <th>Médiane</th>
+                    <th>Évolution</th>
+                    <th>Dernière obs.</th>
+                    <th>Fiabilité</th>
+                  </tr>
+                </thead>
+                <tbody id="peProductsBody"></tbody>
+              </table>
+            </div>
+            <div class="pe-pagination">
+              <button class="btn btn-secondary btn-small" id="pePrevBtn" type="button">Précédent</button>
+              <span id="pePageInfo" class="pe-page-info"></span>
+              <button class="btn btn-secondary btn-small" id="peNextBtn" type="button">Suivant</button>
+            </div>
+          </div>
+
+          <!-- Fiche produit -->
+          <div class="card pe-detail-card" id="peDetailCard">
+            <div id="peDetailPlaceholder" class="pe-detail-placeholder">Sélectionnez un produit pour afficher sa fiche détaillée, sa série historique et les annonces qui la composent.</div>
+            <div id="peDetailContent" class="hidden">
+              <div class="pe-detail-head">
+                <h2 id="peDetailTitle">—</h2>
+                <span id="peDetailStatus" class="badge pe-status-badge"></span>
+              </div>
+              <p id="peDetailMeta" class="pe-detail-meta"></p>
+
+              <div class="pe-stat-grid">
+                <div class="pe-stat"><span class="pe-stat-label">Annonces distinctes</span><span id="peStatAds" class="pe-stat-value">—</span></div>
+                <div class="pe-stat"><span class="pe-stat-label">Observations</span><span id="peStatObs" class="pe-stat-value">—</span></div>
+                <div class="pe-stat"><span class="pe-stat-label">Prix médian</span><span id="peStatMedian" class="pe-stat-value">—</span></div>
+                <div class="pe-stat"><span class="pe-stat-label">Prix moyen</span><span id="peStatMean" class="pe-stat-value">—</span></div>
+                <div class="pe-stat"><span class="pe-stat-label">Minimum</span><span id="peStatMin" class="pe-stat-value">—</span></div>
+                <div class="pe-stat"><span class="pe-stat-label">Maximum</span><span id="peStatMax" class="pe-stat-value">—</span></div>
+                <div class="pe-stat"><span class="pe-stat-label">Dispersion (σ)</span><span id="peStatDisp" class="pe-stat-value">—</span></div>
+                <div class="pe-stat"><span class="pe-stat-label">Évolution</span><span id="peStatEvo" class="pe-stat-value">—</span></div>
+              </div>
+
+              <p id="peQualityNote" class="pe-quality-note"></p>
+
+              <h3 class="pe-subtitle">Série historique</h3>
+              <div class="chart-box pe-chart-box"><canvas id="peSeriesChart"></canvas></div>
+              <p id="peSeriesEmpty" class="pe-inline-empty hidden">Aucune observation exploitable sur la période sélectionnée.</p>
+
+              <h3 class="pe-subtitle">Segments</h3>
+              <div id="peSegments" class="pe-segments"></div>
+
+              <h3 class="pe-subtitle">Alias connus</h3>
+              <div id="peAliases" class="pe-aliases"></div>
+
+              <h3 class="pe-subtitle">Annonces incluses <span id="peIncludedCount" class="pe-count-pill"></span></h3>
+              <div class="pe-table-container"><table class="history-table"><thead><tr><th>Titre</th><th>Prix</th><th>État</th><th>Offre</th><th>Dernière obs.</th></tr></thead><tbody id="peIncludedBody"></tbody></table></div>
+
+              <h3 class="pe-subtitle">Annonces exclues <span id="peExcludedCount" class="pe-count-pill"></span></h3>
+              <div class="pe-table-container"><table class="history-table"><thead><tr><th>Titre</th><th>Motif d'exclusion</th></tr></thead><tbody id="peExcludedBody"></tbody></table></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- File des rapprochements incertains -->
+        <div class="card pe-pending-card">
+          <div class="history-header">
+            <h2>Rapprochements à vérifier <span id="pePendingCount" class="pe-count-pill"></span></h2>
+            <button class="btn btn-secondary btn-small" id="pePendingToggle" type="button">Afficher</button>
+          </div>
+          <div id="pePendingBody" class="pe-pending-body hidden"></div>
+        </div>
+      </section>
+
     </main>
   </div>
 
@@ -841,6 +963,7 @@
   <script src="explorerModule.js"></script>
   <script src="statsModule.js"></script>
   <script src="mapModule.js"></script>
+  <script src="priceEvolutionModule.js"></script>
   <script src="historyModule.js"></script>
   <script src="app.js"></script>
 </body>
