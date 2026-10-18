@@ -124,6 +124,20 @@ soit visible, l'accès n'est PAS déclaré valide : `warmupStatus` reste `null` 
 `_probeAccessStatus` doit confirmer un statut HTTP `< 400`, sinon « accès non
 vérifié ». C'est la correction du bug « session crue validée au 1er scraping ».
 
+**Reprise bornée du pré-check (restauration `778b562`)** : l'ancien moteur
+enchaînait naturellement plusieurs navigations (pré-check PUIS capture) et
+absorbait donc un refus anti-bot TRANSITOIRE (défi 403/429 servi une seule fois).
+Le pré-check récent, lui, s'arrêtait sur le PREMIER 403 → `access_unverified`
+alors que l'accès redevenait possible à la navigation suivante. `_warmupSession`
+réessaie désormais la navigation de pré-check un nombre BORNÉ de fois
+(`WARMUP_NAV_ATTEMPTS = 3`, délai 1,5 s entre essais) en conservant le DERNIER
+statut observé. Ce n'est PAS un contournement : un refus EXPLICITE et durable
+(CloudFront / « Accès temporairement restreint » / 403 nu) n'est jamais
+« résolu » par ces essais, il est classé honnêtement par `_detectAccessBlock` ;
+aucune fenêtre CAPTCHA n'est ouverte pour un 403 nu, et aucune session n'est
+persistée sur refus. Le chemin nominal (accès OK du 1er coup) reste à UNE seule
+navigation (aucun surcoût). Test `[64]`.
+
 Historiquement, une fonction `_verifyAccess()` (requête document HEAD/GET) avait
 été ajoutée puis **retirée** (son filtre de contenu rejetait à tort des réponses
 valides — cf. `[30]` « moteur historique restauré »). Ne pas la réintroduire ni
@@ -562,6 +576,11 @@ historique de prix par produit. **Aucune IA** : tout est déterministe.
   résultats avec mots génériques « robot »/« vérification » → NON classée CAPTCHA ;
   page 200 vide → non bloquée ; « Accès temporairement restreint » → `restricted` ;
   CloudFront 200 → `cloudfront`).
+- `[64]` **REPRISE BORNÉE DU PRÉ-CHECK** (restauration `778b562` : un 403
+  transitoire suivi d'un 200 est absorbé — session validée ; un 403 PERSISTANT
+  reste `http_blocked`/`access_unverified` ; les tentatives de navigation sont
+  bornées à 3, aucune fenêtre CAPTCHA ouverte pour un 403 nu ; le chemin nominal
+  reste à une seule navigation).
 - Le test stub `electron` : BrowserWindow a `webContents.send` mais PAS `isDestroyed`.
 - Test navigateur réel (opt-in) : `VENDRA_REAL_BROWSER_TEST=1 node test/regression.test.js`
   lance le Chromium embarqué et vérifie la valeur EFFECTIVE de `navigator.webdriver`

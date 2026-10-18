@@ -584,32 +584,56 @@ class HarCapturer extends EventEmitter {
     }
 
     const { ctx, p } = await this._newStealthContext(browser, ctxOpts);
-    const t0Goto = Date.now();
-    let warmupStatus = null;
-    let navigationFailed = false;
     // 🛑 FIX « session déclarée valide à tort au 1er lancement » :
     // `waitUntil: networkidle` peut ne JAMAIS se stabiliser (le site garde des
-    // connexions ouvertes) → la navigation échoue au bout de 45 s, `warmupStatus`
-    // reste `null`, aucun CAPTCHA n'est visible… et l'ancien code déclarait
+    // connexions ouvertes) → la navigation échoue au bout de 20 s, `warmupStatus`
+    // reste `null`, aucun CAPTCHA n'est visible… et un pré-check naïf déclarait
     // pourtant « ✅ Pré-check OK ». La session était donc considérée validée sans
-    // AUCUN signal observé. On distingue désormais explicitement l'échec de
-    // navigation et on le rattrape par une sonde HTTP objective (voir plus bas).
-    await p.goto(checkUrl, { waitUntil: 'networkidle', timeout: 20000 })
-      .then((resp) => { warmupStatus = resp ? resp.status() : null; })
-      .catch(async (e) => {
-        navigationFailed = true;
-        this.emit('log', { level: 'warn', message: `Pré-check : navigation initiale impossible (${e.message}).` });
-        this.emit('log', { level: 'debug', message: `[warmup] Détail erreur goto : ${describeError(e)}` });
-        // Repli : on tente une navigation plus permissive pour OBTENIR un statut
-        // HTTP réel (networkidle peut être trompeur sur une page à réseau actif).
-        await p.goto(checkUrl, { waitUntil: 'domcontentloaded', timeout: 20000 })
-          .then((resp) => { warmupStatus = resp ? resp.status() : null; })
-          .catch((e2) => {
-            this.emit('log', { level: 'warn', message: `Pré-check : repli domcontentloaded impossible (${e2.message}).` });
-            this.emit('log', { level: 'debug', message: `[warmup] Détail erreur goto (repli) : ${describeError(e2)}` });
-          });
-      });
-    this.emit('log', { level: 'debug', message: `[warmup] Navigation pré-check terminée en ${formatMs(Date.now() - t0Goto)}${warmupStatus ? ` — HTTP ${warmupStatus}` : ' — statut inconnu'}.` });
+    // AUCUN signal observé. On distingue explicitement l'échec de navigation et on
+    // le rattrape par une sonde HTTP objective (voir plus bas).
+    //
+    // REPRISE BORNÉE : un refus anti-bot (403/429) peut être TRANSITOIRE (défi
+    // servi une seule fois). L'ancien moteur enchaînait naturellement plusieurs
+    // navigations (pré-check PUIS capture), ce qui absorbait ces refus passagers ;
+    // le pré-check récent, lui, s'arrêtait sur le PREMIER 403. On réessaie donc la
+    // navigation de pré-check un PETIT nombre de fois (jamais une boucle), en
+    // conservant le DERNIER statut observé. Un refus EXPLICITE et durable
+    // (CloudFront / « Accès temporairement restreint ») n'est PAS « résolu » par
+    // ces essais : il est classé honnêtement ensuite par `_detectAccessBlock`.
+    const WARMUP_NAV_ATTEMPTS = 3;
+    const WARMUP_NAV_RETRY_DELAY_MS = 1500;
+    let warmupStatus = null;
+    let navigationFailed = false;
+    for (let attempt = 1; attempt <= WARMUP_NAV_ATTEMPTS; attempt++) {
+      const t0Goto = Date.now();
+      let attemptStatus = null;
+      let attemptFailed = false;
+      await p.goto(checkUrl, { waitUntil: 'networkidle', timeout: 20000 })
+        .then((resp) => { attemptStatus = resp ? resp.status() : null; })
+        .catch(async (e) => {
+          attemptFailed = true;
+          this.emit('log', { level: 'warn', message: `Pré-check : navigation initiale impossible (tentative ${attempt}/${WARMUP_NAV_ATTEMPTS}, ${e.message}).` });
+          this.emit('log', { level: 'debug', message: `[warmup] Détail erreur goto : ${describeError(e)}` });
+          // Repli : on tente une navigation plus permissive pour OBTENIR un statut
+          // HTTP réel (networkidle peut être trompeur sur une page à réseau actif).
+          await p.goto(checkUrl, { waitUntil: 'domcontentloaded', timeout: 20000 })
+            .then((resp) => { attemptStatus = resp ? resp.status() : null; })
+            .catch((e2) => {
+              this.emit('log', { level: 'warn', message: `Pré-check : repli domcontentloaded impossible (${e2.message}).` });
+              this.emit('log', { level: 'debug', message: `[warmup] Détail erreur goto (repli) : ${describeError(e2)}` });
+            });
+        });
+      warmupStatus = attemptStatus;
+      navigationFailed = attemptFailed;
+      this.emit('log', { level: 'debug', message: `[warmup] Navigation pré-check (tentative ${attempt}/${WARMUP_NAV_ATTEMPTS}) terminée en ${formatMs(Date.now() - t0Goto)}${warmupStatus ? ` — HTTP ${warmupStatus}` : ' — statut inconnu'}.` });
+      // Accès abouti (HTTP < 400) ou statut inconnu → on passe à la classification.
+      // On ne réessaie QUE sur un refus HTTP ≥ 400 potentiellement transitoire.
+      if (typeof attemptStatus !== 'number' || attemptStatus < 400) break;
+      if (attempt < WARMUP_NAV_ATTEMPTS) {
+        this.emit('log', { level: 'info', message: `[warmup] HTTP ${attemptStatus} au pré-check — nouvelle tentative (${attempt + 1}/${WARMUP_NAV_ATTEMPTS}) dans ${WARMUP_NAV_RETRY_DELAY_MS / 1000}s.` });
+        await sleep(WARMUP_NAV_RETRY_DELAY_MS);
+      }
+    }
 
     // Délai supplémentaire : Leboncoin peut injecter le CAPTCHA en JS après
     // networkidle (chargement différé de l'iframe Arkose). 3s au lieu de 1.5s.
