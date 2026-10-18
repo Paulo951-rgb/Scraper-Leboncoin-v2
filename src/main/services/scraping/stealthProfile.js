@@ -213,19 +213,64 @@ function detectRestrictionPage(html) {
 }
 
 /**
- * Indique si un contenu HTML ressemble à une VRAIE page de résultats Leboncoin
- * (présence de cartes d'annonces). Sert à confirmer qu'un accès est réellement
- * rétabli : un HTTP 200 ou la disparition d'un défi ne le prouvent pas.
+ * Identifiants `data-test-id` EXACTS des cartes d'annonces Leboncoin. On ne fait
+ * JAMAIS de correspondance par sous-chaîne : `[data-test-id*="ad"]` matcherait
+ * `header`, `advertisement`, `badge`… et ferait passer une page de restriction
+ * pour une page de résultats (faux négatif de détection). Un marqueur de carte
+ * doit être un identifiant d'annonce complet et non ambigu.
+ */
+const AD_CARD_TEST_IDS = [
+  'ad',
+  'adcard',
+  'ad-card',
+  'aditem',
+  'ad-item',
+  'listing',
+  'listing-card',
+  'searchresultsad',
+  'search-results-ad',
+];
+
+/**
+ * Compte les cartes d'annonces RÉELLES dans un HTML, avec des critères stricts :
+ *   - un lien de détail `/ad/<id>` (structure de résultats réelle) ;
+ *   - OU un `data-test-id` de carte EXACT (voir AD_CARD_TEST_IDS), borné par des
+ *     guillemets → pas de correspondance partielle.
+ * Une page de restriction/erreur ne doit jamais compter comme page de résultats,
+ * même si elle contient un élément dont un attribut contient les lettres « ad ».
+ * @param {string} html
+ * @returns {number}
+ */
+function countAdCards(html) {
+  const text = String(html || '');
+  if (!text) return 0;
+  // Liens de détail d'annonce : /ad/123.htm, /ad/ordinateurs/123456, etc.
+  const adLinks = text.match(/href\s*=\s*["'][^"']*\/ad\/[^"']*["']/gi);
+  const linkCount = adLinks ? adLinks.length : 0;
+  // data-test-id EXACT (borné par des guillemets de chaque côté).
+  let idCount = 0;
+  for (const id of AD_CARD_TEST_IDS) {
+    const re = new RegExp(`data-test-id\\s*=\\s*["']${id.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}["']`, 'gi');
+    const m = text.match(re);
+    if (m) idCount += m.length;
+  }
+  return linkCount + idCount;
+}
+
+/**
+ * Indique si un contenu HTML ressemble à une VRAIE page de résultats Leboncoin.
+ * Exige au moins une carte d'annonce réelle (lien /ad/ ou data-test-id exact) ET
+ * l'absence de marqueur explicite de restriction. Sert à confirmer qu'un accès
+ * est réellement rétabli : un HTTP 200 ou la disparition d'un défi ne le prouvent
+ * pas. Ne jamais se fier à un simple élément HTML (cf. bug `[data-test-id*="ad"]`).
  * @param {string} html
  * @returns {boolean}
  */
 function looksLikeResultsPage(html) {
   const text = String(html || '');
   if (!text) return false;
-  // Cartes d'annonces : lien /ad/ ou data-test-id de carte.
-  return /\/ad\//.test(text)
-    || /data-test-id\s*=\s*["']ad/i.test(text)
-    || /data-role\s*=\s*["']ad-card/i.test(text);
+  if (detectRestrictionPage(text).restricted) return false;
+  return countAdCards(text) > 0;
 }
 
 
@@ -268,8 +313,14 @@ function stealthInitScript(profile) {
       try { Object.defineProperty(obj, prop, { get: getter, configurable: true }); } catch (e) { /* ignore */ }
     };
 
-    // 1. navigator.webdriver : absent chez un vrai utilisateur.
-    defineGet(Navigator.prototype, 'webdriver', () => undefined);
+    // 1. navigator.webdriver : `false` chez un vrai utilisateur. On NE renvoie
+    //    PAS `undefined` : la propriété EXISTE (`'webdriver' in navigator` est
+    //    vrai) et un vrai Chrome renvoie `false` ; renvoyer `undefined` crée une
+    //    incohérence « propriété présente mais valeur undefined », elle-même
+    //    détectable. Depuis le retrait de `--enable-automation`
+    //    (launchOptionsFor), le moteur renvoie déjà `false` — ce patch est une
+    //    ceinture supplémentaire si le commutateur réapparaissait.
+    defineGet(Navigator.prototype, 'webdriver', () => false);
 
     // 2. Langues cohérentes avec l'en-tête Accept-Language.
     defineGet(Navigator.prototype, 'languages', () => ['fr-FR', 'fr']);
@@ -394,6 +445,57 @@ async function applyStealthToContext(ctx, profile) {
   return p;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Options de lancement Chromium durcies (anti-détection)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Arguments Chromium retirés du lancement. Le principal est
+ * `--enable-automation`, que Playwright ajoute par défaut : il force
+ * `navigator.webdriver === true` AU NIVEAU DU MOTEUR (avant tout script de
+ * page). Le script d'init anti-détection masque bien la propriété JS, mais un
+ * contrôle qui lit l'état moteur / les « DevTools features » peut encore le
+ * voir. Retirer le commutateur supprime le signal à la source.
+ */
+const LAUNCH_ARGS_IGNORE_DEFAULT = Object.freeze(['--enable-automation']);
+
+/**
+ * Arguments Chromium ajoutés au lancement. Ils neutralisent des signaux
+ * d'automatisation/CI et stabilisent le rendu (moins de différences avec un
+ * vrai navigateur) :
+ *   - `AutomationControlled` désactivé → navigator.webdriver = false côté moteur ;
+ *   - `--no-first-run`, `--no-default-browser-check` → pas de comportements
+ *     « navigateur neuf » repérables (un vrai profil utilisateur ne les a pas) ;
+ *   - `--disable-blink-features=AutomationControlled` (ceinture + bretelles).
+ * NB : on ne prétend PAS être furtif au point de déjouer un WAF sophistiqué ;
+ * ce sont des correctifs CIBLÉS des fuites les plus simples à exploiter.
+ */
+const LAUNCH_ARGS_EXTRA = Object.freeze([
+  '--disable-blink-features=AutomationControlled',
+  '--no-first-run',
+  '--no-default-browser-check',
+  '--disable-infobars',
+]);
+
+/**
+ * Construit les options de lancement Chromium durcies, cohérentes entre la
+ * capture (harCapturer) et l'enrichissement (pipeline). `channel: 'chromium'`
+ * force le build complet embarqué (cf. _launchOptions historique).
+ * @param {boolean} headless
+ * @param {string|null} [proxyUrl]
+ * @returns {{headless:boolean, channel:string, args:string[], ignoreDefaultArgs:string[], proxy?:{server:string}}}
+ */
+function launchOptionsFor(headless, proxyUrl) {
+  const opts = {
+    headless,
+    channel: 'chromium',
+    args: [...LAUNCH_ARGS_EXTRA],
+    ignoreDefaultArgs: [...LAUNCH_ARGS_IGNORE_DEFAULT],
+  };
+  if (proxyUrl) opts.proxy = { server: proxyUrl };
+  return opts;
+}
+
 module.exports = {
   resolveChromiumMajorVersion,
   createStealthProfile,
@@ -401,6 +503,11 @@ module.exports = {
   detectCloudFrontBlock,
   detectRestrictionPage,
   looksLikeResultsPage,
+  countAdCards,
+  AD_CARD_TEST_IDS,
+  launchOptionsFor,
+  LAUNCH_ARGS_EXTRA,
+  LAUNCH_ARGS_IGNORE_DEFAULT,
   stealthInitScript,
   applyStealthToContext,
   CLOUDFRONT_BLOCK_MARKERS,

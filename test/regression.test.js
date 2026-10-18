@@ -5643,7 +5643,7 @@ console.log('\n[58] Contournement CloudFront + état de session honnête');
     const fnSource = sp.stealthInitScript.toString();
     window.eval(`(${fnSource})(${JSON.stringify(prof)});`);
     const nav = window.navigator;
-    assert(nav.webdriver === undefined, '[58] jsdom : navigator.webdriver neutralisé');
+    assert(nav.webdriver === false, '[58] jsdom : navigator.webdriver = false (comme un vrai Chrome, pas undefined)');
     assert(Array.isArray(nav.languages) && nav.languages[0] === 'fr-FR', '[58] jsdom : navigator.languages = fr-FR');
     assert(nav.platform === prof.platformJs, '[58] jsdom : navigator.platform aligné sur l\'UA');
     assert(nav.userAgentData && nav.userAgentData.brands.some((b) => b.brand === 'Google Chrome'),
@@ -5747,10 +5747,10 @@ console.log('\n[58] Contournement CloudFront + état de session honnête');
     '[58] harCapturer : statut inconnu → sonde objective avant de valider la session');
   assert(/reason: 'unverified'/.test(harCode) && /ACCESS_UNVERIFIED/.test(harCode),
     '[58] harCapturer : statut inconnu non confirmé → « accès non vérifié » (jamais un faux OK)');
-  // La session n'est persistée QUE si la branche !blocked est atteinte avec un
-  // signal objectif (HTTP < 400 ou sonde ok).
-  assert(/✅ Pré-check OK : accès confirmé/.test(harCode),
-    '[58] harCapturer : message « accès confirmé » réservé aux cas réellement validés');
+  // La session n'est persistée QUE si la branche !blocked est atteinte ET qu'une
+  // page de résultats RÉELLE est confirmée (cartes DOM ou sonde `results_ok`).
+  assert(/✅ Pré-check OK : page de résultats confirmée/.test(harCode),
+    '[58] harCapturer : message « page de résultats confirmée » réservé aux cas réellement validés');
 
   // 58.10 TEST COMPORTEMENTAL du pré-check (page/ctx simulés) : une navigation
   //       qui échoue ET une sonde HTTP 403 → session NON validée (« accès non
@@ -5762,14 +5762,14 @@ console.log('\n[58] Contournement CloudFront + état de session honnête');
     async evaluate() { return { text: 'annonces disponibles', matched: null, hasCaptchaIframe: false, cfChallenge: false }; },
     async close() {},
   });
-  const mkFakeCtx = (probeStatus) => ({
+  const mkFakeCtx = (probeStatus, probeBody = '') => ({
     async route() {},
     async setExtraHTTPHeaders() {},
     async addInitScript() {},
     async newPage() { return mkFakePage(); },
     async close() {},
     async storageState() { /* no-op : pas d'écriture disque dans le test */ },
-    request: { async get() { return { status: () => probeStatus }; } },
+    request: { async get() { return { status: () => probeStatus, async text() { return probeBody; } }; } },
   });
 
   // Cas A : navigation échouée + sonde 403 → accès non vérifié (PAS de faux OK).
@@ -5784,14 +5784,27 @@ console.log('\n[58] Contournement CloudFront + état de session honnête');
       '[58] comportemental : le code ACCESS_UNVERIFIED est porté au main process');
   }
 
-  // Cas B : navigation échouée mais sonde 200 → accès confirmé objectivement.
+  // Cas B : navigation échouée mais sonde 200 AVEC une page de résultats réelle
+  //         → accès confirmé objectivement.
   {
     const cap = new HarCapturer();
-    const ctx = mkFakeCtx(200);
+    const resultsHtml = '<html><body><a href="https://www.leboncoin.fr/ad/ordinateurs/123">RTX 3060</a></body></html>';
+    const ctx = mkFakeCtx(200, resultsHtml);
     const browser = { async newContext() { return ctx; } };
     const res = await cap._warmupSession(browser, 'https://www.leboncoin.fr/recherche?text=rtx');
     assert(res.verified === true,
-      '[58] comportemental : navigation échouée mais sonde HTTP 200 → accès confirmé (session valide)');
+      '[58] comportemental : navigation échouée mais sonde HTTP 200 + résultats → accès confirmé (session valide)');
+  }
+
+  // Cas B-bis : sonde HTTP 200 mais page VIDE/indéterminée → accès NON confirmé.
+  //             Un 200 ne valide JAMAIS à lui seul l'accès.
+  {
+    const cap = new HarCapturer();
+    const ctx = mkFakeCtx(200, '<html><body>page vide sans annonce</body></html>');
+    const browser = { async newContext() { return ctx; } };
+    const res = await cap._warmupSession(browser, 'https://www.leboncoin.fr/recherche?text=rtx');
+    assert(res.verified === false && res.reason === 'unverified',
+      '[58] comportemental : sonde HTTP 200 sans résultats → accès NON confirmé (un 200 ne suffit pas)');
   }
 
   // Cas C : page de refus CloudFront (HTTP 200) → accès non vérifié, AUCUNE
@@ -5931,8 +5944,8 @@ console.log('\n[59] CAPTCHA résolu + page « Accès temporairement restreint »
     '[59] la sonde lit le CORPS de la réponse (un 200 peut cacher une restriction)');
   assert(/detectRestrictionPage\(body\)/.test(harCode),
     '[59] la sonde classe la page « Accès temporairement restreint »');
-  assert(/const ok = status >= 200 && status < 400 && !restricted && !cloudfront/.test(harCode),
-    '[59] un HTTP 200 « restreint » N\'EST PAS un accès OK');
+  assert(/ok: outcome === 'results_ok'/.test(harCode),
+    '[59] un HTTP 200 « restreint » N\'EST PAS un accès OK (ok = results_ok seulement)');
 
   // 59.3 La page de restriction est classée AVANT le CAPTCHA et n'ouvre JAMAIS
   //      de fenêtre CAPTCHA (aucun défi humain à résoudre).
@@ -6100,6 +6113,197 @@ console.log('\n[59] CAPTCHA résolu + page « Accès temporairement restreint »
   if (!sessionExisted) { try { fs.unlinkSync(sessionPath); } catch (e) {} }
 
   console.log('\n[59] OK');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// [60] SESSION RESTREINTE NON RÉUTILISÉE + DÉTECTION DE CARTES STRICTE
+//   Bug : après un refus (page « Accès temporairement restreint »), la session
+//   globale contenant les cookies anti-bot était RÉUTILISÉE au job suivant →
+//   restriction re-déclenchée en boucle. Et `[data-test-id*="ad"]` (sous-chaîne)
+//   comptait des éléments sans rapport (`header`, `badge`) → une page de refus
+//   était vue comme une page de résultats (faux négatif).
+//   Vérifie : marqueur de session restreinte créé/consommé/retiré, non-réutilisation
+//   de la session, comptage STRICT des cartes, et détection de refus non court-circuitée.
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n[60] Session restreinte non réutilisée + détection de cartes stricte');
+{
+  const repoRoot = path.join(__dirname, '..');
+  const sp = require('../src/main/services/scraping/stealthProfile');
+  const sessionPaths = require('../src/main/services/scraping/sessionPaths');
+  const os = require('os');
+
+  // 60.1 Comptage STRICT des cartes : un `data-test-id` contenant « ad » en
+  //      sous-chaîne (header, badge, advertisement) NE compte PAS comme carte.
+  assert(sp.countAdCards('<div data-test-id="header"></div><span data-test-id="badge">x</span>') === 0,
+    '[60] countAdCards ignore les data-test-id contenant « ad » en sous-chaîne');
+  assert(sp.countAdCards('<div data-test-id="advertisement"></div>') === 0,
+    '[60] countAdCards ignore « advertisement » (pas une carte d\'annonce)');
+  // Un lien de détail /ad/ compte comme une carte.
+  assert(sp.countAdCards('<a href="https://www.leboncoin.fr/ad/ordinateurs/123">x</a>') === 1,
+    '[60] countAdCards compte un lien de détail /ad/');
+  // data-test-id EXACT de carte compte.
+  assert(sp.countAdCards('<div data-test-id="adcard"></div><div data-test-id="ad-card"></div>') === 2,
+    '[60] countAdCards compte les data-test-id de carte EXACTS');
+  // Une page de refus contenant « ad » dans un attribut parasite n'est PAS une
+  // page de résultats.
+  assert(sp.looksLikeResultsPage('<html><body data-test-id="header">Accès temporairement restreint</body></html>') === false,
+    '[60] une page de refus avec un attribut « ad » parasite n\'est PAS une page de résultats');
+
+  // 60.2 Le marqueur de session restreinte est créé par le capturer, et
+  //      `isSessionRestricted` le reflète.
+  const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), 'vendra-session-'));
+  const globalPath = sessionPaths.getGlobalSessionPath(tmpBase);
+  const flagPath = sessionPaths.getRestrictedFlagPath(tmpBase);
+  fs.writeFileSync(globalPath, '{"cookies":[]}');
+  assert(sessionPaths.isSessionRestricted(tmpBase) === false,
+    '[60] sans marqueur, la session n\'est pas restreinte');
+  // resolveSessionPath réutilise la session globale quand elle n'est pas marquée.
+  assert(sessionPaths.resolveSessionPath({ baseOutDir: tmpBase, jobDir: path.join(tmpBase, 'job-1') }).kind === 'global',
+    '[60] session globale réutilisée quand elle n\'est pas restreinte');
+  // On pose le marqueur : la session globale doit être IGNORÉE.
+  fs.writeFileSync(flagPath, '{"reason":"access_restricted"}');
+  assert(sessionPaths.isSessionRestricted(tmpBase) === true,
+    '[60] isSessionRestricted reflète le marqueur');
+  assert(sessionPaths.resolveSessionPath({ baseOutDir: tmpBase, jobDir: path.join(tmpBase, 'job-1') }).kind !== 'global',
+    '[60] session marquée restreinte → NON réutilisée (contexte vierge)');
+
+  // 60.3 Le capturer pose/retire le marqueur (helpers _markSessionRestricted /
+  //      _clearSessionRestricted / _reusableSessionPath).
+  const { HarCapturer } = require('../src/main/services/scraping/harCapturer');
+  const cap = new HarCapturer();
+  assert(typeof cap._markSessionRestricted === 'function' && typeof cap._clearSessionRestricted === 'function'
+    && typeof cap._reusableSessionPath === 'function',
+    '[60] le capturer expose les helpers de marqueur de session restreinte');
+
+  // 60.4 Le diagnostic d'accès ne contient AUCUN secret (cookies/session/token).
+  const diagMessages = [];
+  cap.on('log', (d) => diagMessages.push(d.message || ''));
+  cap._logAccessDiag({ where: 'warmup', url: 'https://www.leboncoin.fr/recherche?text=rtx%203060', status: 403, outcome: 'cloudfront_blocked', decision: 'stop' });
+  const diagLine = diagMessages.find((m) => m.includes('[ACCESS_DIAG]'));
+  assert(!!diagLine, '[60] le diagnostic d\'accès est émis');
+  assert(/text=%3Cmasqu|text=<masqu|text=%3Cmasq|masqu/i.test(diagLine),
+    '[60] le diagnostic MASQUE les paramètres d\'URL (pas de fuite du terme de recherche)');
+  assert(!/cookie|session|token|authorization/i.test(diagLine),
+    '[60] le diagnostic ne contient ni cookie ni session ni token');
+
+  // 60.5 Le pipeline d'enrichissement n'utilise PAS une session restreinte.
+  const pipeCode = fs.readFileSync(path.join(repoRoot, 'src/main/services/scraping/leboncoin-pipeline.js'), 'utf8');
+  assert(/isSessionRestricted\(baseOutDir\)/.test(pipeCode),
+    '[60] le pipeline vérifie le marqueur avant de réutiliser la session globale');
+
+  // 60.6 COMPORTEMENTAL : le handler IPC `session:reset` supprime RÉELLEMENT la
+  //      session globale ET le marqueur de restriction, sans chemin fourni par le
+  //      renderer. On capture les handlers enregistrés via un stub ipcMain.
+  {
+    const handlers = {};
+    const ipcStub = { on: () => {}, handle: (name, fn) => { handlers[name] = fn; } };
+    const orig = Module._load;
+    Module._load = function (request) {
+      if (request === 'electron') return { ...electronStub, ipcMain: ipcStub };
+      return orig.apply(this, arguments);
+    };
+    let setup;
+    try {
+      const p = require.resolve('../src/main/core/ipcHandlers');
+      delete require.cache[p];
+      setup = require(p).setupIpcHandlers;
+    } finally {
+      Module._load = orig;
+    }
+    assert(typeof setup === 'function', '[60] setupIpcHandlers exporté');
+    setup(() => null);
+    assert(typeof handlers['session:reset'] === 'function',
+      '[60] le handler IPC session:reset est enregistré');
+
+    const { GLOBAL_SESSION_PATH, RESTRICTED_SESSION_FLAG_PATH } = require('../src/main/config/constants');
+    fs.mkdirSync(path.dirname(GLOBAL_SESSION_PATH), { recursive: true });
+    fs.writeFileSync(GLOBAL_SESSION_PATH, '{"cookies":[]}');
+    fs.writeFileSync(RESTRICTED_SESSION_FLAG_PATH, '{"reason":"access_restricted"}');
+    const resetRes = await handlers['session:reset']();
+    assert(resetRes && resetRes.ok === true, '[60] session:reset renvoie { ok: true }');
+    assert(!fs.existsSync(GLOBAL_SESSION_PATH), '[60] session:reset supprime la session globale');
+    assert(!fs.existsSync(RESTRICTED_SESSION_FLAG_PATH), '[60] session:reset supprime le marqueur de restriction');
+  }
+
+  // Nettoyage du dossier temporaire.
+  try { fs.rmSync(tmpBase, { recursive: true, force: true }); } catch (e) {}
+
+  console.log('\n[60] OK');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// [61] CONTOURNEMENT CLOUDFRONT/ANTI-BOT — DURCISSEMENT DU LANCEMENT CHROMIUM
+//   Fuite démontrée : Playwright ajoute `--enable-automation` → le MOTEUR force
+//   `navigator.webdriver === true` AVANT tout script de page (mesuré sur le
+//   Chromium embarqué). Le script d'init masquait la propriété JS mais l'ancienne
+//   valeur `undefined` était elle-même incohérente (un vrai Chrome renvoie
+//   `false`). Correction : `ignoreDefaultArgs:['--enable-automation']` +
+//   args anti-détection (launchOptionsFor), `webdriver` renvoyant `false`.
+//   Vérifie : options de lancement partagées (capture + enrichissement) et,
+//   si le Chromium embarqué est disponible, la valeur RÉELLE du navigateur.
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n[61] Contournement anti-bot : durcissement du lancement Chromium');
+{
+  const repoRoot = path.join(__dirname, '..');
+  const sp = require('../src/main/services/scraping/stealthProfile');
+
+  // 61.1 Les options durcies retirent --enable-automation et ajoutent les args
+  //      anti-détection.
+  assert(Array.isArray(sp.LAUNCH_ARGS_IGNORE_DEFAULT) && sp.LAUNCH_ARGS_IGNORE_DEFAULT.includes('--enable-automation'),
+    '[61] --enable-automation est retiré du lancement');
+  assert(Array.isArray(sp.LAUNCH_ARGS_EXTRA)
+    && sp.LAUNCH_ARGS_EXTRA.some((a) => /AutomationControlled/.test(a)),
+    '[61] args anti-détection incluent AutomationControlled désactivé');
+  const lo = sp.launchOptionsFor(false, 'http://127.0.0.1:8080');
+  assert(lo.headless === false && lo.channel === 'chromium', '[61] launchOptionsFor conserve headless + channel chromium');
+  assert(lo.proxy && lo.proxy.server === 'http://127.0.0.1:8080', '[61] launchOptionsFor propage le proxy');
+  assert(lo.ignoreDefaultArgs.includes('--enable-automation'), '[61] launchOptionsFor retire --enable-automation');
+
+  // 61.2 Le script d'init renvoie `false` (comme un vrai Chrome), jamais `undefined`.
+  const initSrc = sp.stealthInitScript.toString();
+  assert(/webdriver'\s*,\s*\(\)\s*=>\s*false/.test(initSrc),
+    '[61] le script d\'init renvoie webdriver = false (et non undefined)');
+
+  // 61.3 Les DEUX chemins de lancement (capture + enrichissement) utilisent les
+  //      options durcies partagées — pas de lancement « nu » résiduel.
+  const harSrc = fs.readFileSync(path.join(repoRoot, 'src/main/services/scraping/harCapturer.js'), 'utf8');
+  assert(/launchOptionsFor\(headless, this\.proxyUrl\)/.test(harSrc),
+    '[61] harCapturer lance Chromium via launchOptionsFor (options durcies)');
+  assert(!/chromium\.launch\(\{\s*headless[^}]*\}\)/.test(harSrc),
+    '[61] harCapturer n\'a plus de chromium.launch « nu »');
+  const pipeSrc = fs.readFileSync(path.join(repoRoot, 'src/main/services/scraping/leboncoin-pipeline.js'), 'utf8');
+  assert(/launchOptionsFor\(this\.opts\.headless, null\)/.test(pipeSrc),
+    '[61] le pipeline d\'enrichissement lance Chromium via launchOptionsFor');
+  assert(!/chromium\.launch\(\{\s*headless: this\.opts\.headless, channel: 'chromium'\s*\}\)/.test(pipeSrc),
+    '[61] le pipeline n\'a plus de lancement « nu »');
+
+  // 61.4 PREUVE RÉELLE (opt-in) : lance le Chromium embarqué et lit la valeur
+  //      EFFECTIVE de navigator.webdriver + les en-têtes émis. Désactivé par
+  //      défaut (CI rapide/déterministe) ; activer avec VENDRA_REAL_BROWSER_TEST=1.
+  if (process.env.VENDRA_REAL_BROWSER_TEST === '1') {
+    let chromium;
+    try { chromium = originalLoad.call(Module, 'playwright', module, false).chromium; } catch (e) { chromium = null; }
+    if (!chromium) {
+      assert(false, '[61] playwright requis pour le test navigateur réel');
+    } else {
+      const browser = await chromium.launch(sp.launchOptionsFor(true, null));
+      const profile = sp.createStealthProfile('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
+      const ctx = await browser.newContext({ userAgent: profile.userAgent, locale: profile.locale, timezoneId: profile.timezoneId, viewport: profile.viewport });
+      await sp.applyStealthToContext(ctx, profile);
+      const page = await ctx.newPage();
+      await page.goto('about:blank');
+      const real = await page.evaluate(() => ({ wd: navigator.webdriver, inNav: ('webdriver' in navigator), hasUA: !!navigator.userAgentData, plugins: navigator.plugins.length }));
+      await browser.close();
+      assert(real.wd === false, `[61] Chromium réel : navigator.webdriver === false (obtenu : ${real.wd})`);
+      assert(real.inNav === true, '[61] Chromium réel : la propriété webdriver existe (comme un vrai Chrome)');
+      assert(real.hasUA === true, '[61] Chromium réel : navigator.userAgentData présent');
+      assert(real.plugins >= 1, '[61] Chromium réel : navigator.plugins non vide');
+    }
+  } else {
+    console.log('  ↷ [61] test navigateur réel ignoré (VENDRA_REAL_BROWSER_TEST=1 pour l\'activer)');
+  }
+
+  console.log('\n[61] OK');
 }
 
 console.log(`\n=== RÉSULTAT : ${pass} réussis, ${fail} échoués ===`);

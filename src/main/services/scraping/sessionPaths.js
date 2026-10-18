@@ -25,6 +25,26 @@ function getGlobalSessionPath(baseOutDir) {
 }
 
 /**
+ * Marqueur « session restreinte » : créé quand le site a explicitement refusé
+ * l'accès. Tant qu'il existe, la session globale ne doit PAS être réutilisée.
+ * @param {string} baseOutDir - BASE_OUT_DIR (dossier de sortie racine)
+ */
+function getRestrictedFlagPath(baseOutDir) {
+  return path.join(baseOutDir, 'session-restricted.flag');
+}
+
+/**
+ * Indique si la session globale est marquée restreinte (accès refusé la dernière
+ * fois). Utilisé par le pipeline d'enrichissement pour NE PAS réutiliser une
+ * session empoisonnée.
+ * @param {string} baseOutDir
+ * @returns {boolean}
+ */
+function isSessionRestricted(baseOutDir) {
+  try { return fs.existsSync(getRestrictedFlagPath(baseOutDir)); } catch { return false; }
+}
+
+/**
  * Session locale d'un job : <jobDir>/session-state.json.
  * @param {string} jobDir - dossier du job (ex: JOBS_DIR/job-<timestamp>)
  */
@@ -54,7 +74,9 @@ function getJobSessionPathFromResults(resultsDir) {
  */
 function resolveSessionPath({ baseOutDir, jobDir }) {
   const globalPath = getGlobalSessionPath(baseOutDir);
-  if (fs.existsSync(globalPath)) return { path: globalPath, kind: 'global' };
+  // Session globale marquée restreinte → on l'ignore (cookies anti-bot
+  // empoisonnés). On retombe sur la session locale du job si elle existe.
+  if (fs.existsSync(globalPath) && !isSessionRestricted(baseOutDir)) return { path: globalPath, kind: 'global' };
   const jobPath = getJobSessionPath(jobDir);
   if (fs.existsSync(jobPath)) return { path: jobPath, kind: 'job' };
   return { path: null, kind: null };
@@ -62,6 +84,8 @@ function resolveSessionPath({ baseOutDir, jobDir }) {
 
 module.exports = {
   getGlobalSessionPath,
+  getRestrictedFlagPath,
+  isSessionRestricted,
   getJobSessionPath,
   getJobSessionPathFromResults,
   resolveSessionPath,

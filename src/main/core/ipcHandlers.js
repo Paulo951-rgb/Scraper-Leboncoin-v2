@@ -144,6 +144,10 @@ function setupIpcHandlers(getMainWindow) {
       // Refus d'accès CloudFront (page « Request blocked ») ou accès non
       // vérifiable au pré-check : état explicite « accès non vérifié ».
       accessUnverified: false,
+      // Dernier diagnostic d'accès structuré (ligne `[ACCESS_DIAG]` du capturer) :
+      // permet d'afficher à l'utilisateur CE QUE Vendra a réellement observé
+      // (classification, marqueurs, décision) sans jamais exposer de secret.
+      accessDiag: null,
     };
   }
   let sessionStats = newSessionStats();
@@ -183,6 +187,14 @@ function setupIpcHandlers(getMainWindow) {
           : '  ✅ Terminé normalement',
       '═══════════════════════════════════════════════════════════',
     ];
+    // Diagnostic d'accès : on expose CE QUE Vendra a observé (classification,
+    // marqueurs, décision), sans jamais journaliser de secret. Aide à comprendre
+    // une restriction persistante (session ? navigateur automatisé ? réseau ?).
+    if (sessionStats.accessDiag) {
+      const d = sessionStats.accessDiag;
+      lines.splice(lines.length - 1, 0,
+        `  🔎 Diagnostic accès      : ${d.outcome || '?'} | HTTP ${d.status ?? '?'} | restreint=${d.restricted ? 'OUI' : 'non'} | cloudfront=${d.cloudfront ? 'OUI' : 'non'} | résultats=${d.resultsMarkers ? 'OUI' : 'non'} | cartes=${d.adCards ?? '?'} | persisté=${d.persist ? 'OUI' : 'non'}`);
+    }
     for (const line of lines) {
       sendLog({ level: 'info', message: line });
     }
@@ -261,7 +273,14 @@ function setupIpcHandlers(getMainWindow) {
       });
       sendLog({ level: 'debug', message: `[job:start] Mode=${policy.label} | concurrence=${policy.concurrency} | délai pages=${pageDelay}ms | headless=${userSettings.headless !== false}` });
 
-      activeCapturer.on('log', sendLog);
+      activeCapturer.on('log', (data) => {
+        sendLog(data);
+        // Diagnostic d'accès structuré émis par le capturer : on le mémorise pour
+        // le résumé et le message final. Il ne contient AUCUN secret (URL masquée,
+        // statut, classification, décision) — jamais les cookies/session.
+        const m = (data && data.message ? data.message : '').match(/\[ACCESS_DIAG\]\s+(\{.*\})\s*$/);
+        if (m) { try { sessionStats.accessDiag = JSON.parse(m[1]); } catch { /* ligne non JSON → ignorée */ } }
+      });
       activeCapturer.on('progress', ({ currentPage, totalPages, percent, status }) => {
         sendProgress({ percent: Math.round(percent * 0.25), status: `[HAR] ${status}` });
         // Met à jour pagesScraped pour le résumé de session (la dernière page
@@ -633,6 +652,26 @@ function setupIpcHandlers(getMainWindow) {
     // prochain démarrage (le logger gardait l'ancienne valeur en mémoire).
     if (merged && merged.logRetentionDays) logger.setRetention(merged.logRetentionDays);
     return merged;
+  });
+
+  // 🔁 Réinitialisation de la session de scraping. Le renderer ne fournit AUCUN
+  // chemin : le main reconstruit les chemins depuis BASE_OUT_DIR (anti
+  // path-traversal) et supprime la session globale (cookies anti-bot pouvant être
+  // empoisonnés) ainsi que le marqueur « restreinte ». Sert de recours explicite
+  // à l'utilisateur bloqué par une restriction persistante : la prochaine
+  // collecte repart d'un contexte VIERGE (nouvelle résolution CAPTCHA si besoin).
+  ipcMain.handle('session:reset', async () => {
+    const { GLOBAL_SESSION_PATH, RESTRICTED_SESSION_FLAG_PATH } = require('../config/constants');
+    const removed = [];
+    for (const target of [GLOBAL_SESSION_PATH, RESTRICTED_SESSION_FLAG_PATH]) {
+      try {
+        if (fs.existsSync(target)) { fs.unlinkSync(target); removed.push(path.basename(target)); }
+      } catch (e) {
+        logger.warn(`[session:reset] Suppression impossible (${path.basename(target)}) : ${e.message}`);
+      }
+    }
+    logger.info(`[session:reset] Session réinitialisée (supprimés : ${removed.length ? removed.join(', ') : 'aucun'}).`);
+    return { ok: true, removed };
   });
 
   // 💾 Export des logs de session vers un fichier texte (dans BASE_OUT_DIR/logs).
