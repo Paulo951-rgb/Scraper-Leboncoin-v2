@@ -175,6 +175,60 @@ const ACCESS_BLOCK_MARKERS = [
   'access denied',
 ];
 
+// Marqueurs de la page officielle « Accès temporairement restreint » de
+// Leboncoin. C'est une page LÉGITIME (HTTP 200, pas un CAPTCHA) qui signifie que
+// le site a classé le client/le réseau comme suspect : la résolution d'un défi
+// humain n'y change RIEN. La confondre avec un CAPTCHA (défi à résoudre) ou avec
+// une page de résultats valide fait boucler/relancer à tort.
+// Texte source : « Accès temporairement restreint — Pourquoi ce blocage ? Quelque
+// chose dans le comportement du navigateur nous a intrigué … un robot est sur le
+// même réseau que vous … ».
+// NB : on n'utilise QUE des marqueurs distinctifs de CETTE page. Les formules
+// génériques (« vitesse surhumaine », « robot ») apparaissent aussi sur les pages
+// de CAPTCHA → les inclure ici classerait un CAPTCHA comme « restriction » et
+// empêcherait toute résolution.
+const RESTRICTION_MARKERS = [
+  'accès temporairement restreint',
+  'acces temporairement restreint',
+  'pourquoi ce blocage',
+  'comportement du navigateur nous a intrigué',
+  'comportement du navigateur nous a intrigue',
+  'un robot est sur le même réseau',
+  'un robot est sur le meme reseau',
+];
+
+/**
+ * Détecte la page officielle « Accès temporairement restreint » de Leboncoin.
+ * Ce n'est PAS un CAPTCHA : aucun défi à résoudre, aucune action humaine ne
+ * rétablit l'accès (le site demande d'attendre / de changer de réseau). On la
+ * classe comme refus d'accès durable pour arrêter proprement.
+ * @param {string} html
+ * @returns {{restricted:boolean, marker:string|null}}
+ */
+function detectRestrictionPage(html) {
+  const text = String(html || '').toLowerCase();
+  if (!text) return { restricted: false, marker: null };
+  const marker = RESTRICTION_MARKERS.find((m) => text.includes(m));
+  return { restricted: !!marker, marker: marker || null };
+}
+
+/**
+ * Indique si un contenu HTML ressemble à une VRAIE page de résultats Leboncoin
+ * (présence de cartes d'annonces). Sert à confirmer qu'un accès est réellement
+ * rétabli : un HTTP 200 ou la disparition d'un défi ne le prouvent pas.
+ * @param {string} html
+ * @returns {boolean}
+ */
+function looksLikeResultsPage(html) {
+  const text = String(html || '');
+  if (!text) return false;
+  // Cartes d'annonces : lien /ad/ ou data-test-id de carte.
+  return /\/ad\//.test(text)
+    || /data-test-id\s*=\s*["']ad/i.test(text)
+    || /data-role\s*=\s*["']ad-card/i.test(text);
+}
+
+
 /**
  * Détecte une page de refus CloudFront à partir de son HTML (ou texte).
  * @param {string} html
@@ -345,10 +399,13 @@ module.exports = {
   createStealthProfile,
   clientHeadersFor,
   detectCloudFrontBlock,
+  detectRestrictionPage,
+  looksLikeResultsPage,
   stealthInitScript,
   applyStealthToContext,
   CLOUDFRONT_BLOCK_MARKERS,
   ACCESS_BLOCK_MARKERS,
+  RESTRICTION_MARKERS,
   ACCEPT_LANGUAGE,
   ACCEPT_NAVIGATION,
 };

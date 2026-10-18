@@ -515,12 +515,13 @@ window.api.onStatusChange(({ state, message }) => {
 
   // États terminaux : succès complet, succès partiel, erreur, annulation,
   // accès refusé (403), limitation de débit (429), accès non vérifié
-  // (refus CloudFront/anti-bot). Tous réactivent les boutons.
-  const terminalStates = ['completed', 'partial', 'error', 'cancelled', 'refused', 'rate_limited', 'access_unverified'];
+  // (refus CloudFront/anti-bot), accès restreint (page « Accès temporairement
+  // restreint »). Tous réactivent les boutons.
+  const terminalStates = ['completed', 'partial', 'error', 'cancelled', 'refused', 'rate_limited', 'access_unverified', 'access_restricted'];
   if (terminalStates.includes(state)) {
     startBtn.disabled = false;
     stopBtn.disabled = true;
-    if (state !== 'refused' && state !== 'rate_limited' && state !== 'access_unverified') {
+    if (state !== 'refused' && state !== 'rate_limited' && state !== 'access_unverified' && state !== 'access_restricted') {
       progressBar.style.width = '100%';
     }
     etaText.textContent = '';
@@ -555,6 +556,12 @@ window.api.onStatusChange(({ state, message }) => {
         type: 'error',
         title: 'Accès non vérifié (protection anti-bot)',
         message: message || 'Le site a refusé la session (CloudFront/anti-bot). Aucune donnée n\'a été extraite. Réessayez plus tard.',
+      });
+    } else if (state === 'access_restricted') {
+      showScrapeError({
+        type: 'error',
+        title: 'Accès temporairement restreint par le site',
+        message: message || 'Le site a restreint l\'accès (comportement jugé automatisé). Le CAPTCHA résolu n\'a pas rétabli l\'accès : attendez un moment ou changez de réseau, puis relancez.',
       });
     } else if (state === 'partial') {
       showScrapeError({

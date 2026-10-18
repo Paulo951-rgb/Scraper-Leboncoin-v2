@@ -5695,7 +5695,8 @@ console.log('\n[58] Contournement CloudFront + état de session honnête');
 
   // 58.6 ipcHandlers : état « accès non vérifié » explicite + compteurs séparés.
   const ipcCode = read('src/main/core/ipcHandlers.js');
-  assert(/state: 'access_unverified'/.test(ipcCode), '[58] ipcHandlers : état access_unverified émis');
+  assert(/state: isRestricted \? 'access_restricted' : 'access_unverified'/.test(ipcCode),
+    '[58] ipcHandlers : états access_unverified ET access_restricted émis');
   assert(/err\.accessUnverified \|\| err\.code === 'ACCESS_UNVERIFIED'/.test(ipcCode),
     '[58] ipcHandlers : branche dédiée à l\'accès non vérifié (jamais « succès »)');
   for (const counter of ['rawAds', 'adsFound', 'adsKept', 'descriptionsExtracted', 'descriptionsFailed', 'adsIgnored']) {
@@ -5855,6 +5856,250 @@ console.log('\n[58] Contournement CloudFront + état de session honnête');
   }
 
   console.log('\n[58] OK');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// [59] CAPTCHA RÉSOLU MAIS « ACCÈS TEMPORAIREMENT RESTREINT »
+//   Bug : après résolution du CAPTCHA, la même fenêtre affiche la page
+//   officielle « Accès temporairement restreint » (HTTP 200). L'ancien code
+//   considérait le défi disparu comme une réussite et relançait la capture →
+//   session empoisonnée + faux succès.
+//   Vérifie : détection de la page de restriction, sonde qui inspecte le
+//   CONTENU (pas seulement le statut HTTP), non-persistance de la session,
+//   arrêt propre, et distinction des 4 états (résolu/rétabli, résolu/restreint,
+//   CAPTCHA encore présent, indéterminé).
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n[59] CAPTCHA résolu + page « Accès temporairement restreint »');
+{
+  const repoRoot = path.join(__dirname, '..');
+  const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
+  const sp = require('../src/main/services/scraping/stealthProfile');
+  const { HarCapturer } = require('../src/main/services/scraping/harCapturer');
+  const Module = require('module');
+  // 59.5 persiste une session : on nettoie le fichier en fin de section pour ne
+  // pas polluer le dépôt (le fichier n'existait pas avant la section).
+  const sessionPath = path.join(repoRoot, 'output', 'global-session.json');
+  const sessionExisted = fs.existsSync(sessionPath);
+
+  // `harCapturer` capture `chromium` à son premier require (déjà chargé par un
+  // test précédent avec un stub qui jette). Pour tester la fenêtre visible de
+  // résolution, on recharge une instance FRAÎCHE de HarCapturer liée à un stub
+  // playwright dont `launch` renvoie le navigateur visible simulé.
+  function loadHarCapturerWith(launchImpl) {
+    const orig = Module._load;
+    const stub = { chromium: { launch: launchImpl } };
+    Module._load = function (request) {
+      if (request === 'playwright') return stub;
+      return orig.apply(this, arguments);
+    };
+    try {
+      const p = require.resolve('../src/main/services/scraping/harCapturer');
+      delete require.cache[p];
+      return require(p).HarCapturer;
+    } finally {
+      Module._load = orig;
+    }
+  }
+
+  // Page officielle Leboncoin (texte réel observé).
+  const RESTRICTION_HTML = `
+    <html><head><title>Accès temporairement restreint</title></head><body>
+      <h1>Accès temporairement restreint</h1>
+      <p>Pourquoi ce blocage ? Quelque chose dans le comportement du navigateur nous a intrigué.</p>
+      <ul><li>vous surfez et cliquez à une vitesse surhumaine</li>
+      <li>un robot est sur le même réseau que vous</li></ul>
+    </body></html>`;
+  const RESULTS_HTML = `
+    <html><head><title>Annonces - leboncoin</title></head><body>
+      <a href="https://www.leboncoin.fr/ad/ordinateurs/123456">RTX 3060</a>
+      <a href="https://www.leboncoin.fr/ad/ordinateurs/789012">RTX 3070</a>
+    </body></html>`;
+
+  // 59.1 Détection de la page « Accès temporairement restreint ».
+  const r1 = sp.detectRestrictionPage(RESTRICTION_HTML);
+  assert(r1.restricted && r1.marker, '[59] page « Accès temporairement restreint » détectée');
+  assert(!sp.detectRestrictionPage(RESULTS_HTML).restricted,
+    '[59] une page de résultats normale n\'est PAS classée « restreinte »');
+  // La page de restriction ne doit PAS être confondue avec un CAPTCHA (elle
+  // contient les mots « robot » / « vitesse surhumaine »).
+  assert(sp.looksLikeResultsPage(RESULTS_HTML) && !sp.looksLikeResultsPage(RESTRICTION_HTML),
+    '[59] looksLikeResultsPage distingue résultats et restriction');
+
+  // 59.2 La sonde objective inspecte le CONTENU, pas seulement le statut HTTP.
+  const harCode = read('src/main/services/scraping/harCapturer.js');
+  assert(/await resp\.text\(\)/.test(harCode),
+    '[59] la sonde lit le CORPS de la réponse (un 200 peut cacher une restriction)');
+  assert(/detectRestrictionPage\(body\)/.test(harCode),
+    '[59] la sonde classe la page « Accès temporairement restreint »');
+  assert(/const ok = status >= 200 && status < 400 && !restricted && !cloudfront/.test(harCode),
+    '[59] un HTTP 200 « restreint » N\'EST PAS un accès OK');
+
+  // 59.3 La page de restriction est classée AVANT le CAPTCHA et n'ouvre JAMAIS
+  //      de fenêtre CAPTCHA (aucun défi humain à résoudre).
+  assert(/kind === 'restricted'[\s\S]*?ACCESS_RESTRICTED/.test(harCode),
+    '[59] harCapturer classe « restricted » et utilise le code ACCESS_RESTRICTED');
+  assert(/accessBlock\.kind === 'restricted'/.test(harCode),
+    '[59] la page de restriction déclenche un arrêt propre (pas de fenêtre CAPTCHA)');
+
+  // 59.4 Comportemental COMPLET : CAPTCHA présent → résolu → page « Accès
+  //      temporairement restreint » (HTTP 200). La session ne doit PAS être
+  //      persistée et l'erreur doit porter ACCESS_RESTRICTED.
+  {
+    // Page invisible du pré-check : CAPTCHA présent.
+    const mkCaptchaPage = () => ({
+      async goto() { return { status: () => 403 }; },
+      url() { return 'https://www.leboncoin.fr/recherche?text=rtx'; },
+      async evaluate() {
+        return { text: 'captcha vérification', matched: 'captcha', hasCaptchaIframe: true, cfChallenge: false, adCards: 0 };
+      },
+      on() {}, async close() {}, async waitForLoadState() {},
+    });
+    // Page visible : le CAPTCHA a été résolu → contenu = page de restriction.
+    const mkRestrictedPage = () => ({
+      async goto() { return { status: () => 200 }; },
+      url() { return 'https://www.leboncoin.fr/recherche?text=rtx'; },
+      async evaluate() {
+        return {
+          text: 'accès temporairement restreint pourquoi ce blocage quelque chose dans le comportement du navigateur nous a intrigué un robot est sur le même réseau que vous',
+          matched: 'restreint', hasCaptchaIframe: false, cfChallenge: false, adCards: 0,
+        };
+      },
+      on() {}, async close() {}, async waitForLoadState() {},
+    });
+    let storageSaved = false;
+    const mkCtx = (pageFactory) => ({
+      async route() {}, async setExtraHTTPHeaders() {}, async addInitScript() {},
+      async newPage() { return pageFactory(); },
+      async close() {},
+      async storageState(opts) { storageSaved = true; if (opts && opts.path) { try { fs.mkdirSync(path.dirname(opts.path), { recursive: true }); fs.writeFileSync(opts.path, '{}'); } catch (e) {} } },
+      request: { async get() { return { status: () => 200, async text() { return RESTRICTION_HTML; } }; } },
+    });
+    const invisibleBrowser = { async newContext() { return mkCtx(mkCaptchaPage); } };
+    const visibleBrowser = { async newContext() { return mkCtx(mkRestrictedPage); }, async close() {} };
+    const FreshHarCapturer = loadHarCapturerWith(async () => visibleBrowser);
+    const cap = new FreshHarCapturer();
+    const res = await cap._warmupSession(invisibleBrowser, 'https://www.leboncoin.fr/recherche?text=rtx');
+    assert(res.verified === false, '[59] CAPTCHA résolu + page restreinte → session NON validée');
+    assert(res.blockCode === 'ACCESS_RESTRICTED', '[59] code ACCESS_RESTRICTED remonté au main process');
+    assert(storageSaved === false, '[59] la session restreinte n\'est JAMAIS persistée');
+  }
+
+  // 59.5 Comportemental COMPLET : CAPTCHA présent → résolu → page de résultats
+  //      normale (HTTP 200, cartes d'annonces) → session validée et persistée.
+  {
+    const mkCaptchaPage = () => ({
+      async goto() { return { status: () => 403 }; },
+      url() { return 'https://www.leboncoin.fr/recherche?text=rtx'; },
+      async evaluate() {
+        return { text: 'captcha vérification', matched: 'captcha', hasCaptchaIframe: true, cfChallenge: false, adCards: 0 };
+      },
+      on() {}, async close() {}, async waitForLoadState() {},
+    });
+    const mkResultsPage = () => ({
+      async goto() { return { status: () => 200 }; },
+      url() { return 'https://www.leboncoin.fr/recherche?text=rtx'; },
+      async evaluate() {
+        return { text: 'annonces leboncoin rtx', matched: null, hasCaptchaIframe: false, cfChallenge: false, adCards: 20 };
+      },
+      on() {}, async close() {}, async waitForLoadState() {},
+    });
+    let storageSaved = false;
+    const mkCtx = (pageFactory) => ({
+      async route() {}, async setExtraHTTPHeaders() {}, async addInitScript() {},
+      async newPage() { return pageFactory(); },
+      async close() {},
+      async storageState(opts) { storageSaved = true; if (opts && opts.path) { try { fs.mkdirSync(path.dirname(opts.path), { recursive: true }); fs.writeFileSync(opts.path, '{}'); } catch (e) {} } },
+      request: { async get() { return { status: () => 200, async text() { return RESULTS_HTML; } }; } },
+    });
+    const invisibleBrowser = { async newContext() { return mkCtx(mkCaptchaPage); } };
+    const visibleBrowser = { async newContext() { return mkCtx(mkResultsPage); }, async close() {} };
+    const FreshHarCapturer = loadHarCapturerWith(async () => visibleBrowser);
+    const cap = new FreshHarCapturer();
+    const res = await cap._warmupSession(invisibleBrowser, 'https://www.leboncoin.fr/recherche?text=rtx');
+    assert(res.verified === true, '[59] CAPTCHA résolu + résultats normaux → session validée');
+    assert(storageSaved === true, '[59] une session réellement rétablie EST persistée');
+  }
+  // 59.6 Comportemental : CAPTCHA toujours présent → attente (pas de faux OK).
+  //      On annule après ~1 s pour ne pas attendre 10 min. La page visible
+  //      continue d'afficher un CAPTCHA → jamais « résolu ».
+  {
+    const mkCaptchaPage = () => ({
+      async goto() { return { status: () => 403 }; },
+      url() { return 'https://www.leboncoin.fr/recherche?text=rtx'; },
+      async evaluate() {
+        return { text: 'captcha vérification', matched: 'captcha', hasCaptchaIframe: true, cfChallenge: false, adCards: 0 };
+      },
+      on() {}, async close() {}, async waitForLoadState() {},
+    });
+    const ctx = {
+      async route() {}, async setExtraHTTPHeaders() {}, async addInitScript() {},
+      async newPage() { return mkCaptchaPage(); },
+      async close() {},
+      async storageState() { throw new Error('ne doit pas être appelé'); },
+      request: { async get() { return { status: () => 403, async text() { return 'captcha'; } }; } },
+    };
+    const browser = { async newContext() { return ctx; }, async close() {} };
+    const FreshHarCapturer = loadHarCapturerWith(async () => browser);
+    const cap = new FreshHarCapturer();
+    setTimeout(() => { cap.stop(); }, 1000);
+    const res = await cap._warmupSession(browser, 'https://www.leboncoin.fr/recherche?text=rtx');
+    assert(res.verified === false, '[59] CAPTCHA encore présent → session NON validée');
+  }
+
+  // 59.7 Comportemental : navigation indéterminée (statut inconnu) + sonde
+  //      renvoyant la page de restriction → accès restreint (pas un faux OK).
+  {
+    const page = {
+      async goto() { throw new Error('Timeout networkidle'); },
+      url() { return 'https://www.leboncoin.fr/recherche?text=rtx'; },
+      async evaluate() { return { text: '', matched: null, hasCaptchaIframe: false, cfChallenge: false, adCards: 0 }; },
+      on() {}, async close() {}, async waitForLoadState() {},
+    };
+    const ctx = {
+      async route() {}, async setExtraHTTPHeaders() {}, async addInitScript() {},
+      async newPage() { return page; },
+      async close() {},
+      async storageState() {},
+      request: { async get() { return { status: () => 200, async text() { return RESTRICTION_HTML; } }; } },
+    };
+    const browser = { async newContext() { return ctx; } };
+    const cap = new HarCapturer();
+    const res = await cap._warmupSession(browser, 'https://www.leboncoin.fr/recherche?text=rtx');
+    assert(res.verified === false && res.reason === 'restricted',
+      '[59] navigation indéterminée + sonde « restreint » → accès restreint (pas de faux OK)');
+    assert(res.blockCode === 'ACCESS_RESTRICTED', '[59] le code ACCESS_RESTRICTED est porté');
+  }
+
+  // 59.8 Pipeline : une page de restriction en enrichissement arrête l'arrêt
+  //      préventif (pas « description introuvable »).
+  const pipeCode = read('src/main/services/scraping/leboncoin-pipeline.js');
+  assert(/detectRestrictionPage\(res\.html\)/.test(pipeCode),
+    '[59] pipeline : page de restriction en enrichissement classée blocage');
+  assert(/ErrorCodes\.ACCESS_RESTRICTED/.test(pipeCode),
+    '[59] pipeline : arrêt préventif sur ACCESS_RESTRICTED');
+
+  // 59.9 ipcHandlers + renderer : état access_restricted terminal + message clair.
+  const ipcCode = read('src/main/core/ipcHandlers.js');
+  assert(/'access_restricted'/.test(ipcCode), '[59] ipcHandlers émet l\'état access_restricted');
+  assert(/ACCESS_RESTRICTED/.test(ipcCode), '[59] ipcHandlers reconnaît le code ACCESS_RESTRICTED');
+  const scraperCode = read('src/renderer/scraperModule.js');
+  assert(/terminalStates\s*=\s*\[[^\]]*'access_restricted'/.test(scraperCode),
+    '[59] scraperModule : access_restricted est un état terminal');
+  assert(/state === 'access_restricted'/.test(scraperCode),
+    '[59] scraperModule : bandeau dédié à l\'accès restreint');
+  const widgetCode = read('src/renderer/widget.html');
+  assert(/access_restricted/.test(widgetCode), '[59] widget : access_restricted mappé');
+
+  // 59.10 errorCodes : ACCESS_RESTRICTED catégorisé session_error.
+  const { classifyError, ErrorCodes } = require('../src/main/services/scraping/errorCodes');
+  assert(ErrorCodes.ACCESS_RESTRICTED === 'ACCESS_RESTRICTED', '[59] code ACCESS_RESTRICTED défini');
+  assert(classifyError('ACCESS_RESTRICTED') === 'session_error',
+    '[59] ACCESS_RESTRICTED classé session_error');
+
+  // Nettoyage : la section a pu créer output/global-session.json (test 59.5).
+  if (!sessionExisted) { try { fs.unlinkSync(sessionPath); } catch (e) {} }
+
+  console.log('\n[59] OK');
 }
 
 console.log(`\n=== RÉSULTAT : ${pass} réussis, ${fail} échoués ===`);

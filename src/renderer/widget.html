@@ -213,7 +213,7 @@
       // inexistantes (status-capturing…) → le point de statut perdait toute
       // couleur. On mappe désormais TOUS les états connus explicitement, avec
       // 'status-idle' en repli sûr.
-      const isError = st === 'error' || st === 'refused' || st === 'rate_limited' || st === 'access_unverified';
+      const isError = st === 'error' || st === 'refused' || st === 'rate_limited' || st === 'access_unverified' || st === 'access_restricted';
       const dotClass = (st === 'completed' || st === 'partial') ? 'status-completed'
         : isError ? 'status-error'
         : (st === 'capturing' || st === 'processing') ? 'status-running'

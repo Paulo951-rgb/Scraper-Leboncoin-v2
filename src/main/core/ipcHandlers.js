@@ -318,7 +318,13 @@ function setupIpcHandlers(getMainWindow) {
           stoppedEarly = true;
           sessionStats.stoppedEarly = true;
           sessionStats.accessBlocked = true;
-          sessionStats.accessCode = /429/.test(stopMatch[1]) ? 'HTTP_RATE_LIMITED' : 'HTTP_ACCESS_REFUSED';
+          // Préserver le code STRUCTURÉ réel (ACCESS_RESTRICTED = page « Accès
+          // temporairement restreint » ≠ HTTP_403 nu) : le main process distingue
+          // ainsi un refus durable d'un simple 403.
+          sessionStats.accessCode = /429/.test(stopMatch[1]) ? 'HTTP_RATE_LIMITED'
+            : /ACCESS_RESTRICTED/.test(stopMatch[1]) ? 'ACCESS_RESTRICTED'
+            : 'HTTP_ACCESS_REFUSED';
+          if (sessionStats.accessCode === 'ACCESS_RESTRICTED') sessionStats.accessUnverified = true;
         }
         // Compter les annonces extraites. Le pipeline émet :
         //   « Étape HAR -> Annonces terminée : N annonces extraites. » (info)
@@ -358,6 +364,12 @@ function setupIpcHandlers(getMainWindow) {
           sessionStats.accessUnverified = true;
           sessionStats.accessBlocked = true;
           sessionStats.accessCode = 'ACCESS_UNVERIFIED';
+        }
+        // Page « Accès temporairement restreint » (refus durable, pas un CAPTCHA).
+        if (/\[ACCESS_RESTRICTED\]/.test(msg) || /accès temporairement restreint/i.test(msg)) {
+          sessionStats.accessUnverified = true;
+          sessionStats.accessBlocked = true;
+          sessionStats.accessCode = 'ACCESS_RESTRICTED';
         }
         // Compter les doublons fusionnés. Deux formats possibles :
         //   « N doublon(s) fusionné(s) » (pipeline)  |  « N doublon » (générique)
@@ -486,16 +498,21 @@ function setupIpcHandlers(getMainWindow) {
         sendLog({ level: 'warn', message: `⏹️ ${err.message}` });
         sendSessionSummary();
         sendStatus({ state: 'cancelled', message: 'Scraping annulé par l\'utilisateur.' });
-      } else if (err && (err.accessUnverified || err.code === 'ACCESS_UNVERIFIED')) {
-        // Accès NON vérifié : refus CloudFront/anti-bot au pré-check (aucun défi
-        // humain résoluble). On affiche un état EXPLICITE — jamais un « succès ».
+      } else if (err && (err.accessUnverified || err.code === 'ACCESS_UNVERIFIED' || err.code === 'ACCESS_RESTRICTED')) {
+        // Accès NON vérifié / RESTREINT : refus CloudFront/anti-bot au pré-check,
+        // ou page officielle « Accès temporairement restreint » (aucun défi humain
+        // résoluble). On affiche un état EXPLICITE — jamais un « succès ».
         // Si des annonces avaient déjà été extraites (blocage en cours de capture
         // après quelques pages), on les CONSERVE et on le dit.
+        const isRestricted = err.code === 'ACCESS_RESTRICTED';
         sessionStats.accessUnverified = true;
         sessionStats.accessBlocked = true;
+        sessionStats.accessCode = isRestricted ? 'ACCESS_RESTRICTED' : 'ACCESS_UNVERIFIED';
         sessionStats.errors++;
-        sendLog({ level: 'error', message: `⛔ Accès non vérifié : ${err.message}` });
-        sendLog({ level: 'debug', message: `[job:start] Détail accès non vérifié : ${describeError(err)}` });
+        sendLog({ level: 'error', message: isRestricted
+          ? `⛔ Accès restreint par le site : ${err.message}`
+          : `⛔ Accès non vérifié : ${err.message}` });
+        sendLog({ level: 'debug', message: `[job:start] Détail accès ${isRestricted ? 'restreint' : 'non vérifié'} : ${describeError(err)}` });
         const unverifiedAds = readValidAds(resultsDir);
         const unverifiedPartial = unverifiedAds ? unverifiedAds.length : null;
         if (unverifiedPartial != null) {
@@ -504,10 +521,14 @@ function setupIpcHandlers(getMainWindow) {
         }
         sendSessionSummary();
         sendStatus({
-          state: 'access_unverified',
-          message: unverifiedPartial != null
-            ? `Accès non vérifié (CloudFront/anti-bot) : ${unverifiedPartial} annonce(s) déjà extraite(s) conservée(s), collecte interrompue. Réessayez plus tard ou depuis un autre réseau.`
-            : `Accès non vérifié : le site (CloudFront/anti-bot) a refusé la session. Aucune donnée extraite. Réessayez plus tard ou depuis un autre réseau.`,
+          state: isRestricted ? 'access_restricted' : 'access_unverified',
+          message: isRestricted
+            ? (unverifiedPartial != null
+              ? `Accès temporairement restreint par le site : ${unverifiedPartial} annonce(s) déjà extraite(s) conservée(s), collecte interrompue. Attendez un moment ou changez de réseau.`
+              : `Accès temporairement restreint par le site. Aucune donnée extraite. Attendez un moment ou changez de réseau.`)
+            : (unverifiedPartial != null
+              ? `Accès non vérifié (CloudFront/anti-bot) : ${unverifiedPartial} annonce(s) déjà extraite(s) conservée(s), collecte interrompue. Réessayez plus tard ou depuis un autre réseau.`
+              : `Accès non vérifié : le site (CloudFront/anti-bot) a refusé la session. Aucune donnée extraite. Réessayez plus tard ou depuis un autre réseau.`),
         });
       } else {
         sendLog({ level: 'error', message: `❌ Erreur : ${err.message}` });

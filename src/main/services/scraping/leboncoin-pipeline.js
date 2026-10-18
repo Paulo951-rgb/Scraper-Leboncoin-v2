@@ -21,6 +21,7 @@ const {
   applyStealthToContext,
   clientHeadersFor,
   detectCloudFrontBlock,
+  detectRestrictionPage,
 } = require('./stealthProfile');
 const { writeWithChecksum } = require('../../utils/integrity');
 const { AdaptiveRateLimiter } = require('../../utils/rateLimiter');
@@ -923,6 +924,21 @@ class DescriptionEnricher {
               break;
             }
             continue;
+          }
+          // Page « Accès temporairement restreint » servie en HTTP 200 : refus
+          // DURABLE (pas un défi). On l'arrête immédiatement (circuit → stopped)
+          // sans la compter comme une description introuvable.
+          const restriction = detectRestrictionPage(res.html);
+          if (restriction.restricted) {
+            blockedCount++;
+            this.journal.recordBlock(ad.url, 403);
+            const restrErr = createError(ErrorCodes.ACCESS_RESTRICTED,
+              `Accès restreint par le site (marqueur « ${restriction.marker} ») sur ${ad.id}`,
+              { adId: ad.id, url: ad.url, marker: restriction.marker });
+            this.logger.warn(`🛑 [${done}/${targets.length}] [${restrErr.code}] ${restrErr.message}`);
+            this.circuit.recordBlock(403, ErrorCodes.ACCESS_RESTRICTED);
+            this.logger.warn('\n🛑 Accès restreint par le site. Arrêt préventif de l\'enrichissement.');
+            break;
           }
           const parsed = this.parseHtmlDescription(res.html, ad.id);
           // Enrichissement des champs extraits de la page de détail, sans jamais
