@@ -3,6 +3,51 @@
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/). Les entrées
 décrivent des modifications vérifiées (code + tests).
 
+## [Non publié] — Évolution des prix — 2026-10-18
+
+### Ajouté
+
+- **Onglet « Évolution des prix »** : base historique de prix par produit
+  identifié. Moteur **100 % déterministe** (aucune IA), 5 couches séparées
+  (collecte → normalisation/identification → persistance → statistiques →
+  interface). Détail : `docs/PRICE_EVOLUTION.md`.
+- **Persistance SQLite** (`services/history/priceHistoryDb.js`) via `node:sqlite`
+  (natif Electron 44). Schéma versionné, migrations **idempotentes** et
+  transactionnelles, index dédiés. Tables : `ads`, `products`,
+  `ad_product_links`, `observations`, `aliases`, `ad_corrections`,
+  `product_aliases_index`, `stats_cache`, `schema_migrations`.
+- **Moteur d'identification déterministe** : normalisation reproductible,
+  extraction de caractéristiques par descripteurs déclaratifs extensibles,
+  relations de référence (`exact`/`partial`/`conflict`/`none`), score pondéré,
+  contradictions **prioritaires** (une référence contradictoire n'est jamais
+  annulée par un score textuel élevé), trois niveaux de décision.
+  Reconnaît « AMD Ryzen 5 9600X neuf » ≡ « Ryzen 5 9600X » ≡ « R5-9600X »,
+  **sans** mélanger 9600/9600X ni 3060/3060 Ti.
+- **Statistiques** (`services/history/priceStats.js`) : moyenne, médiane, min/max,
+  dispersion (écart-type, IQR), évolution absolue/relative, séries par jour/
+  semaine/mois, segmentation par état et type d'offre, indicateurs de qualité.
+  Anti-biais : une annonce compte **une fois** par période ; aucune période sans
+  observation n'est **fabriquée** ; « données insuffisantes » au lieu de 0.
+- **Intégration au scraper** : après une collecte réussie, les annonces lues
+  depuis `annonces.json` (checksum validé) alimentent la base **sans import
+  manuel**. Ingestion transactionnelle et **isolée** : une erreur du moteur
+  n'échoue jamais le job. Aucune requête supplémentaire vers la plateforme.
+- **Amorçage** : bouton « Importer les sessions existantes » + amorçage
+  automatique à l'ouverture de l'onglet (idempotent). Les observations importées
+  sont marquées `imported` ; un job sans date exploitable n'obtient **jamais** de
+  date inventée.
+- **File des rapprochements incertains** : examen des annonces non associées avec
+  certitude, produits candidats, confirmation / rejet / création d'identité
+  provisoire. Les corrections manuelles sont persistées et **jamais** écrasées
+  par le moteur automatique.
+- **IPC** : canaux `history:*` (statistiques, produits, détail, série, file,
+  correction, recalcul, amorçage). Options assainies côté main, actions en liste
+  blanche, **aucun** accès SQL depuis le renderer.
+- **Tests** : sections `[51]` à `[56]` de `test/regression.test.js`
+  (normalisation/extraction, rapprochement déterministe — cas positifs ET
+  négatifs, statistiques, persistance/migrations/corrections, intégration
+  IPC/DOM/sécurité, règles de prix). Suite complète : **1760 réussis, 0 échoué**.
+
 ## [Non publié] — Audit intégral, 2e passe — 2026-10-17
 
 ### Corrigé

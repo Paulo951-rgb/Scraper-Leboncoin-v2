@@ -4954,6 +4954,521 @@ console.log('\n[50] Audit intégral 2e passe : correctifs');
   console.log('\n[50] OK');
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// [51] ÉVOLUTION DES PRIX — normalisation & extraction de caractéristiques
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n[51] Évolution des prix — normalisation & extraction');
+{
+  const { normalizeText, tokenize, normalizeReference } = require('../src/main/services/history/normalizeText');
+  const { extractFeatures } = require('../src/main/services/history/featureExtractor');
+
+  // 51.1 Normalisation : casse, accents, ponctuation, séparateurs.
+  assert(normalizeText('  AMD   Ryzen 5 9600X (neuf) ') === 'amd ryzen 5 9600x neuf', '[51] normalizeText : casse/espaces/ponctuation');
+  assert(normalizeText('Écran 24" IPS') === 'ecran 24 ips', '[51] normalizeText : accents repliés + guillemets');
+  assert(normalizeText('R5-9600X_v2') === 'r5 9600x v2', '[51] normalizeText : tirets/underscore → séparateurs');
+  assert(normalizeText('Cœur 8 cœurs') === 'coeur 8 coeurs', '[51] normalizeText : accents sans perdre les chiffres');
+  assert(normalizeText('') === '' && normalizeText(null) === '', '[51] normalizeText : entrée vide/null → chaîne vide');
+  // Reproductible
+  assert(normalizeText('Ryzen 5 9600X') === normalizeText('Ryzen 5 9600X'), '[51] normalizeText : reproductible');
+
+  // 51.2 Normalisation de RÉFÉRENCE : les séparateurs disparaissent, les
+  // chiffres/suffixes restent (distinction de modèle préservée).
+  assert(normalizeReference('R5-9600X') === 'R59600X', '[51] normalizeReference : séparateurs retirés');
+  assert(normalizeReference('rtx 3060 ti') === 'RTX3060TI', '[51] normalizeReference : espace retiré, majuscules');
+  assert(normalizeReference('9600X') !== normalizeReference('9600'), '[51] normalizeReference : 9600X ≠ 9600');
+
+  // 51.3 Extraction : distinction des modèles proches (9600 vs 9600X).
+  const f9600x = extractFeatures({ title: 'AMD Ryzen 5 9600X neuf' });
+  assert(f9600x.primaryReference === '9600X', '[51] extraction : référence 9600X');
+  assert(f9600x.family === 'cpu', '[51] extraction : famille processeur');
+  assert(f9600x.brand === 'amd', '[51] extraction : marque AMD');
+  assert(f9600x.condition === 'new', '[51] extraction : état « neuf » détecté');
+  const f9600 = extractFeatures({ title: 'AMD Ryzen 5 9600' });
+  assert(f9600.primaryReference === '9600', '[51] extraction : référence 9600 (sans X)');
+  assert(f9600x.primaryReference !== f9600.primaryReference, '[51] extraction : 9600X et 9600 restent distincts');
+
+  // 51.4 Variantes de préfixe : « R5-9600X » ≡ « 9600X » (même référence).
+  const fR5 = extractFeatures({ title: 'Processeur AMD R5-9600X' });
+  assert(fR5.primaryReference === '9600X', '[51] extraction : R5-9600X → référence 9600X');
+
+  // 51.5 « 9600 X » (espace) → même référence que « 9600X ».
+  const fSpace = extractFeatures({ title: 'Ryzen 5 9600 X vendu seul' });
+  assert(fSpace.primaryReference === '9600X', '[51] extraction : « 9600 X » → 9600X (suffixe joint)');
+
+  // 51.6 Suffixe GPU : 3060 Ti ≠ 3060.
+  const f3060ti = extractFeatures({ title: 'RTX 3060 Ti 8 Go' });
+  const f3060 = extractFeatures({ title: 'RTX 3060 12 Go' });
+  assert(f3060ti.primaryReference === '3060TI', '[51] extraction : 3060 Ti → 3060TI');
+  assert(f3060.primaryReference === '3060', '[51] extraction : 3060 → 3060');
+  assert(f3060ti.units.capacity_gb.value === 8, '[51] extraction : capacité 8 Go');
+  assert(f3060.units.capacity_gb.value === 12, '[51] extraction : capacité 12 Go (8 ≠ 12)');
+
+  // 51.7 Lot / accessoire / pièce détachée.
+  assert(extractFeatures({ title: 'Lot de 2 Ryzen 5 9600X' }).offerType === 'lot', '[51] extraction : lot détecté');
+  assert(extractFeatures({ title: 'Ventirad pour Ryzen 5 9600X' }).offerType === 'accessory_only', '[51] extraction : accessoire seul');
+  assert(extractFeatures({ title: 'Ryzen 5 9600X hors service pour pièces' }).offerType === 'part', '[51] extraction : pièce détachée');
+  assert(extractFeatures({ title: 'Ryzen 5 9600X hors service' }).condition === 'for_parts', '[51] extraction : hors service');
+
+  // 51.8 Contradiction titre/description (neuf vs à réparer).
+  const contra = extractFeatures({ title: 'AMD Ryzen 5 9600X neuf', description: 'en réalité ne fonctionne plus, pour pièces' });
+  assert(contra.contradictions.some((c) => c.type === 'condition_title_description'), '[51] extraction : contradiction état titre/description signalée');
+
+  // 51.9 Description absente → hasDescription=false (pas de rejet automatique).
+  assert(extractFeatures({ title: 'Ryzen 5 9600X' }).hasDescription === false, '[51] extraction : description absente marquée');
+  // Référence du titre vs description divergente.
+  const refContra = extractFeatures({ title: 'AMD Ryzen 5 9600X', description: 'il s\'agit du 5600X en fait' });
+  assert(refContra.contradictions.some((c) => c.type === 'reference_title_description'), '[51] extraction : contradiction de référence signalée');
+
+  console.log('\n[51] OK');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// [52] ÉVOLUTION DES PRIX — rapprochement déterministe (identité produit)
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n[52] Évolution des prix — rapprochement déterministe');
+{
+  const { extractFeatures } = require('../src/main/services/history/featureExtractor');
+  const { compareReferences, decide, scoreMatch, DEFAULT_THRESHOLDS } = require('../src/main/services/history/productIdentity');
+
+  // Produit candidat construit comme le fait le registre (features → produit).
+  const mkProduct = (title) => {
+    const f = extractFeatures({ title });
+    return { id: title, reference: f.primaryReference, brand: f.brand, family: f.family, units: f.units, titleTokens: f.titleTokens, label: title, status: 'confirmed' };
+  };
+  const run = (title, cands, desc) => decide(extractFeatures(desc ? { title, description: desc } : { title }), cands);
+
+  // 52.1 Relation de référence.
+  assert(compareReferences('9600X', '9600X') === 'exact', '[52] compareReferences : identiques → exact');
+  assert(compareReferences('R59600X', '9600X') === 'partial', '[52] compareReferences : préfixe → partial');
+  assert(compareReferences('9600', '9600X') === 'conflict', '[52] compareReferences : suffixe de modèle → conflict');
+  assert(compareReferences('3060', '3060TI') === 'conflict', '[52] compareReferences : 3060 vs 3060 Ti → conflict');
+  assert(compareReferences('9600X', '5800X') === 'none', '[52] compareReferences : modèles sans lien → none');
+
+  const P9600X = mkProduct('AMD Ryzen 5 9600X');
+  const P9600 = mkProduct('AMD Ryzen 5 9600');
+
+  // 52.2 Cas 1 : deux formulations d'un même modèle → confirmées sur le même produit.
+  const c1 = run('AMD Ryzen 5 9600X neuf', [P9600X, P9600]);
+  assert(c1.decision === 'confirmed' && c1.product.id === P9600X.id, '[52] cas 1 : « AMD Ryzen 5 9600X neuf » → confirmé sur 9600X');
+  const c1b = run('Processeur AMD R5-9600X', [P9600X, P9600]);
+  assert(c1b.decision === 'confirmed' && c1b.product.id === P9600X.id, '[52] cas 1 : « R5-9600X » → confirmé sur 9600X');
+  const c1c = run('Ryzen 5 9600 X vendu seul', [P9600X, P9600]);
+  assert(c1c.decision === 'confirmed' && c1c.product.id === P9600X.id, '[52] cas 1 : « 9600 X vendu seul » → confirmé sur 9600X');
+
+  // 52.3 Cas 2 : références presque identiques mais différentes → jamais fusionnées.
+  const c2 = run('AMD Ryzen 5 9600', [P9600X, P9600]);
+  assert(c2.product.id === P9600.id, '[52] cas 2 : 9600 confirmé sur le produit 9600 (pas 9600X)');
+  const c2b = run('AMD Ryzen 5 9600X', [P9600]);
+  assert(c2b.decision === 'rejected' || c2b.recommendation === 'new', '[52] cas 2 : 9600X ne se rattache PAS au produit 9600');
+
+  // 52.4 Cas 3 : référence inédite → nouvelle identité provisoire.
+  const c3 = run('AMD Ryzen 5 7600X', [P9600X, P9600]);
+  assert(c3.recommendation === 'new', '[52] cas 3 : référence inconnue → nouvelle identité');
+
+  // 52.5 Cas 4 : annonce sans description → pas de rejet automatique.
+  const c4 = run('AMD Ryzen 5 9600X', [P9600X]);
+  assert(c4.decision === 'confirmed', '[52] cas 4 : sans description, référence exacte suffit à confirmer');
+
+  // 52.6 Cas 5 : annonce très vague → non identifiée (pas de produit inventé).
+  const c5 = run('processeur amd', [P9600X, P9600]);
+  assert(c5.decision !== 'confirmed', '[52] cas 5 : annonce vague → jamais confirmée');
+  assert(c5.recommendation === 'pending', '[52] cas 5 : annonce vague sans référence → file manuelle');
+
+  // 52.7 Cas 6 : contradiction titre/description → pas de confirmation automatique.
+  const c6 = run('AMD Ryzen 5 9600X', [P9600X], 'ne fonctionne plus, vendu pour pièces');
+  assert(c6.decision !== 'confirmed', '[52] cas 6 : contradiction titre/description → pas de confirmation auto');
+
+  // 52.8 Cas 7 : accessoire mentionnant le produit → exclu.
+  const c7 = run('Ventirad pour Ryzen 5 9600X', [P9600X]);
+  assert(c7.decision === 'rejected', '[52] cas 7 : accessoire → refusé');
+
+  // 52.9 Cas 8 : lot de plusieurs produits → exclu.
+  const c8 = run('Lot de 2 Ryzen 5 9600X', [P9600X]);
+  assert(c8.decision === 'rejected', '[52] cas 8 : lot → refusé');
+
+  // 52.10 Cas 9 : neuf vs hors service → l'annonce hors service est ASSOCIÉE au
+  // produit (pour la fiche) mais EXCLUE de la série de prix (non comparable).
+  const c9 = run('Ryzen 5 9600X hors service', [P9600X]);
+  assert(c9.recommendation === 'link', '[52] cas 9 : hors service → associé au produit (fiche) mais prix non comparable');
+  assert(c9.evaluation.contradictions.some((c) => c.type === 'condition_not_functional'),
+    '[52] cas 9 : motif « condition_not_functional » enregistré (exclusion de la série de prix)');
+
+  // 52.11 Cas 10 : plusieurs modèles d'une même famille → chacun sur son produit.
+  const c10a = run('RTX 3060 Ti 8 Go', [mkProduct('RTX 3060 12 Go'), mkProduct('RTX 3060 Ti 8 Go')]);
+  assert(c10a.product.reference === '3060TI', '[52] cas 10 : 3060 Ti rejoint le produit 3060 Ti');
+  const c10b = run('RTX 3060 12 Go', [mkProduct('RTX 3060 12 Go'), mkProduct('RTX 3060 Ti 8 Go')]);
+  assert(c10b.product.reference === '3060', '[52] cas 10 : 3060 rejoint le produit 3060');
+
+  // 52.12 Cas 11 : référence alphanumérique inédite reconnue sans catalogue.
+  const c11 = run('Carte graphique XYZ-9876 16 Go', []);
+  assert(c11.recommendation === 'new', '[52] cas 11 : référence inédite → nouvelle identité (sans catalogue)');
+
+  // 52.13 Cas 12 : alias contradictoires → hypothèses non fusionnées.
+  const c12 = run('Ryzen 5 9600X', [P9600X, P9600]);
+  assert(c12.product.id === P9600X.id && c12.runnerUp && c12.runnerUp.id === P9600.id,
+    '[52] cas 12 : le candidat concurrent reste identifiable (hypothèses coexistantes)');
+
+  // 52.14 Un score textuel élevé ne compense PAS une contradiction majeure.
+  const fakeSimilar = { id: 'fake', reference: '9600X', brand: 'amd', family: 'cpu', units: {}, titleTokens: extractFeatures({ title: 'AMD Ryzen 5 9600X neuf' }).titleTokens, label: 'fake', status: 'confirmed' };
+  const c14 = run('AMD Ryzen 5 9600X neuf', [fakeSimilar], 'vendu pour pièces, ne fonctionne plus');
+  assert(c14.decision === 'rejected', '[52] cas 14 : contradiction majeure prime sur la similarité textuelle');
+
+  // 52.15 Unités incompatibles (8 Go vs 16 Go) → refus.
+  const c15 = run('RTX 3060 Ti 8 Go', [mkProduct('RTX 3060 Ti 16 Go')]);
+  assert(c15.decision === 'rejected', '[52] cas 15 : capacités incompatibles → refus');
+
+  // 52.16 Seuils exposés et cohérents.
+  assert(DEFAULT_THRESHOLDS.CONFIRM_MIN > DEFAULT_THRESHOLDS.REJECT_MAX, '[52] seuils : CONFIRM_MIN > REJECT_MAX');
+  const scoreObj = scoreMatch(extractFeatures({ title: 'AMD Ryzen 5 9600X' }), P9600X);
+  assert(typeof scoreObj.score === 'number' && scoreObj.score >= 0 && scoreObj.score <= 100, '[52] score borné 0..100');
+
+  console.log('\n[52] OK');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// [53] ÉVOLUTION DES PRIX — statistiques & séries temporelles
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n[53] Évolution des prix — statistiques');
+{
+  const { describeValues, computeEvolution, buildSeries, buildProductStats, periodKey } = require('../src/main/services/history/priceStats');
+
+  // 53.1 Moyenne / médiane — résultats calculés INDÉPENDAMMENT de l'implémentation.
+  const d1 = describeValues([100, 200, 300, 400]);
+  assert(d1.mean === 250, '[53] moyenne de [100,200,300,400] = 250');
+  assert(d1.median === 250, '[53] médiane paire = moyenne des deux valeurs centrales (250)');
+  const d2 = describeValues([100, 200, 350]);
+  assert(d2.median === 200, '[53] médiane impaire = valeur centrale (200)');
+  assert(d2.mean === Math.round((650 / 3) * 100) / 100, '[53] moyenne = somme / n');
+  assert(d1.min === 100 && d1.max === 400, '[53] min/max corrects');
+
+  // 53.2 Ensemble vide → données insuffisantes (jamais 0).
+  const dEmpty = describeValues([]);
+  assert(dEmpty.sufficient === false && dEmpty.mean === null && dEmpty.median === null,
+    '[53] ensemble vide → données insuffisantes (pas 0)');
+  // Valeurs invalides filtrées.
+  assert(describeValues([100, NaN, 'x', Infinity]).count === 1, '[53] valeurs non finies ignorées');
+
+  // 53.3 Dispersion : écart-type d'échantillon + IQR.
+  const d3 = describeValues([10, 20, 30, 40, 50]);
+  assert(d3.stdDev === Math.round(Math.sqrt(250) * 100) / 100, '[53] écart-type échantillon (n-1)');
+  assert(d3.iqr === 20, '[53] écart interquartile = p75 - p25 (20)');
+  assert(describeValues([42]).stdDev === null, '[53] n=1 → dispersion non définie (null)');
+
+  // 53.4 Évolution : positive, négative, division par zéro.
+  const up = computeEvolution(100, 120);
+  assert(up.absolute === 20 && up.percent === 20 && up.direction === 'hausse', '[53] évolution positive (+20 %, +20)');
+  const down = computeEvolution(200, 150);
+  assert(down.absolute === -50 && down.percent === -25 && down.direction === 'baisse', '[53] évolution négative (-50, -25 %)');
+  const zeroInit = computeEvolution(0, 100);
+  assert(zeroInit.percent === null, '[53] division par zéro → pas de pourcentage');
+  assert(zeroInit.absolute === 100, '[53] variation absolue calculée malgré initial=0');
+  assert(computeEvolution(NaN, 100).absolute === null, '[53] initial invalide → aucune évolution');
+
+  // 53.5 Séries : déduplication par annonce et par période.
+  const obs = [
+    { adId: 1, observedAt: '2026-10-01T08:00:00Z', price: 100, priceValid: true },
+    { adId: 1, observedAt: '2026-10-01T18:00:00Z', price: 90, priceValid: true },  // même annonce, même jour
+    { adId: 2, observedAt: '2026-10-01T10:00:00Z', price: 200, priceValid: true },
+    { adId: 1, observedAt: '2026-10-03T10:00:00Z', price: 80, priceValid: true },  // nouveau jour
+  ];
+  const series = buildSeries(obs, { granularity: 'day' });
+  assert(series.points.length === 2, '[53] série : 2 jours avec données (pas de jour inventé)');
+  assert(series.points[0].period === '2026-10-01' && series.points[0].ads === 2,
+    '[53] série : annonce 1 comptée UNE fois pour le jour (2 annonces distinctes)');
+  // Le 02/10 n'a aucune donnée : il est ABSENT (jamais un zéro fabriqué).
+  assert(!series.points.some((p) => p.period === '2026-10-02'), '[53] série : aucune période sans données fabriquée');
+
+  // 53.6 buildProductStats : annonces distinctes ≠ observations.
+  const stats = buildProductStats(obs, { granularity: 'day', nowIso: '2026-10-05T00:00:00Z' });
+  assert(stats.distinctAds === 2, '[53] stats : 2 annonces distinctes');
+  assert(stats.observationsCount === 4, '[53] stats : 4 observations');
+  assert(stats.overall.mean === 140, '[53] stats : moyenne des dernières valeurs par annonce ((90+80+200)/... = 140)');
+  assert(stats.evolution.direction === 'baisse', '[53] stats : évolution calculée première→dernière période');
+  assert(stats.quality.confidence === 'insufficient', '[53] qualité : 2 annonces → fiabilité insuffisante');
+
+  // 53.7 Observations de prix invalides exclues mais comptées.
+  const withInvalid = buildProductStats([
+    { adId: 1, observedAt: '2026-10-01T00:00:00Z', price: 100, priceValid: true },
+    { adId: 2, observedAt: '2026-10-01T00:00:00Z', price: null, priceValid: false },
+  ], {});
+  assert(withInvalid.quality.excludedObservations === 1, '[53] stats : prix invalides comptés comme exclus');
+  assert(withInvalid.distinctAds === 1, '[53] stats : seules les annonces à prix valide comptent');
+
+  // 53.8 Segmentation par état : ne jamais mélanger neuf et hors service.
+  const segStats = buildProductStats([
+    { adId: 1, observedAt: '2026-10-01T00:00:00Z', price: 100, priceValid: true, condition: 'new' },
+    { adId: 2, observedAt: '2026-10-01T00:00:00Z', price: 300, priceValid: true, condition: 'new' },
+    { adId: 3, observedAt: '2026-10-01T00:00:00Z', price: 40, priceValid: true, condition: 'for_parts' },
+  ], {});
+  assert(segStats.segments.byCondition.new.count === 2, '[53] segments : 2 prix neufs');
+  assert(segStats.segments.byCondition.new.median === 200, '[53] segments : médiane neuf = 200');
+  assert(segStats.segments.byCondition.for_parts.median === 40, '[53] segments : hors service isolé (40)');
+  // Le prix hors service NE tire PAS la médiane globale vers le bas.
+  assert(segStats.overall.median === 200, '[53] hors service exclu de la série principale (médiane globale = 200)');
+  assert(segStats.quality.nonComparableAds === 1, '[53] nombre d\'annonces non comparables signalé');
+
+  // 53.9 Aucun prix valide → état « données insuffisantes ».
+  const noPrice = buildProductStats([{ adId: 1, observedAt: '2026-10-01T00:00:00Z', price: null, priceValid: false }], {});
+  assert(noPrice.sufficient === false && noPrice.reason === 'no_valid_prices', '[53] aucun prix valide → données insuffisantes');
+
+  // 53.10 periodKey : jour / semaine / mois.
+  assert(periodKey('2026-10-18T12:00:00Z', 'day') === '2026-10-18', '[53] periodKey jour');
+  assert(periodKey('2026-10-18T12:00:00Z', 'month') === '2026-10', '[53] periodKey mois');
+  assert(/^2026-W\d\d$/.test(periodKey('2026-10-18T12:00:00Z', 'week')), '[53] periodKey semaine');
+
+  console.log('\n[53] OK');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// [54] ÉVOLUTION DES PRIX — persistance, migrations, corrections
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n[54] Évolution des prix — persistance & migrations');
+{
+  const os = require('os');
+  const { PriceHistoryService } = require('../src/main/services/history/priceHistoryService');
+  const { PriceHistoryDb, isAvailable } = require('../src/main/services/history/priceHistoryDb');
+
+  if (!isAvailable()) {
+    console.log('  ⚠ node:sqlite indisponible — tests de persistance ignorés.');
+  } else {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vendra-ph-'));
+    const dbPath = path.join(dir, 'history.sqlite');
+    try {
+      // 54.1 Migration appliquée + version de schéma.
+      const db = PriceHistoryDb.open(dbPath);
+      assert(db.schemaVersion() >= 1, '[54] schéma migré (version >= 1)');
+      db.close();
+      // Idempotence des migrations : réouvrir ne casse rien.
+      const db2 = PriceHistoryDb.open(dbPath);
+      assert(db2.schemaVersion() >= 1, '[54] migrations idempotentes (réouverture OK)');
+      db2.close();
+
+      const svc = new PriceHistoryService({ dbPath });
+      const ads = [
+        { id: 'A1', title: 'AMD Ryzen 5 9600X neuf', url: 'https://lbc/A1', prix: 220 },
+        { id: 'A2', title: 'Ryzen 5 9600X', url: 'https://lbc/A2', prix: 200 },
+        { id: 'A3', title: 'Lot de 2 Ryzen 5 9600X', url: 'https://lbc/A3', prix: 400 },
+      ];
+      // 54.2 Ingestion initiale.
+      let r = svc.ingest(ads, { sourceJob: 'job-2026-10-01T10-00-00-000Z', observedAt: '2026-10-01T10:00:00.000Z' });
+      assert(r.ok && r.summary.processed === 3, '[54] ingestion : 3 annonces traitées');
+      assert(svc.stats().counts.ads === 3, '[54] ingestion : 3 annonces en base');
+
+      // 54.3 Idempotence : re-ingérer NE DUPLIQUE PAS les annonces.
+      r = svc.ingest(ads, { sourceJob: 'job-2026-10-01T10-00-00-000Z', observedAt: '2026-10-01T10:00:00.000Z' });
+      assert(svc.stats().counts.ads === 3, '[54] idempotence : toujours 3 annonces après re-collecte');
+      assert(r.summary.created === 0 && r.summary.updated === 3, '[54] idempotence : 0 créée, 3 mises à jour');
+      // Aucune observation identique dupliquée.
+      const obsAfterSame = svc.stats().counts.observations;
+      assert(obsAfterSame === 3, '[54] observations identiques non dupliquées (3 observations)');
+
+      // 54.4 Changement de prix → nouvelle observation CONSERVÉE.
+      svc.ingest([{ id: 'A1', title: 'AMD Ryzen 5 9600X neuf', url: 'https://lbc/A1', prix: 190 }],
+        { sourceJob: 'job-2026-10-05T10-00-00-000Z', observedAt: '2026-10-05T10:00:00.000Z' });
+      assert(svc.stats().counts.observations === 4, '[54] changement de prix → observation conservée (4)');
+
+      // 54.5 Le produit regroupe les annonces 9600X mais exclut le lot.
+      const products = svc.listProducts({}).products;
+      const p9600x = products.find((p) => p.reference === '9600X');
+      assert(!!p9600x, '[54] produit 9600X créé');
+      assert(p9600x.distinctAds === 2, '[54] produit 9600X : 2 annonces (lot exclu)');
+
+      const detail = svc.getProductDetail(p9600x.id);
+      assert(detail.includedAds.length === 2, '[54] fiche : 2 annonces incluses');
+      assert(detail.stats.series.points.length === 2, '[54] fiche : série sur 2 périodes');
+
+      // 54.6 Alias persisté.
+      assert(detail.aliases.length >= 1 && detail.aliases[0].alias === '9600X', '[54] alias 9600X persisté');
+
+      // 54.7 Persistance après fermeture/réouverture (redémarrage).
+      svc.close();
+      const svc2 = new PriceHistoryService({ dbPath });
+      const statsAfter = svc2.stats();
+      assert(statsAfter.counts.ads === 3 && statsAfter.counts.observations === 4, '[54] données conservées après redémarrage');
+      const productsAfter = svc2.listProducts({}).products;
+      assert(productsAfter.some((p) => p.reference === '9600X'), '[54] produits conservés après redémarrage');
+
+      // 54.8 Correction manuelle : rejeter une annonce → exclue des séries.
+      const pending = svc2.listPending({}).pending;
+      const rejectedAd = pending.find((p) => p.title === 'Lot de 2 Ryzen 5 9600X');
+      assert(!!rejectedAd, '[54] le lot est en file (rejeté/incertain)');
+      // Correction : confirmer l'annonce A2 dans le produit 9600X explicitement.
+      const p9600x2 = productsAfter.find((p) => p.reference === '9600X');
+      const adA2 = svc2.engine().db.getAdBySourceId('A2');
+      const corr = svc2.correct(adA2.id, { type: 'confirm', productId: p9600x2.id });
+      assert(corr.ok, '[54] correction manuelle acceptée');
+      // La correction est persistée et l'association est marquée manuelle.
+      const link = svc2.engine().db.getLink(adA2.id);
+      assert(link.link_status === 'manual', '[54] correction manuelle marquée « manual »');
+      // Re-ingérer NE DOIT PAS écraser la correction manuelle.
+      svc2.ingest([{ id: 'A2', title: 'Ryzen 5 9600X', url: 'https://lbc/A2', prix: 210 }],
+        { sourceJob: 'job-2026-10-06T10-00-00-000Z', observedAt: '2026-10-06T10:00:00.000Z' });
+      const linkAfter = svc2.engine().db.getLink(adA2.id);
+      assert(linkAfter.link_status === 'manual', '[54] correction manuelle NON écrasée par le moteur auto');
+
+      // 54.9 Recalcul après correction : les stats restent cohérentes.
+      const recompute = svc2.recompute(p9600x2.id);
+      assert(recompute.ok && recompute.stats.distinctAds >= 1, '[54] recalcul des statistiques après correction');
+
+      // 54.10 Migration depuis des jobs existants (amorçage).
+      const fakeJobs = [
+        { id: 'job-2026-09-01T10-00-00-000Z', ads: [{ id: 'B1', title: 'Intel Core i5 13600K', url: 'https://lbc/B1', prix: 250 }] },
+        { id: 'job-2026-09-02T10-00-00-000Z', ads: [{ id: 'B1', title: 'Intel Core i5 13600K', url: 'https://lbc/B1', prix: 230 }] },
+      ];
+      const boot = svc2.bootstrapFromJobs(fakeJobs);
+      assert(boot.ok && boot.ads === 2, '[54] amorçage : 2 annonces traitées depuis les jobs');
+      // B1 n'existe qu'une fois (déduplication inter-jobs).
+      const b1 = svc2.engine().db.getAdBySourceId('B1');
+      assert(!!b1, '[54] amorçage : annonce B1 présente');
+      const b1obs = svc2.engine().db.listObservations(b1.id);
+      assert(b1obs.length === 2, '[54] amorçage : les 2 prix distincts sont conservés (datés par le job)');
+      assert(b1obs[0].observed_at.startsWith('2026-09-01'), '[54] amorçage : date réelle du job, pas de date inventée');
+
+      // 54.11 Gestion d'erreur d'écriture : une annonce invalide est isolée.
+      const bad = svc2.ingest([{ id: null, url: null, title: 'sans identifiant' }], {});
+      assert(bad.ok && bad.summary.errors === 1 && bad.summary.processed === 0, '[54] annonce sans identifiant/URL isolée (pas de crash)');
+
+      // 54.12 Distinction LIVE / IMPORTÉ : une observation de collecte réelle est
+      // 'live' ; une migration depuis un job est 'imported' (sa date n'est jamais
+      // présentée comme une date de collecte).
+      const liveObs = svc2.engine().db.listObservations(svc2.engine().db.getAdBySourceId('A1').id);
+      assert(liveObs.some((o) => o.origin === 'live'), '[54] observation de collecte marquée « live »');
+      const b1origin = svc2.engine().db.listObservations(b1.id).map((o) => o.origin);
+      assert(b1origin.every((o) => o === 'imported'), '[54] observations importées marquées « imported »');
+
+      // 54.13 Un job SANS date exploitable ne fabrique JAMAIS de date : son
+      // observation est marquée « imported » et datée de la première vue.
+      const noDateJob = [{ id: 'dossier-sans-date', ads: [{ id: 'C1', title: 'AMD Ryzen 5 7600X', url: 'https://lbc/C1', prix: 180 }] }];
+      const boot2 = svc2.bootstrapFromJobs(noDateJob);
+      assert(boot2.ok && boot2.importedWithoutDate === 1, '[54] job sans date → signalé « sans date »');
+      const c1obs = svc2.engine().db.listObservations(svc2.engine().db.getAdBySourceId('C1').id);
+      assert(c1obs.length === 1 && c1obs[0].origin === 'imported', '[54] job sans date → observation marquée « imported » (pas de date inventée)');
+
+      svc2.close();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  console.log('\n[54] OK');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// [55] ÉVOLUTION DES PRIX — intégration (IPC, DOM, sécurité)
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n[55] Évolution des prix — intégration');
+{
+  const repoRoot = path.join(__dirname, '..');
+  const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
+
+  // 55.1 Contrat IPC : chaque canal preload a un handler main.
+  const preload = read('src/main/preload.js');
+  const ipc = read('src/main/core/ipcHandlers.js');
+  const preloadChans = [...preload.matchAll(/ipcRenderer\.invoke\('(history:[^']+)'/g)].map((m) => m[1]);
+  const handledChans = new Set([...ipc.matchAll(/ipcMain\.handle\('(history:[^']+)'/g)].map((m) => m[1]));
+  assert(preloadChans.length >= 8, '[55] preload expose les canaux history:*');
+  const unhandled = preloadChans.filter((c) => !handledChans.has(c));
+  assert(unhandled.length === 0, `[55] tous les canaux history:* ont un handler (${unhandled.join(', ')})`);
+
+  // 55.2 Le renderer n'expose AUCUN accès SQL : pas de require('node:sqlite')
+  // ni de canal générique d'exécution.
+  const rendererFiles = ['src/renderer/priceEvolutionModule.js', 'src/renderer/app.js', 'src/renderer/utils.js'];
+  for (const f of rendererFiles) {
+    const code = read(f);
+    assert(!/node:sqlite|require\(['"]sqlite/.test(code), `[55] ${f} : aucun accès direct à SQLite`);
+  }
+  assert(!/ipcMain\.handle\(['"]db:exec/.test(ipc) && !/executeSql|runSql|db:query/.test(ipc),
+    '[55] aucun canal SQL générique exposé (pas d\'injection possible depuis le renderer)');
+
+  // 55.3 Validation des entrées IPC : les options sont bornées côté main.
+  assert(/sanitizeHistoryOpts/.test(ipc), '[55] options history:* assainies côté main');
+  assert(/CORRECTION_ACTIONS/.test(ipc), '[55] actions de correction limitées à une liste blanche');
+
+  // 55.4 L'onglet est présent et câblé.
+  const html = read('src/renderer/index.html');
+  assert(/data-tab="tab-price-evolution"/.test(html), '[55] bouton de navigation de l\'onglet présent');
+  assert(/id="tab-price-evolution"/.test(html), '[55] section tab-price-evolution présente');
+  assert(/src="priceEvolutionModule.js"/.test(html), '[55] module renderer chargé');
+  const appJs = read('src/renderer/app.js');
+  assert(/tab-price-evolution['"]\)\s*\{\s*\n?\s*loadPriceEvolutionPage\(\)/.test(appJs) || /loadPriceEvolutionPage\(\)/.test(appJs),
+    '[55] app.js déclenche le chargement de l\'onglet');
+  // Les scripts sont chargés AVANT app.js (ordre d\'exécution).
+  const idxScript = html.indexOf('priceEvolutionModule.js');
+  const idxApp = html.indexOf('src="app.js"');
+  assert(idxScript >= 0 && idxApp >= 0 && idxScript < idxApp, '[55] priceEvolutionModule chargé avant app.js');
+
+  // 55.5 Le renderer échappe les données issues de la base (XSS).
+  const pe = read('src/renderer/priceEvolutionModule.js');
+  assert(/escapeHtml\(/.test(pe), '[55] module : descriptions/titres échappés (escapeHtml)');
+  assert(!/innerHTML\s*=\s*[^;]*\+\s*p\.title(?!\S)/.test(pe) || /escapeHtml\(p\.title/.test(pe),
+    '[55] module : titres jamais injectés bruts dans innerHTML');
+
+  // 55.6 L\'ingestion est branchée sur la fin de collecte (hook ipcHandlers).
+  assert(/priceHistoryService/.test(ipc) && /histService\.ingest\(/.test(ipc),
+    '[55] ipcHandlers : ingestion de l\'historique après collecte');
+  // Isolation : l\'ingestion est dans un try/catch (une erreur n\'échoue pas le job).
+  assert(/catch \(histErr\)/.test(ipc), '[55] ipcHandlers : erreur d\'historique isolée du job');
+
+  // 55.7 Le module de persistance reste importable sans Electron.
+  const dbCode = read('src/main/services/history/priceHistoryDb.js');
+  assert(!/require\(['"]electron['"]\)/.test(dbCode), '[55] priceHistoryDb : aucune dépendance Electron');
+  const statsCode = read('src/main/services/history/priceStats.js');
+  assert(!/require\(['"]electron['"]\)/.test(statsCode), '[55] priceStats : aucune dépendance Electron');
+
+  console.log('\n[55] OK');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// [56] ÉVOLUTION DES PRIX — règles de prix (invalides, atypiques, devises)
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n[56] Évolution des prix — règles de prix');
+{
+  const { analyzePrice, normalizeCurrency, detectOutliers, deliveryAvailability } = require('../src/main/services/history/priceRules');
+
+  // 56.1 Prix valides (number et chaîne FR).
+  assert(analyzePrice(1250).valid === true, '[56] prix numérique valide');
+  assert(analyzePrice('1 250 €').value === 1250, '[56] prix « 1 250 € » → 1250');
+  assert(analyzePrice('1.299,99').value === 1299.99, '[56] prix « 1.299,99 » → 1299,99');
+
+  // 56.2 Prix absents / nuls / négatifs / non numériques → exclus avec motif.
+  assert(analyzePrice(null).excluded === true && analyzePrice(null).reason === 'missing', '[56] prix absent → motif « missing »');
+  assert(analyzePrice('').reason === 'missing', '[56] prix vide → motif « missing »');
+  assert(analyzePrice(0).reason === 'zero' && analyzePrice(0).excluded === true, '[56] prix 0 → exclu (motif « zero »)');
+  assert(analyzePrice(-10).reason === 'negative', '[56] prix négatif → exclu');
+  assert(analyzePrice('sur demande').reason === 'non_numeric', '[56] « sur demande » → non numérique');
+  assert(analyzePrice('gratuit').reason === 'non_numeric', '[56] « gratuit » → non numérique');
+  assert(analyzePrice(999999999).reason === 'absurd', '[56] prix manifestement aberrant → exclu');
+
+  // 56.3 Prix « négociable » : on extrait la valeur numérique si présente.
+  const neg = analyzePrice('100 € négociable');
+  assert(neg.valid === true && neg.value === 100, '[56] « 100 € négociable » → 100 (valeur conservée)');
+
+  // 56.4 Prix symbolique : conservé (flag), jamais supprimé.
+  const sym = analyzePrice(1);
+  assert(sym.valid === true && sym.flags.includes('symbolic'), '[56] prix symbolique conservé + signalé');
+
+  // 56.5 Devises.
+  assert(normalizeCurrency('€') === 'EUR' && normalizeCurrency(undefined) === 'EUR', '[56] devise par défaut EUR');
+  assert(normalizeCurrency('$') === 'USD' && normalizeCurrency('chf') === 'CHF', '[56] devises reconnues');
+  assert(analyzePrice(100, { currency: '$' }).currency === 'USD', '[56] devise propagée dans l\'analyse');
+  assert(normalizeCurrency('XYZ') === 'XYZ', '[56] devise inconnue conservée telle quelle (pas de conversion inventée)');
+
+  // 56.6 Détection d'atypiques (IQR) — signale SANS supprimer.
+  const out = detectOutliers([100, 105, 110, 115, 120, 5000]);
+  assert(out && out.outliers.includes(5000), '[56] prix aberrant signalé par IQR (conservé, non supprimé)');
+  assert(detectOutliers([100, 200]) === null, '[56] trop peu de points → pas d\'analyse IQR');
+
+  // 56.7 Coûts supplémentaires : disponibilité de livraison (jamais un montant inventé).
+  assert(deliveryAvailability({ deliveryType: 'livraison' }).shippingAvailable === true, '[56] livraison disponible détectée');
+  assert(deliveryAvailability({ deliveryType: 'main_propre' }).shippingAvailable === false, '[56] main propre → livraison non disponible');
+  assert(deliveryAvailability({ deliveryType: 'les_deux' }).shippingAvailable === true
+    && deliveryAvailability({ deliveryType: 'les_deux' }).handDeliveryAvailable === true,
+    '[56] les_deux → livraison ET main propre');
+  assert(deliveryAvailability({}).shippingAvailable === false, '[56] deliveryType inconnu → aucune supposition');
+
+  console.log('\n[56] OK');
+}
+
 
 console.log(`\n=== RÉSULTAT : ${pass} réussis, ${fail} échoués ===`);
 process.exit(fail > 0 ? 1 : 0);

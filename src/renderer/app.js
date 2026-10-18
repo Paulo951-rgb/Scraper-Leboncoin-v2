@@ -86,6 +86,9 @@ document.querySelectorAll('[data-tab]').forEach((btn) => {
         }
       }, 200);
     }
+    if (btn.dataset.tab === 'tab-price-evolution') {
+      loadPriceEvolutionPage();
+    }
   });
 });
 
