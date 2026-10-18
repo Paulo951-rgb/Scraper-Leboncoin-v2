@@ -6632,6 +6632,123 @@ console.log('\n[62] F2 — persistance atomique de la session validée');
   console.log('\n[62] OK');
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// [63] TESTS SIMULÉS D'ACCÈS — 403 Datadome, 429, timeout, résultats valides,
+//      page de résultats vide. AUCUNE requête réelle vers Leboncoin : tous les
+//      contextes/réponses sont des mocks (le réseau n'est jamais touché).
+//   Vérifie la classification honnête de `_detectAccessBlock`, la distinction
+//   « page de résultats » vs « page de défi », et l'absence de faux positif
+//   CAPTCHA sur une page de résultats contenant des mots génériques.
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n[63] Tests simulés d\'accès (403 Datadome / 429 / timeout / résultats / vide)');
+{
+  const { HarCapturer } = require('../src/main/services/scraping/harCapturer');
+
+  // Fabrique un `page` mock dont `evaluate` renvoie un DOM simulé et `url()`
+  // renvoie l'URL demandée. Aucune navigation réelle.
+  const mkPage = ({ url = 'https://www.leboncoin.fr/recherche?text=rtx', text = '', adCards = 0, captchaIframe = false, cfChallenge = false } = {}) => ({
+    url() { return url; },
+    async evaluate() { return { text, hasCaptchaIframe: captchaIframe, cfChallenge, adCards }; },
+  });
+
+  // 63.1 403 Datadome (page de défi servie en 403).
+  {
+    const cap = new HarCapturer();
+    const page = mkPage({ url: 'https://geo.captcha-delivery.com/captcha/', text: 'captcha-delivery vérification de sécurité', captchaIframe: true });
+    const r = await cap._detectAccessBlock(page, 403);
+    assert(r.blocked === true && r.kind === 'captcha',
+      '[63] 403 Datadome → classé défi CAPTCHA (défi humain résoluble)');
+  }
+
+  // 63.2 403 nu sans contenu de défi → blocage HTTP (aucune fenêtre CAPTCHA).
+  {
+    const cap = new HarCapturer();
+    const page = mkPage({ text: 'contenu vide' });
+    const r = await cap._detectAccessBlock(page, 403);
+    assert(r.blocked === true && r.kind === 'http' && r.httpStatus === 403,
+      '[63] 403 nu → blocage HTTP (pas de fenêtre CAPTCHA inutile)');
+  }
+
+  // 63.3 429 → blocage HTTP (le code d'arrêt distingue 429 pour Retry-After).
+  {
+    const cap = new HarCapturer();
+    const page = mkPage({ text: 'trop de requêtes' });
+    const r = await cap._detectAccessBlock(page, 429);
+    assert(r.blocked === true && r.kind === 'http' && r.httpStatus === 429,
+      '[63] 429 → blocage HTTP 429 (rate limiting, jamais confondu avec un CAPTCHA)');
+  }
+
+  // 63.4 5xx → blocage HTTP (ne doit PAS être confondu avec un 403 anti-bot).
+  {
+    const cap = new HarCapturer();
+    const page = mkPage({ text: 'erreur serveur' });
+    const r = await cap._detectAccessBlock(page, 503);
+    assert(r.blocked === true && r.kind === 'http' && r.httpStatus === 503,
+      '[63] 5xx → blocage HTTP (classé distinctement, pas un refus anti-bot)');
+  }
+
+  // 63.5 Timeout : la navigation échoue (httpStatus=null) et l'évaluation lève
+  //      → état INDÉTERMINÉ (jamais « non bloqué », jamais un succès présumé).
+  {
+    const cap = new HarCapturer();
+    const page = { url() { return 'https://www.leboncoin.fr/recherche?text=rtx'; }, async evaluate() { throw new Error('Timeout 35000ms exceeded'); } };
+    const r = await cap._detectAccessBlock(page, null);
+    assert(r.blocked === false && r.evaluationFailed === true,
+      '[63] timeout/évaluation impossible → INDÉTERMINÉ (evaluationFailed), pas « non bloqué »');
+  }
+
+  // 63.6 Page de résultats valide (cart 12) contenant des mots GÉNÉRIQUES
+  //      (« robot », « vérification ») → PAS un CAPTCHA (faux positif évité).
+  {
+    const cap = new HarCapturer();
+    const page = mkPage({ text: 'aspirateur robot autonome vérification garantie annonces leboncoin', adCards: 12 });
+    const r = await cap._detectAccessBlock(page, 200);
+    assert(r.blocked === false,
+      '[63] page de résultats avec « robot »/« vérification » → NON classée CAPTCHA (pas de fenêtre inutile)');
+  }
+
+  // 63.7 Page de résultats valide SANS mot piège → non bloquée.
+  {
+    const cap = new HarCapturer();
+    const page = mkPage({ text: 'annonces leboncoin rtx 3060', adCards: 20 });
+    const r = await cap._detectAccessBlock(page, 200);
+    assert(r.blocked === false, '[63] page de résultats normale → non bloquée');
+  }
+
+  // 63.8 Page 200 VIDE (aucune carte, aucun marqueur) → non bloquée par
+  //      _detectAccessBlock (l'absence de résultats est traitée séparément par
+  //      _looksLikeEmptyResults, jamais comme un CAPTCHA).
+  {
+    const cap = new HarCapturer();
+    const page = mkPage({ text: '', adCards: 0 });
+    const r = await cap._detectAccessBlock(page, 200);
+    assert(r.blocked === false,
+      '[63] page 200 vide → non classée blocage (traitée par la détection de page vide)');
+  }
+
+  // 63.9 Page « Accès temporairement restreint » (HTTP 200) → restricted,
+  //      JAMAIS un CAPTCHA (aucun défi humain à résoudre).
+  {
+    const cap = new HarCapturer();
+    const page = mkPage({ text: 'accès temporairement restreint pourquoi ce blocage un robot est sur le même réseau que vous', adCards: 0 });
+    const r = await cap._detectAccessBlock(page, 200);
+    assert(r.blocked === true && r.kind === 'restricted',
+      '[63] page « Accès temporairement restreint » → restricted (jamais un CAPTCHA)');
+  }
+
+  // 63.10 Page CloudFront (HTTP 200) → cloudfront (refus périphérique).
+  {
+    const cap = new HarCapturer();
+    const page = mkPage({ text: '403 error request blocked the request could not be satisfied generated by cloudfront', adCards: 0 });
+    const r = await cap._detectAccessBlock(page, 200);
+    assert(r.blocked === true && r.kind === 'cloudfront',
+      '[63] page CloudFront 200 → cloudfront (refus périphérique, pas un CAPTCHA)');
+  }
+
+  console.log('\n[63] OK');
+}
+
+
 console.log(`\n=== RÉSULTAT : ${pass} réussis, ${fail} échoués ===`);
 process.exit(fail > 0 ? 1 : 0);
 }

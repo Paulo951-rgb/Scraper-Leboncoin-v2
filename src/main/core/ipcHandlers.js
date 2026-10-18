@@ -135,6 +135,10 @@ function setupIpcHandlers(getMainWindow) {
       rawAds: 0,
       adsFound: 0, adsKept: 0, adsDuplicates: 0,
       descriptionsExtracted: 0, descriptionsFailed: 0, descriptionsBlocked: 0,
+      // Blocages d'ACCÈS distincts (ne pas confondre avec descriptionsBlocked) :
+      //   accessBlocks : nombre de refus d'accès observés (403/429/5xx, page
+      //                  Datadome/restreinte, CAPTCHA) — capture ET enrichissement.
+      accessBlocks: 0,
       adsIgnored: 0, adsIgnoredReason: null,
       errors: 0, warnings: 0, debugs: 0,
       stoppedEarly: false,
@@ -175,7 +179,8 @@ function setupIpcHandlers(getMainWindow) {
       `  🔄 Doublons fusionnés   : ${sessionStats.adsDuplicates}`,
       `  📝 Descriptions récupérées: ${sessionStats.descriptionsExtracted}`,
       `  ⚠️  Enrichissements échoués: ${sessionStats.descriptionsFailed}`,
-      `  🛑 Blocages d'accès     : ${sessionStats.descriptionsBlocked} (HTTP 403/429)`,
+      `  🛑 Blocages d'accès     : ${sessionStats.accessBlocks} (403/429/5xx/CAPTCHA/restriction)`,
+      `  🛑 Blocages d'enrichissement: ${sessionStats.descriptionsBlocked} (HTTP 403/429)`,
       `  🚫 Annonces ignorées     : ${sessionStats.adsIgnored}${sessionStats.adsIgnoredReason ? ` (${sessionStats.adsIgnoredReason})` : ''}`,
       `  ❌ Erreurs              : ${sessionStats.errors}`,
       `  ⚠️  Avertissements      : ${sessionStats.warnings}`,
@@ -279,7 +284,17 @@ function setupIpcHandlers(getMainWindow) {
         // le résumé et le message final. Il ne contient AUCUN secret (URL masquée,
         // statut, classification, décision) — jamais les cookies/session.
         const m = (data && data.message ? data.message : '').match(/\[ACCESS_DIAG\]\s+(\{.*\})\s*$/);
-        if (m) { try { sessionStats.accessDiag = JSON.parse(m[1]); } catch { /* ligne non JSON → ignorée */ } }
+        if (m) {
+          try {
+            sessionStats.accessDiag = JSON.parse(m[1]);
+            // Compte un BLOCAGE D'ACCÈS réel observé par la capture (arrêt sur
+            // refus : 403/429/5xx, page restreinte, CloudFront, CAPTCHA non
+            // résolu). Sans cela, le résumé affichait « Blocages d'accès : 0 »
+            // alors que les logs montraient clairement des 403 et un CAPTCHA.
+            const d = sessionStats.accessDiag;
+            if (d && d.blocked === true) sessionStats.accessBlocks++;
+          } catch { /* ligne non JSON → ignorée */ }
+        }
       });
       activeCapturer.on('progress', ({ currentPage, totalPages, percent, status }) => {
         sendProgress({ percent: Math.round(percent * 0.25), status: `[HAR] ${status}` });
@@ -398,15 +413,19 @@ function setupIpcHandlers(getMainWindow) {
         const descMatch = msg.match(/✅\s*\[(\d+)\/\d+\]/);
         if (descMatch) sessionStats.descriptionsExtracted = Math.max(sessionStats.descriptionsExtracted, parseInt(descMatch[1], 10));
         // Compter les blocages d'accès (403/429) — formats actuels et historiques.
-        if (msg.includes('Accès refusé (HTTP 403)') || msg.includes('Bloqué (HTTP 403') || msg.includes('BLOCKED_403')) sessionStats.descriptionsBlocked++;
-        else if (msg.includes('Requête limitée (HTTP 429)') || msg.includes('BLOCKED_429')) sessionStats.descriptionsBlocked++;
+        if (msg.includes('Accès refusé (HTTP 403)') || msg.includes('Bloqué (HTTP 403') || msg.includes('BLOCKED_403')) { sessionStats.descriptionsBlocked++; sessionStats.accessBlocks++; }
+        else if (msg.includes('Requête limitée (HTTP 429)') || msg.includes('BLOCKED_429')) { sessionStats.descriptionsBlocked++; sessionStats.accessBlocks++; }
         // Blocage d'accès structuré remonté par l'enrichissement (403/429/arrêt
         // préventif) → succès partiel honnête.
         if (msg.includes('[HTTP_ACCESS_REFUSED]') || msg.includes('[HTTP_429]') || msg.includes('[HTTP_RATE_LIMITED]')) {
           sessionStats.accessBlocked = true;
+          sessionStats.accessBlocks++;
           sessionStats.accessCode = msg.includes('[HTTP_RATE_LIMITED]') || msg.includes('[HTTP_429]') ? 'HTTP_RATE_LIMITED' : 'HTTP_ACCESS_REFUSED';
         }
-        if (msg.includes('Blocage détecté. Arrêt préventif')) sessionStats.accessBlocked = true;
+        // Signal d'arrêt STRUCTURÉ du pipeline : un blocage a été observé (403/429/
+        // restriction) → on l'ajoute aux « Blocages d'accès » du résumé.
+        if (stopMatch) sessionStats.accessBlocks++;
+        if (msg.includes('Blocage détecté. Arrêt préventif')) { sessionStats.accessBlocked = true; sessionStats.accessBlocks++; }
       });
 
       activeRunner.on('progress', ({ percent, status, eta }) => {
@@ -526,6 +545,7 @@ function setupIpcHandlers(getMainWindow) {
         const isRestricted = err.code === 'ACCESS_RESTRICTED';
         sessionStats.accessUnverified = true;
         sessionStats.accessBlocked = true;
+        sessionStats.accessBlocks++;
         sessionStats.accessCode = isRestricted ? 'ACCESS_RESTRICTED' : 'ACCESS_UNVERIFIED';
         sessionStats.errors++;
         sendLog({ level: 'error', message: isRestricted
