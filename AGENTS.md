@@ -547,7 +547,15 @@ historique de prix par produit. **Aucune IA** : tout est déterministe.
   `[61]` **DURCISSEMENT DU LANCEMENT CHROMIUM** (`launchOptionsFor` partagé :
   `ignoreDefaultArgs:['--enable-automation']` + args anti-détection ;
   `navigator.webdriver === false` côté moteur, mesuré sur le Chromium embarqué
-  si `VENDRA_REAL_BROWSER_TEST=1`).
+  si `VENDRA_REAL_BROWSER_TEST=1`),
+  `[62]` **SESSION VALIDÉE PERSISTÉE (F2) + FIABILITÉ DE LA SONDE D'ACCÈS (F1)**
+  (remplacement ATOMIQUE de `global-session.json` par `_persistValidatedSession` —
+  un ancien fichier n'empêche plus la sauvegarde d'une session validée, échec =
+  ancien fichier intact + marqueur conservé + aucun `.tmp-*` résiduel ;
+  `_classifyAccessObservation` distingue 403/429/5xx de CloudFront, 200 vide =
+  `unknown_page` jamais un succès ; `_resolveProbeRestriction` : observations
+  contradictoires navigateur↔sonde → `ACCESS_UNVERIFIED` prudent, jamais un refus
+  définitif ni une persistance).
 - Le test stub `electron` : BrowserWindow a `webContents.send` mais PAS `isDestroyed`.
 - Test navigateur réel (opt-in) : `VENDRA_REAL_BROWSER_TEST=1 node test/regression.test.js`
   lance le Chromium embarqué et vérifie la valeur EFFECTIVE de `navigator.webdriver`
@@ -810,6 +818,27 @@ Sans Wine, `-c.win.signAndEditExecutable=false` permet de produire `dist/win-unp
   utilisateur : IPC `session:reset` (bouton « Réinitialiser la session ») qui
   supprime session + marqueur — chemins reconstruits côté main, jamais fournis
   par le renderer. Test `[60]`.
+- **Session validée NON persistée si un fichier existe (bug F2)** :
+  `_warmupSession` ne persistait la session que si `GLOBAL_SESSION_PATH`
+  N'EXISTAIT PAS (`if (!fs.existsSync(...))`) → un ancien `global-session.json`
+  (potentiellement empoisonné) bloquait tout rafraîchissement : la session
+  fraîchement validée n'était jamais écrite, et l'app réutilisait indéfiniment
+  l'ancienne. Corrigé par `_persistValidatedSession(ctx, where)` : écriture dans
+  un fichier TEMPORAIRE, validation JSON, puis `rename` ATOMIQUE (remplace
+  toujours l'ancien). En cas d'échec : ancien fichier intact, `.tmp-*` nettoyé,
+  marqueur de restriction CONSERVÉ (on ne lève `_clearSessionRestricted()` QUE si
+  la persistance a réussi). Ne jamais revenir à une condition d'existence du
+  fichier. Test `[62]`.
+- **Sonde HTTP isolée ≠ navigation navigateur (bug F1)** : `_probeAccessStatus`
+  utilise `ctx.request.get`, un client HTTP distinct de Chromium (pas de TLS/HTTP2
+  ni de rendu JS identiques). Une réponse `access_restricted` de la sonde seule ne
+  prouve PAS que le NAVIGATEUR est restreint. `_classifyAccessObservation`
+  distingue les statuts (403/429/5xx ≠ CloudFront ; 200 vide = `unknown_page`,
+  jamais un succès) et `_resolveProbeRestriction({ browserObserved })` renvoie
+  `ACCESS_UNVERIFIED` (prudent, aucune persistance) quand navigateur et sonde se
+  contredisent — un refus n'est définitif que si le navigateur l'a aussi observé
+  ou si la navigation a échoué (sonde seule). Ne jamais transformer une sonde
+  isolée en verdict définitif. Test `[62]`.
 - **Comptage des cartes d'annonces STRICT** : `countAdCards`/`looksLikeResultsPage`
   ne doivent PAS matcher `[data-test-id*="ad"]` (sous-chaîne) — cela comptait
   `header`, `badge`, `advertisement`… et faisait passer une page de refus pour une
