@@ -6306,6 +6306,332 @@ console.log('\n[61] Contournement anti-bot : durcissement du lancement Chromium'
   console.log('\n[61] OK');
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// [62] CORRECTION F2 — PERSISTANCE DE LA SESSION VALIDÉE (remplacement atomique)
+//   Bug : `_warmupSession` ne persistait la session que si GLOBAL_SESSION_PATH
+//   N'EXISTAIT PAS. Un ancien fichier (potentiellement empoisonné) empêchait donc
+//   tout rafraîchissement : la session fraîchement validée n'était jamais écrite.
+//   Correction : `_persistValidatedSession` écrit en fichier temporaire, valide le
+//   JSON, puis REMPLACE atomiquement (rename). Le marqueur de restriction n'est
+//   levé QUE si la persistance a réussi.
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n[62] F2 — persistance atomique de la session validée');
+{
+  const os = require('os');
+  const Module = require('module');
+  const repoRoot = path.join(__dirname, '..');
+
+  // Base de données isolée : aucune écriture dans les vraies données utilisateur.
+  const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), 'vendra-f2-'));
+  const sessionPaths = require('../src/main/services/scraping/sessionPaths');
+  const globalPath = sessionPaths.getGlobalSessionPath(tmpBase);
+  const flagPath = sessionPaths.getRestrictedFlagPath(tmpBase);
+
+  // Charge une instance FRAÎCHE de HarCapturer avec des constantes pointant sur
+  // la base temporaire (isole GLOBAL_SESSION_PATH / RESTRICTED_SESSION_FLAG_PATH).
+  function loadHarCapturerIsolated(launchImpl) {
+    const constantsPath = require.resolve('../src/main/config/constants');
+    const harPath = require.resolve('../src/main/services/scraping/harCapturer');
+    const sessionPathsPath = require.resolve('../src/main/services/scraping/sessionPaths');
+    const orig = Module._load;
+    const stub = { chromium: { launch: launchImpl || (async () => { throw new Error('no launch'); }) } };
+    const isolated = {
+      __esModule: true,
+      BASE_OUT_DIR: tmpBase,
+      GLOBAL_SESSION_PATH: globalPath,
+      RESTRICTED_SESSION_FLAG_PATH: flagPath,
+      APP_NAME: 'Vendra',
+      JOBS_DIR: path.join(tmpBase, 'jobs'),
+    };
+    Module._load = function (request, parent, isMain) {
+      if (request === 'playwright') return stub;
+      if (request === '../../config/constants') return isolated;
+      return orig.apply(this, arguments);
+    };
+    try {
+      for (const p of [constantsPath, harPath, sessionPathsPath]) delete require.cache[p];
+      return require(harPath).HarCapturer;
+    } finally {
+      Module._load = orig;
+    }
+  }
+
+  // Contexte simulé dont storageState écrit un JSON valide dans le chemin demandé.
+  const mkCtx = (stateJson, opts = {}) => ({
+    async route() {}, async setExtraHTTPHeaders() {}, async addInitScript() {},
+    async newPage() {
+      return {
+        async goto() { return { status: () => 200 }; },
+        url() { return 'https://www.leboncoin.fr/recherche?text=rtx'; },
+        async evaluate() { return { text: 'page neutre sans annonce', matched: null, hasCaptchaIframe: false, cfChallenge: false, adCards: 0 }; },
+        on() {}, async close() {}, async waitForLoadState() {},
+      };
+    },
+    async close() {},
+    async storageState(o) {
+      if (opts.fail) throw new Error('disque plein (simulé)');
+      if (!o || !o.path) return { cookies: [], origins: [] };
+      fs.mkdirSync(path.dirname(o.path), { recursive: true });
+      fs.writeFileSync(o.path, stateJson);
+      return JSON.parse(stateJson);
+    },
+  });
+
+  const resultsHtml = '<html><body><a href="https://www.leboncoin.fr/ad/ordinateurs/123">x</a></body></html>';
+  const resultsState = JSON.stringify({ cookies: [{ name: 'sess', value: 'FRESH', domain: '.leboncoin.fr' }], origins: [] });
+
+  const mkResultsPage = () => ({
+    async goto() { return { status: () => 200 }; },
+    url() { return 'https://www.leboncoin.fr/recherche?text=rtx'; },
+    async evaluate() { return { text: 'annonces leboncoin rtx', matched: null, hasCaptchaIframe: false, cfChallenge: false, adCards: 12 }; },
+    on() {}, async close() {}, async waitForLoadState() {},
+  });
+  const mkResultsCtx = (opts) => ({
+    async route() {}, async setExtraHTTPHeaders() {}, async addInitScript() {},
+    async newPage() { return mkResultsPage(); },
+    async close() {},
+    async storageState(o) {
+      if (opts && opts.fail) throw new Error('disque plein (simulé)');
+      if (!o || !o.path) return {};
+      fs.mkdirSync(path.dirname(o.path), { recursive: true });
+      fs.writeFileSync(o.path, resultsState);
+      return JSON.parse(resultsState);
+    },
+    request: { async get() { return { status: () => 200, async text() { return resultsHtml; } }; } },
+  });
+
+  // 62.A — Aucun fichier existant : la session validée est créée.
+  {
+    const HarCapturer = loadHarCapturerIsolated();
+    const ctx = mkResultsCtx();
+    const browser = { async newContext() { return ctx; } };
+    const cap = new HarCapturer();
+    assert(!fs.existsSync(globalPath), '[62] A : aucun fichier de session au départ');
+    const res = await cap._warmupSession(browser, 'https://www.leboncoin.fr/recherche?text=rtx');
+    assert(res.verified === true, '[62] A : session validée');
+    assert(fs.existsSync(globalPath), '[62] A : le fichier de session est créé');
+    const saved = JSON.parse(fs.readFileSync(globalPath, 'utf8'));
+    assert(saved.cookies && saved.cookies[0] && saved.cookies[0].value === 'FRESH',
+      '[62] A : le fichier contient l\'état de la nouvelle session');
+  }
+
+  // 62.B — Ancien fichier + nouvelle session validée : REMPLACEMENT (cœur de F2).
+  {
+    fs.writeFileSync(globalPath, JSON.stringify({ cookies: [{ name: 'sess', value: 'STALE', domain: '.leboncoin.fr' }], origins: [] }));
+    const HarCapturer = loadHarCapturerIsolated();
+    const ctx = mkResultsCtx();
+    const browser = { async newContext() { return ctx; } };
+    const cap = new HarCapturer();
+    const res = await cap._warmupSession(browser, 'https://www.leboncoin.fr/recherche?text=rtx');
+    assert(res.verified === true, '[62] B : session validée malgré un ancien fichier');
+    const saved = JSON.parse(fs.readFileSync(globalPath, 'utf8'));
+    assert(saved.cookies[0].value === 'FRESH',
+      '[62] B : l\'ancien fichier est REMPLACÉ par la session validée (correction F2)');
+  }
+
+  // 62.C — Ancien fichier + restriction confirmée : l'ancien fichier est INTACT.
+  {
+    fs.writeFileSync(globalPath, JSON.stringify({ cookies: [{ name: 'sess', value: 'OLD', domain: '.leboncoin.fr' }], origins: [] }));
+    const HarCapturer = loadHarCapturerIsolated();
+    const restrictionHtml = '<html><head><title>Accès temporairement restreint</title></head><body><h1>Accès temporairement restreint</h1><p>pourquoi ce blocage quelque chose dans le comportement du navigateur nous a intrigué un robot est sur le même réseau que vous</p></body></html>';
+    const ctx = {
+      async route() {}, async setExtraHTTPHeaders() {}, async addInitScript() {},
+      async newPage() {
+        return {
+          async goto() { throw new Error('Timeout networkidle'); },
+          url() { return 'https://www.leboncoin.fr/recherche?text=rtx'; },
+          async evaluate() { return { text: '', matched: null, hasCaptchaIframe: false, cfChallenge: false, adCards: 0 }; },
+          on() {}, async close() {}, async waitForLoadState() {},
+        };
+      },
+      async close() {},
+      async storageState() { throw new Error('ne doit pas être appelé'); },
+      request: { async get() { return { status: () => 200, async text() { return restrictionHtml; } }; } },
+    };
+    const browser = { async newContext() { return ctx; } };
+    const cap = new HarCapturer();
+    const res = await cap._warmupSession(browser, 'https://www.leboncoin.fr/recherche?text=rtx');
+    assert(res.verified === false && res.reason === 'restricted', '[62] C : restriction confirmée');
+    const kept = JSON.parse(fs.readFileSync(globalPath, 'utf8'));
+    assert(kept.cookies[0].value === 'OLD',
+      '[62] C : la session existante n\'est PAS remplacée par une session restreinte');
+    assert(fs.existsSync(flagPath), '[62] C : le marqueur de restriction est posé');
+  }
+
+  // 62.D — CAPTCHA toujours présent : aucune session non validée persistée.
+  {
+    fs.rmSync(flagPath, { force: true });
+    fs.writeFileSync(globalPath, JSON.stringify({ cookies: [{ name: 'sess', value: 'KEEP', domain: '.leboncoin.fr' }], origins: [] }));
+    const mkCaptchaCtx = () => ({
+      async route() {}, async setExtraHTTPHeaders() {}, async addInitScript() {},
+      async newPage() {
+        return {
+          async goto() { return { status: () => 403 }; },
+          url() { return 'https://www.leboncoin.fr/recherche?text=rtx'; },
+          async evaluate() { return { text: 'captcha vérification', matched: 'captcha', hasCaptchaIframe: true, cfChallenge: false, adCards: 0 }; },
+          on() {}, async close() {}, async waitForLoadState() {},
+        };
+      },
+      async close() {},
+      async storageState() { throw new Error('ne doit pas être appelé'); },
+      request: { async get() { return { status: () => 403, async text() { return 'captcha'; } }; } },
+    });
+    // La fenêtre VISIBLE (issue de chromium.launch) continue d'afficher un CAPTCHA
+    // → jamais « résolu » → aucune persistance. Le contexte invisible affiche aussi
+    // un CAPTCHA (déclenche l'ouverture de la fenêtre visible).
+    const HarCapturer = loadHarCapturerIsolated(async () => ({
+      async newContext() { return mkCaptchaCtx(); },
+      async close() {},
+    }));
+    const invisibleBrowser = { async newContext() { return mkCaptchaCtx(); } };
+    const cap = new HarCapturer();
+    setTimeout(() => cap.stop(), 1200);
+    const res = await cap._warmupSession(invisibleBrowser, 'https://www.leboncoin.fr/recherche?text=rtx');
+    assert(res.verified === false, '[62] D : CAPTCHA non résolu → session NON validée');
+    const kept = JSON.parse(fs.readFileSync(globalPath, 'utf8'));
+    assert(kept.cookies[0].value === 'KEEP', '[62] D : aucune session non validée persistée');
+  }
+
+  // 62.E — Accès indéterminé (200 vide) : pas de succès, pas de sauvegarde.
+  {
+    fs.rmSync(flagPath, { force: true });
+    fs.writeFileSync(globalPath, JSON.stringify({ cookies: [{ name: 'sess', value: 'KEEP2', domain: '.leboncoin.fr' }], origins: [] }));
+    const HarCapturer = loadHarCapturerIsolated();
+    const ctx = mkCtx(JSON.stringify({ cookies: [] }), {});
+    ctx.request = { async get() { return { status: () => 200, async text() { return '<html><body>page vide sans annonce</body></html>'; } }; } };
+    const browser = { async newContext() { return ctx; } };
+    const cap = new HarCapturer();
+    const res = await cap._warmupSession(browser, 'https://www.leboncoin.fr/recherche?text=rtx');
+    assert(res.verified === false && res.reason === 'unverified',
+      '[62] E : accès indéterminé → NON validé (jamais un succès)');
+    const kept = JSON.parse(fs.readFileSync(globalPath, 'utf8'));
+    assert(kept.cookies[0].value === 'KEEP2', '[62] E : aucune session « prétendument valide » persistée');
+  }
+
+  // 62.F — Échec de sauvegarde : l'ancien fichier reste INTACT, protection maintenue.
+  {
+    fs.rmSync(flagPath, { force: true });
+    fs.writeFileSync(globalPath, JSON.stringify({ cookies: [{ name: 'sess', value: 'INTACT', domain: '.leboncoin.fr' }], origins: [] }));
+    // Marqueur présent : il ne doit PAS être levé si la persistance échoue.
+    fs.writeFileSync(flagPath, '{"reason":"previous_restriction"}');
+    const HarCapturer = loadHarCapturerIsolated();
+    const ctx = mkResultsCtx({ fail: true });
+    const browser = { async newContext() { return ctx; } };
+    const cap = new HarCapturer();
+    const res = await cap._warmupSession(browser, 'https://www.leboncoin.fr/recherche?text=rtx');
+    assert(res.verified === true, '[62] F : accès confirmé pour la session courante');
+    const kept = JSON.parse(fs.readFileSync(globalPath, 'utf8'));
+    assert(kept.cookies[0].value === 'INTACT', '[62] F : l\'ancien fichier n\'est PAS corrompu/tronqué');
+    assert(fs.existsSync(flagPath),
+      '[62] F : la persistance ayant échoué, le marqueur de restriction est CONSERVÉ (pas de faux « persisté »)');
+    const leftovers = fs.readdirSync(tmpBase).filter((f) => f.includes('.tmp-'));
+    assert(leftovers.length === 0, '[62] F : aucun fichier temporaire résiduel après échec');
+  }
+
+  // 62.G — Reprise après restriction : le contexte vierge validé remplace l'ancien état.
+  {
+    fs.writeFileSync(globalPath, JSON.stringify({ cookies: [{ name: 'sess', value: 'POISONED', domain: '.leboncoin.fr' }], origins: [] }));
+    fs.writeFileSync(flagPath, '{"reason":"access_restricted"}');
+    const HarCapturer = loadHarCapturerIsolated();
+    const ctx = mkResultsCtx();
+    const browser = { async newContext() { return ctx; } };
+    const cap = new HarCapturer();
+    // La session globale étant marquée restreinte, _reusableSessionPath → null (vierge).
+    assert(cap._reusableSessionPath() === null,
+      '[62] G : session restreinte NON réutilisée (contexte vierge)');
+    const res = await cap._warmupSession(browser, 'https://www.leboncoin.fr/recherche?text=rtx');
+    assert(res.verified === true, '[62] G : le contexte vierge est validé');
+    const saved = JSON.parse(fs.readFileSync(globalPath, 'utf8'));
+    assert(saved.cookies[0].value === 'FRESH',
+      '[62] G : le nouvel état validé REMPLACE l\'ancien état périmé');
+    assert(!fs.existsSync(flagPath), '[62] G : le marqueur est retiré après persistance réussie');
+  }
+
+  // 62.H — Classification F1 pure : le statut HTTP ne présume PAS CloudFront.
+  {
+    const HarCapturer = loadHarCapturerIsolated();
+    const cap = new HarCapturer();
+    const base = { restricted: false, cloudfront: false, captcha: false, hasResults: false };
+    assert(cap._classifyAccessObservation({ ...base, status: 403 }).outcome === 'http_403',
+      '[62] H : HTTP 403 → http_403 (jamais présumé CloudFront)');
+    assert(cap._classifyAccessObservation({ ...base, status: 429 }).outcome === 'http_429',
+      '[62] H : HTTP 429 → http_429');
+    assert(cap._classifyAccessObservation({ ...base, status: 503 }).outcome === 'http_5xx',
+      '[62] H : HTTP 5xx → http_5xx');
+    assert(cap._classifyAccessObservation({ ...base, status: 200 }).outcome === 'unknown_page',
+      '[62] H : HTTP 200 sans résultats → unknown_page (indéterminé, jamais un succès)');
+    assert(cap._classifyAccessObservation({ ...base, status: 200 }).ok === false,
+      '[62] H : unknown_page n\'est PAS un succès');
+    assert(cap._classifyAccessObservation({ ...base, status: 200, hasResults: true }).outcome === 'results_ok',
+      '[62] H : page de résultats réelle → results_ok');
+    assert(cap._classifyAccessObservation({ ...base, status: 200, restricted: true }).outcome === 'access_restricted',
+      '[62] H : restriction explicite → access_restricted (200 compris)');
+    assert(cap._classifyAccessObservation({ ...base, status: 200, cloudfront: true }).outcome === 'cloudfront_blocked',
+      '[62] H : page CloudFront reconnue → cloudfront_blocked');
+    assert(cap._classifyAccessObservation({ ...base, status: 200, captcha: true }).outcome === 'captcha_required',
+      '[62] H : défi CAPTCHA → captcha_required');
+  }
+
+  // 62.I — F1 : le statut d'une erreur réseau ne devient pas une restriction.
+  {
+    const HarCapturer = loadHarCapturerIsolated();
+    const cap = new HarCapturer();
+    const ctx = { request: { async get() { throw new Error('ECONNRESET'); } } };
+    const probe = await cap._probeAccessStatus(ctx, 'https://www.leboncoin.fr/recherche?text=rtx');
+    assert(probe.outcome === 'network_error' && probe.restricted === false,
+      '[62] I : erreur réseau → network_error (PAS une restriction explicite)');
+  }
+
+  // 62.J — F1 : conflit navigateur (pas de restriction) vs sonde (restriction).
+  {
+    const HarCapturer = loadHarCapturerIsolated();
+    const cap = new HarCapturer();
+    const conflict = cap._resolveProbeRestriction({ browserObserved: true });
+    assert(conflict.definitive === false && conflict.blockCode === 'ACCESS_UNVERIFIED',
+      '[62] J : observations contradictoires → accès NON vérifié (jamais un refus définitif)');
+    const solo = cap._resolveProbeRestriction({ browserObserved: false });
+    assert(solo.definitive === true && solo.blockCode === 'ACCESS_RESTRICTED',
+      '[62] J : sonde seule (navigation échouée) → restriction traitée comme définitive');
+  }
+
+  // 62.K — F1 comportemental : navigateur sans restriction, sonde « restreint »
+  //        → accès NON vérifié (pas de refus définitif, aucune persistance).
+  {
+    fs.rmSync(flagPath, { force: true });
+    fs.writeFileSync(globalPath, JSON.stringify({ cookies: [{ name: 'sess', value: 'UNTOUCHED', domain: '.leboncoin.fr' }], origins: [] }));
+    const HarCapturer = loadHarCapturerIsolated();
+    const restrictionHtml = '<html><head><title>Accès temporairement restreint</title></head><body>accès temporairement restreint pourquoi ce blocage un robot est sur le même réseau que vous</body></html>';
+    const ctx = {
+      async route() {}, async setExtraHTTPHeaders() {}, async addInitScript() {},
+      async newPage() {
+        return {
+          async goto() { return { status: () => 200 }; }, // navigateur : HTTP 200, pas de marqueur
+          url() { return 'https://www.leboncoin.fr/recherche?text=rtx'; },
+          async evaluate() { return { text: 'page neutre sans annonce', matched: null, hasCaptchaIframe: false, cfChallenge: false, adCards: 0 }; },
+          on() {}, async close() {}, async waitForLoadState() {},
+        };
+      },
+      async close() {},
+      async storageState() { throw new Error('ne doit pas être appelé'); },
+      request: { async get() { return { status: () => 200, async text() { return restrictionHtml; } }; } },
+    };
+    const browser = { async newContext() { return ctx; } };
+    const cap = new HarCapturer();
+    const res = await cap._warmupSession(browser, 'https://www.leboncoin.fr/recherche?text=rtx');
+    assert(res.verified === false && res.reason === 'unverified',
+      '[62] K : navigateur sans restriction + sonde « restreint » → accès non vérifié (pas de refus définitif)');
+    assert(res.blockCode === 'ACCESS_UNVERIFIED', '[62] K : le code prudent ACCESS_UNVERIFIED est porté');
+    assert(!fs.existsSync(flagPath), '[62] K : aucune session marquée restreinte sur simple sonde contradictoire');
+    const kept = JSON.parse(fs.readFileSync(globalPath, 'utf8'));
+    assert(kept.cookies[0].value === 'UNTOUCHED', '[62] K : session existante non modifiée');
+  }
+
+  // Nettoyage : base temporaire isolée (aucune donnée utilisateur touchée).
+  try { fs.rmSync(tmpBase, { recursive: true, force: true }); } catch (e) {}
+
+  console.log('\n[62] OK');
+}
+
 console.log(`\n=== RÉSULTAT : ${pass} réussis, ${fail} échoués ===`);
 process.exit(fail > 0 ? 1 : 0);
 }
