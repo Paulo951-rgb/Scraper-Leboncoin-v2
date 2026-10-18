@@ -514,12 +514,13 @@ window.api.onStatusChange(({ state, message }) => {
   if (message) statusText.textContent = `Statut : ${message}`;
 
   // États terminaux : succès complet, succès partiel, erreur, annulation,
-  // accès refusé (403), limitation de débit (429). Tous réactivent les boutons.
-  const terminalStates = ['completed', 'partial', 'error', 'cancelled', 'refused', 'rate_limited'];
+  // accès refusé (403), limitation de débit (429), accès non vérifié
+  // (refus CloudFront/anti-bot). Tous réactivent les boutons.
+  const terminalStates = ['completed', 'partial', 'error', 'cancelled', 'refused', 'rate_limited', 'access_unverified'];
   if (terminalStates.includes(state)) {
     startBtn.disabled = false;
     stopBtn.disabled = true;
-    if (state !== 'refused' && state !== 'rate_limited') {
+    if (state !== 'refused' && state !== 'rate_limited' && state !== 'access_unverified') {
       progressBar.style.width = '100%';
     }
     etaText.textContent = '';
@@ -548,6 +549,12 @@ window.api.onStatusChange(({ state, message }) => {
         type: 'error',
         title: 'Trop de requêtes (HTTP 429)',
         message: message || 'Le site limite temporairement les requêtes. Attendez avant de relancer.',
+      });
+    } else if (state === 'access_unverified') {
+      showScrapeError({
+        type: 'error',
+        title: 'Accès non vérifié (protection anti-bot)',
+        message: message || 'Le site a refusé la session (CloudFront/anti-bot). Aucune donnée n\'a été extraite. Réessayez plus tard.',
       });
     } else if (state === 'partial') {
       showScrapeError({

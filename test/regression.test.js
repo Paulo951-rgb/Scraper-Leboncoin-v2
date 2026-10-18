@@ -5580,6 +5580,282 @@ console.log('\n[57] Évolution des prix — rendu renderer (jsdom)');
   console.log('\n[57] OK');
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// [58] CONTOURNEMENT CLOUDFRONT / ANTI-BOT + HONNÊTETÉ DE L'ÉTAT DE SESSION
+//   - empreinte client cohérente (UA ↔ Sec-CH-UA ↔ JS anti-détection) ;
+//   - détection de la page de refus CloudFront (même en HTTP 200) ;
+//   - pré-check : session validée SEULEMENT sur signaux objectifs ;
+//   - états honnêtes (access_unverified / partial) côté main + renderer ;
+//   - compteurs séparés (brutes / uniques / enregistrées / échouées).
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n[58] Contournement CloudFront + état de session honnête');
+{
+  const repoRoot = path.join(__dirname, '..');
+  const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
+  const sp = require('../src/main/services/scraping/stealthProfile');
+  const { getRandomUserAgent, CHROME_MAJOR } = require('../src/main/services/scraping/userAgents');
+
+  // 58.1 Empreinte cohérente : UA ↔ version majeure ↔ client hints.
+  const realMajor = sp.resolveChromiumMajorVersion();
+  assert(realMajor && /^\d+$/.test(realMajor), `[58] version Chromium réelle lue (${realMajor})`);
+  assert(CHROME_MAJOR === realMajor, '[58] UA annonce la version majeure RÉELLE du moteur (plus de 122-125 périmés)');
+  const ua = getRandomUserAgent();
+  const prof = sp.createStealthProfile(ua);
+  assert(prof.majorVersion === realMajor, '[58] le profil aligne sa version sur l\'UA');
+  assert(prof.extraHTTPHeaders['Sec-CH-UA'].includes(`v="${realMajor}"`),
+    '[58] Sec-CH-UA cohérent avec la version majeure annoncée');
+  assert(prof.extraHTTPHeaders['Accept-Language'] === 'fr-FR,fr;q=0.9,en;q=0.8',
+    '[58] Accept-Language réaliste (fr-FR)');
+  assert(prof.timezoneId === 'Europe/Paris', '[58] fuseau horaire Europe/Paris (cohérent locale fr-FR)');
+  assert(prof.viewport && prof.viewport.width === 1366, '[58] viewport réaliste (1366×850)');
+  // UA macOS → plateforme macOS (pas de mélange Windows/Mac).
+  const macProf = sp.createStealthProfile('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36');
+  assert(macProf.platform === 'macOS' && macProf.extraHTTPHeaders['Sec-CH-UA-Platform'] === '"macOS"',
+    '[58] plateforme déduite de l\'UA (macOS) et propagée dans Sec-CH-UA-Platform');
+  // En-têtes de fetch de détail : Sec-Fetch-* + Referer (un vrai clic les envoie).
+  const fh = sp.clientHeadersFor(prof);
+  assert(fh['Sec-Fetch-Dest'] === 'document' && fh['Sec-Fetch-Mode'] === 'navigate' && fh['Referer'],
+    '[58] fetch de détail envoie Sec-Fetch-* + Referer (plus de fetch « nu »)');
+
+  // 58.2 Le script d'init neutralise les fuites d'automatisation les plus testées.
+  const initSrc = sp.stealthInitScript.toString();
+  for (const needle of ['webdriver', 'plugins', 'chrome', 'languages', 'permissions', 'userAgentData', 'getParameter']) {
+    assert(initSrc.includes(needle), `[58] script d'init couvre « ${needle} »`);
+  }
+  // navigator.platform doit être cohérent avec l'OS annoncé (pas « Linux » sous UA Windows).
+  assert(/navigator.*platform|'platform'|platformJs/.test(initSrc) && /platformJs/.test(initSrc),
+    '[58] script d\'init aligne navigator.platform sur l\'OS de l\'UA (anti-incohérence)');
+  // navigator.userAgentData est INSTALLÉ (pas seulement corrigé s\'il existe) : le
+  // headless shell ne l\'expose pas → un client avec Sec-CH-UA mais sans UA-CH JS
+  // serait suspect.
+  assert(/defineGet\(Navigator\.prototype, 'userAgentData'/.test(initSrc),
+    '[58] script d\'init INSTALLE navigator.userAgentData (cohérent avec Sec-CH-UA)');
+
+  // 58.2b EXÉCUTION RÉELLE du script d'init dans un DOM jsdom : on vérifie que
+  //        les patchs produisent bien une empreinte cohérente (pas seulement que
+  //        le code contient les bons mots-clés). Le script est exécuté DANS le
+  //        realm jsdom (window.eval) pour patcher le vrai Navigator de jsdom.
+  {
+    const { JSDOM } = require('jsdom');
+    const dom = new JSDOM('<!doctype html><html><body></body></html>',
+      { url: 'https://app.local/', runScripts: 'dangerously' });
+    const { window } = dom;
+    const fnSource = sp.stealthInitScript.toString();
+    window.eval(`(${fnSource})(${JSON.stringify(prof)});`);
+    const nav = window.navigator;
+    assert(nav.webdriver === undefined, '[58] jsdom : navigator.webdriver neutralisé');
+    assert(Array.isArray(nav.languages) && nav.languages[0] === 'fr-FR', '[58] jsdom : navigator.languages = fr-FR');
+    assert(nav.platform === prof.platformJs, '[58] jsdom : navigator.platform aligné sur l\'UA');
+    assert(nav.userAgentData && nav.userAgentData.brands.some((b) => b.brand === 'Google Chrome'),
+      '[58] jsdom : navigator.userAgentData.brands cohérent avec Sec-CH-UA');
+    assert(nav.userAgentData.platform === prof.platform,
+      '[58] jsdom : navigator.userAgentData.platform = plateforme de l\'UA');
+    assert(nav.plugins && nav.plugins.length >= 1, '[58] jsdom : navigator.plugins non vide');
+    window.close();
+  }
+
+  // 58.3 Détection de la page de refus CloudFront (servie même en HTTP 200).
+  const cfHtml = '<html><head><title>403 ERROR</title></head><body>The request could not be satisfied. Request blocked. We can\'t connect to the server for this app or website at this time. Generated by CloudFront</body></html>';
+  const cf = sp.detectCloudFrontBlock(cfHtml);
+  assert(cf.blocked && cf.provider === 'cloudfront', '[58] page « Request blocked / Generated by CloudFront » détectée');
+  assert(!sp.detectCloudFrontBlock('<html><body>Annonces disponibles à Lyon</body></html>').blocked,
+    '[58] une page de résultats normale n\'est PAS classée comme blocage');
+  assert(sp.detectCloudFrontBlock('<html>geo.captcha-delivery.com</html>').provider === 'anti-bot',
+    '[58] challenge Datadome détecté comme anti-bot');
+  // « cloudfront » seul, sans contexte d\'erreur, n\'est pas un blocage (pas de faux positif).
+  assert(!sp.detectCloudFrontBlock('<html>Un article sur la marque CloudFront</html>').blocked,
+    '[58] « cloudfront » seul (contenu légitime) → pas de faux positif');
+
+  // 58.4 harCapturer câble l'empreinte + la vérification objective d'accès.
+  const harCode = read('src/main/services/scraping/harCapturer.js');
+  assert(/applyStealthToContext\(ctx, this\._profile\)/.test(harCode),
+    '[58] harCapturer applique l\'empreinte à chaque contexte');
+  assert(/_detectAccessBlock/.test(harCode) && /detectCloudFrontBlock/.test(harCode),
+    '[58] harCapturer classe le refus (CloudFront vs CAPTCHA vs HTTP)');
+  assert(/_probeAccessStatus/.test(harCode) && /CAPTCHA_NOT_CONFIRMED/.test(harCode),
+    '[58] harCapturer confirme l\'accès OBJECTIVEMENT avant de persister la session');
+  assert(/cloudfront_blocked/.test(harCode) && /ACCESS_UNVERIFIED/.test(harCode),
+    '[58] un refus CloudFront au pré-check → accès non vérifié (pas de fenêtre CAPTCHA stérile)');
+  assert(/accessUnverified/.test(harCode),
+    '[58] l\'erreur de pré-check porte le drapeau accessUnverified');
+  // Un refus CloudFront / HTTP nu NE DOIT PAS ouvrir une fenêtre CAPTCHA.
+  assert(/accessBlock\.kind === 'cloudfront' \|\| accessBlock\.kind === 'http'[\s\S]*?return \{ verified: false, reason:/.test(harCode),
+    '[58] CloudFront / HTTP nu → arrêt propre (aucune fenêtre CAPTCHA ouverte)');
+
+  // 58.5 Le pipeline d'enrichissement utilise l'empreinte ET les en-têtes client.
+  const pipeCode = read('src/main/services/scraping/leboncoin-pipeline.js');
+  assert(/createStealthProfile\(this\._userAgent\)/.test(pipeCode),
+    '[58] pipeline : profil d\'empreinte construit depuis l\'UA figé');
+  assert(/applyStealthToContext\(ctx, this\._profile\)/.test(pipeCode),
+    '[58] pipeline : empreinte appliquée au contexte d\'enrichissement');
+  assert(/clientHeadersFor\(this\._profile\)/.test(pipeCode),
+    '[58] pipeline : fetch de détail avec en-têtes client crédibles');
+  assert(/detectCloudFrontBlock\(res\.html\)/.test(pipeCode),
+    '[58] pipeline : page CloudFront 200 en enrichissement classée blocage (pas « description introuvable »)');
+
+  // 58.6 ipcHandlers : état « accès non vérifié » explicite + compteurs séparés.
+  const ipcCode = read('src/main/core/ipcHandlers.js');
+  assert(/state: 'access_unverified'/.test(ipcCode), '[58] ipcHandlers : état access_unverified émis');
+  assert(/err\.accessUnverified \|\| err\.code === 'ACCESS_UNVERIFIED'/.test(ipcCode),
+    '[58] ipcHandlers : branche dédiée à l\'accès non vérifié (jamais « succès »)');
+  for (const counter of ['rawAds', 'adsFound', 'adsKept', 'descriptionsExtracted', 'descriptionsFailed', 'adsIgnored']) {
+    assert(new RegExp(`\\b${counter}\\b`).test(ipcCode), `[58] ipcHandlers : compteur séparé « ${counter} »`);
+  }
+  assert(/Annonces brutes/.test(ipcCode) && /Annonces enregistrées/.test(ipcCode),
+    '[58] résumé de session distingue brutes / uniques / enregistrées');
+
+  // 58.7 Renderer : access_unverified traité comme terminal + bandeau d'erreur.
+  const scraperCode = read('src/renderer/scraperModule.js');
+  assert(/terminalStates\s*=\s*\[[^\]]*'access_unverified'/.test(scraperCode),
+    '[58] scraperModule : access_unverified est un état terminal');
+  assert(/state === 'access_unverified'/.test(scraperCode),
+    '[58] scraperModule : bandeau d\'erreur dédié à l\'accès non vérifié');
+  const widgetCode = read('src/renderer/widget.html');
+  assert(/access_unverified/.test(widgetCode),
+    '[58] widget : access_unverified mappé sur une classe de statut existante');
+
+  // 58.8 Les en-têtes émis correspondent bien à ce qui est attendu (preuve).
+  //     Simule le contexte Playwright et vérifie ce qui est réellement transmis.
+  const calls = { headers: null, initScript: 0 };
+  const fakeCtx = {
+    setExtraHTTPHeaders: async (h) => { calls.headers = h; },
+    addInitScript: async () => { calls.initScript++; },
+  };
+  await sp.applyStealthToContext(fakeCtx, prof);
+  assert(calls.headers && calls.headers['Sec-CH-UA'] && calls.headers['Accept-Language'],
+    '[58] applyStealthToContext transmet bien les en-têtes client au contexte');
+  assert(calls.initScript === 1, '[58] applyStealthToContext installe le script d\'init une fois');
+  // `Accept` NE DOIT PAS être imposé globalement : il ferait renvoyer du HTML aux
+  // appels XHR/API JSON de la page de recherche (casserait le chargement des annonces).
+  assert(!calls.headers['Accept'],
+    '[58] l\'en-tête Accept n\'est PAS imposé globalement (préserve les XHR JSON)');
+  assert(calls.headers['Sec-CH-UA'] && calls.headers['Sec-CH-UA-Platform'],
+    '[58] les client hints Sec-CH-UA* SONT bien imposés globalement');
+
+  // 58.9 PROBLÈME 1 — au 1er lancement, la session n'est JAMAIS déclarée valide
+  //      sur la seule absence de CAPTCHA si aucun statut HTTP n'a été observé.
+  assert(/navigationFailed/.test(harCode),
+    '[58] harCapturer : distingue explicitement l\'échec de navigation du pré-check');
+  assert(/waitUntil: 'networkidle', timeout: 20000/.test(harCode),
+    '[58] harCapturer : le timeout networkidle (45 s → 20 s) ne bloque plus le pré-check');
+  assert(/waitUntil: 'domcontentloaded', timeout: 20000/.test(harCode),
+    '[58] harCapturer : repli domcontentloaded pour obtenir un statut HTTP réel');
+  // Si warmupStatus reste null (navigation échouée), une sonde objective est exigée
+  // AVANT de déclarer verified:true — sinon état « accès non vérifié ».
+  assert(/warmupStatus === null[\s\S]*?_probeAccessStatus\(ctx, checkUrl\)/.test(harCode),
+    '[58] harCapturer : statut inconnu → sonde objective avant de valider la session');
+  assert(/reason: 'unverified'/.test(harCode) && /ACCESS_UNVERIFIED/.test(harCode),
+    '[58] harCapturer : statut inconnu non confirmé → « accès non vérifié » (jamais un faux OK)');
+  // La session n'est persistée QUE si la branche !blocked est atteinte avec un
+  // signal objectif (HTTP < 400 ou sonde ok).
+  assert(/✅ Pré-check OK : accès confirmé/.test(harCode),
+    '[58] harCapturer : message « accès confirmé » réservé aux cas réellement validés');
+
+  // 58.10 TEST COMPORTEMENTAL du pré-check (page/ctx simulés) : une navigation
+  //       qui échoue ET une sonde HTTP 403 → session NON validée (« accès non
+  //       vérifié »). C'est exactement le bug du 1er lancement.
+  const { HarCapturer } = require('../src/main/services/scraping/harCapturer');
+  const mkFakePage = () => ({
+    async goto() { throw new Error('Timeout 20000ms exceeded (networkidle)'); },
+    url() { return 'https://www.leboncoin.fr/recherche?text=rtx'; },
+    async evaluate() { return { text: 'annonces disponibles', matched: null, hasCaptchaIframe: false, cfChallenge: false }; },
+    async close() {},
+  });
+  const mkFakeCtx = (probeStatus) => ({
+    async route() {},
+    async setExtraHTTPHeaders() {},
+    async addInitScript() {},
+    async newPage() { return mkFakePage(); },
+    async close() {},
+    async storageState() { /* no-op : pas d'écriture disque dans le test */ },
+    request: { async get() { return { status: () => probeStatus }; } },
+  });
+
+  // Cas A : navigation échouée + sonde 403 → accès non vérifié (PAS de faux OK).
+  {
+    const cap = new HarCapturer();
+    const ctx = mkFakeCtx(403);
+    const browser = { async newContext() { return ctx; } };
+    const res = await cap._warmupSession(browser, 'https://www.leboncoin.fr/recherche?text=rtx');
+    assert(res.verified === false && res.reason === 'unverified',
+      '[58] comportemental : navigation échouée + sonde 403 → accès non vérifié');
+    assert(res.blockCode === 'ACCESS_UNVERIFIED',
+      '[58] comportemental : le code ACCESS_UNVERIFIED est porté au main process');
+  }
+
+  // Cas B : navigation échouée mais sonde 200 → accès confirmé objectivement.
+  {
+    const cap = new HarCapturer();
+    const ctx = mkFakeCtx(200);
+    const browser = { async newContext() { return ctx; } };
+    const res = await cap._warmupSession(browser, 'https://www.leboncoin.fr/recherche?text=rtx');
+    assert(res.verified === true,
+      '[58] comportemental : navigation échouée mais sonde HTTP 200 → accès confirmé (session valide)');
+  }
+
+  // Cas C : page de refus CloudFront (HTTP 200) → accès non vérifié, AUCUNE
+  //         fenêtre CAPTCHA ouverte (vérifié : pas de chromium.launch visible).
+  {
+    const cap = new HarCapturer();
+    let launchedVisible = false;
+    const ctx = {
+      async route() {},
+      async setExtraHTTPHeaders() {},
+      async addInitScript() {},
+      async newPage() {
+        return {
+          async goto() { return { status: () => 200 }; },
+          url() { return 'https://www.leboncoin.fr/recherche?text=rtx'; },
+          async evaluate() {
+            return { text: 'request blocked generated by cloudfront the request could not be satisfied', matched: 'request blocked', hasCaptchaIframe: false, cfChallenge: false };
+          },
+          async close() {},
+        };
+      },
+      async close() {},
+      request: { async get() { return { status: () => 403 }; } },
+    };
+    const browser = {
+      async newContext() { return ctx; },
+      async launch() { launchedVisible = true; },
+    };
+    const res = await cap._warmupSession(browser, 'https://www.leboncoin.fr/recherche?text=rtx');
+    assert(res.verified === false && res.reason === 'cloudfront_blocked',
+      '[58] comportemental : page CloudFront 200 → accès non vérifié');
+    assert(res.blockCode === 'ACCESS_UNVERIFIED',
+      '[58] comportemental : CloudFront → code ACCESS_UNVERIFIED (état explicite)');
+    assert(launchedVisible === false,
+      '[58] comportemental : CloudFront n\'ouvre AUCUNE fenêtre CAPTCHA (pas de boucle stérile)');
+  }
+
+  // Cas D : HTTP 403 NU (aucun contenu CAPTCHA) → accès non vérifié, AUCUNE
+  //         fenêtre CAPTCHA (rien à résoudre). Évite une fenêtre inutile.
+  {
+    const cap = new HarCapturer();
+    let launchedVisible = false;
+    const ctx = {
+      async route() {}, async setExtraHTTPHeaders() {}, async addInitScript() {},
+      async newPage() {
+        return {
+          async goto() { return { status: () => 403 }; },
+          url() { return 'https://www.leboncoin.fr/recherche?text=rtx'; },
+          async evaluate() { return { text: 'contenu vide', matched: null, hasCaptchaIframe: false, cfChallenge: false }; },
+          async close() {},
+        };
+      },
+      async close() {},
+      request: { async get() { return { status: () => 403 }; } },
+    };
+    const browser = { async newContext() { return ctx; }, async launch() { launchedVisible = true; } };
+    const res = await cap._warmupSession(browser, 'https://www.leboncoin.fr/recherche?text=rtx');
+    assert(res.verified === false && res.reason === 'http_blocked',
+      '[58] comportemental : HTTP 403 nu → accès non vérifié (aucun CAPTCHA à résoudre)');
+    assert(launchedVisible === false,
+      '[58] comportemental : HTTP 403 nu n\'ouvre AUCUNE fenêtre CAPTCHA inutile');
+  }
+
+  console.log('\n[58] OK');
+}
 
 console.log(`\n=== RÉSULTAT : ${pass} réussis, ${fail} échoués ===`);
 process.exit(fail > 0 ? 1 : 0);
