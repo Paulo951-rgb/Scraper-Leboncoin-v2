@@ -555,7 +555,13 @@ historique de prix par produit. **Aucune IA** : tout est déterministe.
   `_classifyAccessObservation` distingue 403/429/5xx de CloudFront, 200 vide =
   `unknown_page` jamais un succès ; `_resolveProbeRestriction` : observations
   contradictoires navigateur↔sonde → `ACCESS_UNVERIFIED` prudent, jamais un refus
-  définitif ni une persistance).
+  définitif ni une persistance),
+  `[63]` **TESTS SIMULÉS D'ACCÈS** (mocks SANS réseau : 403 Datadome → CAPTCHA,
+  403 nu → `http`/403, 429 → `http`/429, 5xx → `http`/5xx, timeout/évaluation
+  impossible → `evaluationFailed` INDÉTERMINÉ jamais « non bloqué » ; page de
+  résultats avec mots génériques « robot »/« vérification » → NON classée CAPTCHA ;
+  page 200 vide → non bloquée ; « Accès temporairement restreint » → `restricted` ;
+  CloudFront 200 → `cloudfront`).
 - Le test stub `electron` : BrowserWindow a `webContents.send` mais PAS `isDestroyed`.
 - Test navigateur réel (opt-in) : `VENDRA_REAL_BROWSER_TEST=1 node test/regression.test.js`
   lance le Chromium embarqué et vérifie la valeur EFFECTIVE de `navigator.webdriver`
@@ -839,6 +845,34 @@ Sans Wine, `-c.win.signAndEditExecutable=false` permet de produire `dist/win-unp
   contredisent — un refus n'est définitif que si le navigateur l'a aussi observé
   ou si la navigation a échoué (sonde seule). Ne jamais transformer une sonde
   isolée en verdict définitif. Test `[62]`.
+- **Échec d'évaluation = INDÉTERMINÉ (pas « non bloqué »)** : `_detectAccessBlock`
+  retournait `{ blocked:false }` avec le log « considéré comme non bloqué » quand
+  `page.evaluate()` échouait (timeout, contexte/page fermé) → une page non
+  analysable passait pour une page valide. Renvoie désormais
+  `{ blocked:false, evaluationFailed:true }` ; la capture NE compte PAS cette page
+  comme réussie. Test `[63]`.
+- **Faux CAPTCHA sur une page de résultats** : les marqueurs de défi génériques
+  (« robot », « vérification »…) matchent du contenu LÉGITIME (annonce « aspirateur
+  robot ») → une page de résultats était classée CAPTCHA et ouvrait une fenêtre de
+  résolution inutile. Les marqueurs SPÉCIFIQUES (`captcha`, `are you human`…) et
+  les indices structurels (iframe, challenge Cloudflare) restent décisifs ; les
+  GÉNÉRIQUES ne comptent que SANS carte d'annonce. L'URL de défi n'est testée que
+  sur le CHEMIN (pas la query). Test `[63]`.
+- **`results_ok` avec `resultsMarkers=false` (diag trompeur)** : quand le DOM du
+  navigateur confirmait l'accès (cartes > 0), `confirmInfo.hasResults` n'était pas
+  posé → le diagnostic affichait `outcome:results_ok` ET `resultsMarkers:false`.
+  `hasResults` est maintenant renseigné dès la confirmation DOM. Test `[63]`.
+- **Compteur « Blocages d'accès » affichait 0 malgré des 403/CAPTCHA** : le résumé
+  utilisait `descriptionsBlocked` (compteur d'ENRICHISSEMENT uniquement) → un
+  blocage en CAPTURE (403, CAPTCHA, restriction) n'apparaissait jamais. Ajout d'un
+  compteur dédié `accessBlocks` alimenté par le champ STRUCTURÉ `blocked` du
+  diagnostic `[ACCESS_DIAG]` ET par les signaux d'enrichissement (`[STOP_REASON]`,
+  `BLOCKED_403/429`, `[HTTP_ACCESS_REFUSED]`, `[HTTP_RATE_LIMITED]`, arrêt
+  préventif). Ligne distincte pour l'enrichissement. Test `[63]`.
+- **`headless` ignoré pour la CAPTURE** : `harCapturer.capture()` lançait Chromium
+  avec `_launchOptions(true)` en dur → le réglage d'affichage de l'utilisateur
+  n'était jamais respecté pendant la capture (seul le warmup basculait visible).
+  Les 3 lancements de la capture utilisent désormais `this.headless`.
 - **Comptage des cartes d'annonces STRICT** : `countAdCards`/`looksLikeResultsPage`
   ne doivent PAS matcher `[data-test-id*="ad"]` (sous-chaîne) — cela comptait
   `header`, `badge`, `advertisement`… et faisait passer une page de refus pour une
