@@ -5469,6 +5469,117 @@ console.log('\n[56] Évolution des prix — règles de prix');
   console.log('\n[56] OK');
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// [57] ÉVOLUTION DES PRIX — renderer réel dans un DOM jsdom
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n[57] Évolution des prix — rendu renderer (jsdom)');
+{
+  const { JSDOM } = require('jsdom');
+  const repoRoot = path.join(__dirname, '..');
+  const html = fs.readFileSync(path.join(repoRoot, 'src/renderer/index.html'), 'utf8');
+
+  // Extrait la section réelle de l'onglet depuis index.html : si un id attendu
+  // par le module disparaissait, ce test échouerait (contrat DOM réel).
+  const start = html.indexOf('<section id="tab-price-evolution"');
+  const end = html.indexOf('</section>', start) + '</section>'.length;
+  assert(start > 0 && end > start, '[57] section tab-price-evolution présente dans index.html');
+  const sectionHtml = html.slice(start, end);
+
+  const dom = new JSDOM(`<!doctype html><html><body><div id="toastContainer"></div>${sectionHtml}</body></html>`,
+    { runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://app.local/' });
+  const { window } = dom;
+
+  // Stub d'API : on renvoie des données RÉELLES de forme connue (jamais fictives
+  // dans l'app, mais ici c'est un test).
+  const products = [
+    { id: 1, label: 'AMD Ryzen 5 9600X', reference: '9600X', brand: 'amd', family: 'cpu', distinctAds: 3, median: 220, evolution: { absolute: -10, percent: -4.3, direction: 'baisse' }, lastObservedAt: '2026-10-18T10:00:00Z', quality: { confidence: 'low' } },
+    { id: 2, label: 'RTX 3060 Ti', reference: '3060TI', brand: 'nvidia', family: 'gpu', distinctAds: 12, median: 300, evolution: { absolute: 0, percent: 0, direction: 'stable' }, lastObservedAt: '2026-10-17T10:00:00Z', quality: { confidence: 'medium' } },
+  ];
+  const detail = {
+    ok: true,
+    product: { id: 1, label: 'AMD Ryzen 5 9600X', reference: '9600X', brand: 'amd', family: 'cpu', status: 'confirmed', units: {} },
+    stats: {
+      distinctAds: 3, observationsCount: 5, sufficient: true,
+      overall: { mean: 215, median: 220, min: 200, max: 230, stdDev: 12.5 },
+      evolution: { absolute: -10, percent: -4.3, direction: 'baisse' },
+      segments: { byCondition: { new: { count: 2, ads: 2, median: 225, mean: 225 } }, byOfferType: { single: { count: 3, ads: 3, median: 220 } } },
+      series: { points: [{ period: '2026-10-17', median: 230, mean: 230, ads: 2 }, { period: '2026-10-18', median: 220, mean: 220, ads: 1 }] },
+      quality: { confidence: 'low', freshnessDays: 0, excludedObservations: 1 },
+    },
+    aliases: [{ alias: '9600X', source: 'observed' }],
+    includedAds: [{ id: 'A1', title: '<script>alert(1)</script>', url: 'https://lbc/A1', price: 220, condition: 'new', offerType: 'single', lastSeen: '2026-10-18T10:00:00Z' }],
+    excludedAds: [{ id: 'A3', title: 'Lot de 2', reasons: ['offer_type_incompatible'] }],
+  };
+  const pending = [{ adId: 9, title: 'Ryzen 5 9600 X', decision: 'uncertain', score: 40, reference: '9600X', family: 'cpu', url: 'https://lbc/9', candidates: [{ productId: 1, label: 'AMD Ryzen 5 9600X', score: 40 }] }];
+
+  let selectedId = null;
+  window.api = {
+    historyStats: async () => ({ ok: true, counts: { ads: 20, products: 2, observations: 30, pending: 1 }, families: ['cpu', 'gpu'] }),
+    historyBootstrap: async () => ({ ok: true, jobs: 0, ads: 0 }),
+    historyListProducts: async () => ({ ok: true, products }),
+    historyProductDetail: async (id) => { selectedId = id; return detail; },
+    historyListPending: async () => ({ ok: true, pending }),
+    historyCorrect: async () => ({ ok: true }),
+    historyRecompute: async () => ({ ok: true }),
+    openExternal: () => {},
+  };
+
+  // Charge utils (escapeHtml/escapePath/showToast/debounce) puis le module dans
+  // le MÊME scope d'eval (comme les autres tests renderer).
+  const utilsSrc = fs.readFileSync(path.join(repoRoot, 'src/renderer/utils.js'), 'utf8');
+  const modSrc = fs.readFileSync(path.join(repoRoot, 'src/renderer/priceEvolutionModule.js'), 'utf8');
+  window.eval(utilsSrc + '\n' + modSrc);
+
+  // 57.1 Le module s'exécute sans lever (tous les ids du DOM existent).
+  assert(true, '[57] le module renderer s\'initialise sans erreur (contrat DOM)');
+
+  // 57.2 Chargement de la page → liste des produits rendue.
+  await window.loadPriceEvolutionPage();
+  await new Promise((r) => setTimeout(r, 20));
+  const rows = window.document.querySelectorAll('#peProductsBody tr.pe-row');
+  assert(rows.length === 2, '[57] 2 produits affichés dans le tableau');
+  const bodyText = window.document.getElementById('peProductsBody').textContent;
+  assert(/9600X/.test(bodyText) && /3060TI/.test(bodyText), '[57] références affichées');
+  assert(/baisse/.test(rows[0].className) === false, '[57] ligne produit rendue');
+
+  // 57.3 Sélection d'un produit → fiche détaillée remplie.
+  await window.peSelectProduct(1);
+  await new Promise((r) => setTimeout(r, 20));
+  assert(selectedId === 1, '[57] la sélection appelle historyProductDetail avec le bon id');
+  assert(window.document.getElementById('peStatMedian').textContent.includes('220'), '[57] médiane affichée (220 €)');
+  assert(window.document.getElementById('peStatAds').textContent === '3', '[57] nombre d\'annonces affiché');
+  assert(/baisse/.test(window.document.getElementById('peStatEvo').textContent) || /-/.test(window.document.getElementById('peStatEvo').textContent),
+    '[57] évolution affichée');
+  assert(window.document.getElementById('peSegments').textContent.includes('Neuf'), '[57] segment état affiché');
+
+  // 57.4 XSS : le titre d'annonce est échappé, jamais exécuté comme HTML.
+  const includedHtml = window.document.getElementById('peIncludedBody').innerHTML;
+  assert(!/<script>alert\(1\)<\/script>/.test(includedHtml), '[57] titre malveillant NON injecté comme HTML brut');
+  assert(/&lt;script&gt;/.test(includedHtml), '[57] titre malveillant échappé (&lt;script&gt;)');
+
+  // 57.5 Annonces exclues + motif lisible.
+  assert(/Lot/.test(window.document.getElementById('peExcludedBody').textContent), '[57] annonce exclue listée');
+  assert(/Type d'offre incompatible/.test(window.document.getElementById('peExcludedBody').textContent),
+    '[57] motif d\'exclusion traduit en clair');
+
+  // 57.6 File des rapprochements incertains.
+  window.document.getElementById('pePendingToggle').click();
+  await new Promise((r) => setTimeout(r, 20));
+  assert(/Ryzen 5 9600 X/.test(window.document.getElementById('pePendingBody').textContent), '[57] annonce incertaine affichée');
+  assert(window.document.querySelectorAll('#pePendingBody [data-action="peConfirmCandidate"]').length === 1,
+    '[57] bouton de confirmation de candidat présent');
+
+  // 57.7 Aucune donnée fabriquée : une valeur absente s'affiche « — ».
+  const empty = { ok: true, product: { id: 5, label: 'Produit X', status: 'provisional', units: {} }, stats: { distinctAds: 0, observationsCount: 0, sufficient: false, overall: { mean: null, median: null, min: null, max: null, stdDev: null }, evolution: {}, segments: {}, series: { points: [] }, quality: {} }, aliases: [], includedAds: [], excludedAds: [] };
+  window.api.historyProductDetail = async () => empty;
+  await window.peSelectProduct(5);
+  await new Promise((r) => setTimeout(r, 20));
+  assert(window.document.getElementById('peStatMedian').textContent === '—', '[57] prix absent affiché « — » (jamais 0)');
+  assert(!window.document.getElementById('peSeriesEmpty').classList.contains('hidden'), '[57] série vide → message « aucune observation »');
+
+  console.log('\n[57] OK');
+}
+
 
 console.log(`\n=== RÉSULTAT : ${pass} réussis, ${fail} échoués ===`);
 process.exit(fail > 0 ? 1 : 0);
