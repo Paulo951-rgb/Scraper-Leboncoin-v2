@@ -337,7 +337,9 @@ styles.css                   habillage + 3 thèmes (Sombre/Clair/Graphite) + com
   Sections : logique métier, rendu, sécurité, `[27]` carte (logique pure), `[28]` distribution/packaging,
   `[29]` CI Windows (workflow + `verify-dist.js`), `[46]` fiche détaillée (openAdDetail),
   `[47]` pagination explorateur (DOM borné + navigation), `[48]` `sanitizeImageUrl` (anti-SSRF renderer),
-  `[49]` audit intégral 2026-10-17 (prix FR, centroïde carte, verrou `job:start`, contamination détail).
+  `[49]` audit intégral 2026-10-17 (prix FR, centroïde carte, verrou `job:start`, contamination détail),
+  `[50]` audit 2e passe 2026-10-17 (SSRF renderer IPv4-mappée, HAR de reprise CAPTCHA, prix FR
+  historique/explorateur, annulation ≠ 403, réglages appliqués immédiatement).
 - Le test stub `electron` : BrowserWindow a `webContents.send` mais PAS `isDestroyed`.
 - Avant tout commit : `node --check` sur les fichiers modifiés + lancer la suite.
 
@@ -434,6 +436,35 @@ Sans Wine, `-c.win.signAndEditExecutable=false` permet de produire `dist/win-unp
 (dossier app lançable) mais PAS l'installeur ni le portable.
 
 ## Pièges corrigés (à ne PAS réintroduire)
+- **`recordHar` réutilisé = HAR tronqué (audit 2026-10-17, 2e passe)** : un
+  nouveau contexte Playwright avec le MÊME chemin `recordHar` **écrase** le
+  fichier (les entrées précédentes sont perdues). La reprise après CAPTCHA
+  (`harCapturer`) écrivait dans `activeHarPath` → les pages capturées avant le
+  blocage disparaissaient. Écrire dans un HAR dédié (`capture-retry.har`) puis
+  **fusionner** (`mergeHarFiles`) dans le HAR principal, comme la reprise
+  incrémentale (`capture-resume.har`). Test `[50]`.
+- **Prix en chaîne FR dans le renderer/historique (audit 2026-10-17, 2e passe)** :
+  `parseFloat('1 250 €')` → `1`. Le pipeline utilise `parsePriceString` mais
+  `jobHistory.buildAdHistory` et l'explorateur (`explorerModule`) utilisaient
+  encore `parseFloat` → prix tronqués (baisse/hausse `null`, filtre de prix
+  masquant des annonces, tri faux). Utiliser `parsePriceString` (main) et le
+  helper renderer `priceOf` (`utils.js`) pour TOUT filtre/tri/affichage de prix.
+  Test `[50]`.
+- **Annulation ≠ blocage d'accès (audit 2026-10-17, 2e passe)** : le handler
+  SIGINT du pipeline forçait `circuit.state = 'stopped'` sans drapeau → `stopInfo()`
+  renvoyait `access_refused` (faux 403) et un code de sortie 3 sur une simple
+  annulation. Utiliser `circuit.markCancelled()` : `stopInfo()` renvoie `null`
+  (aucun motif d'accès), tandis que les vrais 403/429 restent rapportés. Test `[50]`.
+- **`sanitizeImageUrl` et IPv4-mappées (audit 2026-10-17, 2e passe)** : les
+  formes `::ffff:127.0.0.1`, `::ffff:a9fe:a9fe` (métadonnées cloud), ULA
+  (`fc00::/7`), link-local (`fe80::/10`) et NAT64 (`64:ff9b::/96`) NON compressées
+  passaient le filtre renderer (SSRF). Décompresser l'IPv6 en groupes 16 bits et
+  rejouer le contrôle IPv4 sur les 32 derniers bits. Test `[50]`.
+- **Réglages appliqués seulement au redémarrage (audit 2026-10-17, 2e passe)** :
+  décocher « Données vendeur » ne masquait pas la colonne Vendeur (rappeler
+  `refreshSellerDataSetting()` après `saveConfig`) ; la rétention des logs n'était
+  appliquée qu'au démarrage (`config:save` doit appeler `logger.setRetention`).
+  Test `[50]`.
 - **Prix en chaîne (audit 2026-10-17)** : `extractPrice` (adFields) NE DOIT PAS
   utiliser `parseFloat` seul. `parseFloat('1 250 €')` → `1` et
   `parseFloat('1.299,99')` → `1.299` (troncature silencieuse). Utiliser

@@ -37,6 +37,11 @@ class CircuitBreaker {
     // Dernier code de blocage observé (HTTP_403 / HTTP_429) pour un rapport structuré.
     this.lastBlockCode = null;
     this.lastBlockStatus = null;
+    // Arrêt dû à une ANNULATION utilisateur (et non à un blocage d'accès) : sans
+    // ce drapeau, `stopInfo()` renvoyait « access_refused » sur une annulation
+    // (state forcé à « stopped » par le handler SIGINT) et le rapport/exit code
+    // faisait croire à un refus 403 du serveur.
+    this.cancelled = false;
   }
 
   /** Signale un succès : remet le disjoncteur au repos. */
@@ -77,11 +82,25 @@ class CircuitBreaker {
   }
 
   /**
+   * Marque un arrêt volontaire (annulation utilisateur) : le disjoncteur passe
+   * en « stopped » sans blocage d'accès, de sorte que `stopInfo()` renvoie null
+   * (aucune 403/429 à rapporter, aucun exit code 3/4, aucune « fausse réussite
+   * partielle » pour un accès bloqué).
+   */
+  markCancelled() {
+    this.cancelled = true;
+    this.state = CIRCUIT_STATES.STOPPED;
+  }
+
+  /**
    * Motif d'arrêt structuré (pour le rapport / les logs), ou null si pas arrêté.
+   * Une annulation utilisateur ne produit AUCUN motif d'accès (null) : ce n'est
+   * ni un 403 ni un 429.
    * @returns {{reason: string, status: number|null, code: string|null, consecutiveBlocks: number}|null}
    */
   stopInfo() {
     if (this.state !== CIRCUIT_STATES.STOPPED) return null;
+    if (this.cancelled) return null;
     return {
       reason: this.lastBlockStatus === 429 || this.lastBlockCode === 'HTTP_429' ? 'rate_limited' : 'access_refused',
       status: this.lastBlockStatus,

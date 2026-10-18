@@ -21,7 +21,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { app, safeStorage } = require('electron');
+const { safeStorage } = require('electron');
 const { atomicWriteFileSync } = require('./helpers');
 
 const ALGO = 'aes-256-gcm';

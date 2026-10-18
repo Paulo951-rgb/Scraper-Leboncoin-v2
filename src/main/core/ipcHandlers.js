@@ -491,6 +491,10 @@ function setupIpcHandlers(getMainWindow) {
   ipcMain.handle('config:save', async (event, patch) => {
     const merged = saveSettings(patch);
     if (merged && merged.logLevel) currentLogLevel = merged.logLevel;
+    // Applique la rétention des logs immédiatement : sans cela, modifier
+    // « Rétention des logs (jours) » dans les Paramètres n'avait d'effet qu'au
+    // prochain démarrage (le logger gardait l'ancienne valeur en mémoire).
+    if (merged && merged.logRetentionDays) logger.setRetention(merged.logRetentionDays);
     return merged;
   });
 

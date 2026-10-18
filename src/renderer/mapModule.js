@@ -314,7 +314,7 @@ async function renderMap(ads) {
         <div style="font-family:sans-serif; font-size:0.8rem; line-height:1.3;">
           ${countTxt}
           <strong>${escapeHtml(first.title || 'Sans titre')}</strong><br>
-          <span style="color:var(--primary-color); font-weight:bold;">${first.prix != null ? first.prix + ' €' : (first.price != null ? first.price + ' €' : '-')}</span><br>
+          <span style="color:var(--primary-color); font-weight:bold;">${Number.isFinite(priceOf(first)) ? priceOf(first) + ' €' : '-'}</span><br>
           ${escapeHtml(locationLabel(first))} <span style="color:#94a3b8;">(ville)</span><br>
           ${deliveryTxt}<br>
           <a href="#" data-action="openUrl" data-url="${escapeHtml(first.url)}" style="color:#38bdf8; text-decoration:underline;">Ouvrir l'annonce</a>
