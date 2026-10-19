@@ -581,6 +581,14 @@ historique de prix par produit. **Aucune IA** : tout est déterministe.
   reste `http_blocked`/`access_unverified` ; les tentatives de navigation sont
   bornées à 3, aucune fenêtre CAPTCHA ouverte pour un 403 nu ; le chemin nominal
   reste à une seule navigation).
+- `[65]` **TAXONOMIE DES ERREURS DE PAGE EN CAPTURE** (`classifyCapturePageBlock`,
+  fonction PURE) : seule une VRAIE page de défi CAPTCHA ouvre une fenêtre de
+  résolution interactive. Un refus non résoluble (« Accès temporairement
+  restreint », CloudFront, 403/429 nu) OU une erreur HTTP dédiée (404 URL/annonce
+  introuvable, 5xx serveur) arrête proprement SANS fenêtre CAPTCHA (stérile et
+  trompeuse). Un 404/5xx n'est PAS un refus anti-bot (`access_unverified=false`),
+  un 403/429 l'est. Défense en profondeur : une page vide CloudFront (HTTP 200)
+  remonte aussi un arrêt honnête `access_unverified`.
 - Le test stub `electron` : BrowserWindow a `webContents.send` mais PAS `isDestroyed`.
 - Test navigateur réel (opt-in) : `VENDRA_REAL_BROWSER_TEST=1 node test/regression.test.js`
   lance le Chromium embarqué et vérifie la valeur EFFECTIVE de `navigator.webdriver`
@@ -905,6 +913,22 @@ Sans Wine, `-c.win.signAndEditExecutable=false` permet de produire `dist/win-unp
   capture ET l'enrichissement (aucun `chromium.launch` « nu »). Preuve réelle :
   `VENDRA_REAL_BROWSER_TEST=1` (section `[61]`) mesure `webdriver === false` sur
   le Chromium embarqué.
+- **`channel: 'chromium'` est REQUIS (ne pas le retirer)** : Playwright ≥ 1.49
+  résout par défaut un Chromium en « headless shell » (`chromium_headless_shell-…`)
+  pour `headless: true`. Or l'app n'embarque QUE le Chromium complet
+  (`extraResources` → `.local-browsers/chromium-…`). Sans `channel: 'chromium'`,
+  `chromium.launch({ headless: true })` échoue avec
+  `Executable doesn't exist at …/chromium_headless_shell-…/chrome-headless-shell`.
+  `launchOptionsFor` force donc `channel: 'chromium'` : vérifié réellement
+  (`node_modules/playwright-core/.local-browsers`, rev 1248) — lancement OK,
+  `navigator.webdriver === false`.
+- **Taxonomie des erreurs de page en capture** : `classifyCapturePageBlock`
+  (harCapturer, PURE) décide de l'action. Seule une page de DÉFI CAPTCHA ouvre
+  une fenêtre de résolution. Un 404 (URL/annonce introuvable) ou un 5xx ne sont
+  PAS des refus anti-bot (`access_unverified=false`, code `HTTP_404`/`HTTP_500`) ;
+  un 403/429 nu ou CloudFront sont des refus honnêtes (`access_unverified=true`).
+  Ne PAS réintroduire d'ouverture de fenêtre CAPTCHA pour un refus non résoluble.
+  Test `[65]`.
 - **Succès partiel vs succès** : si l'enrichissement est bloqué (403/429) ou si
   des pages sont perdues, `ipcHandlers` DOIT émettre `state: 'partial'` (jamais
   `completed`) et préserver `annonces.json`. Exit codes pipeline `3` (403) / `4`
