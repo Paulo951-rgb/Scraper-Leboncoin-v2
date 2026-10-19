@@ -6834,6 +6834,107 @@ console.log('\n[63] Tests simulés d\'accès (403 Datadome / 429 / timeout / ré
   console.log('\n[63] OK');
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// [65] TAXONOMIE DES ERREURS DE PAGE EN CAPTURE — robustesse du moteur restauré.
+//   Vérifie que la décision d'ouvrir (ou NON) une fenêtre de résolution CAPTCHA
+//   dépend du TYPE de refus, et qu'une erreur HTTP dédiée (404 URL/annonce
+//   introuvable, 5xx serveur) n'ouvre JAMAIS de fenêtre CAPTCHA stérile.
+//   Fonction PURE : aucune navigation réelle.
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n[65] Taxonomie des erreurs de page en capture (robustesse)');
+{
+  const { classifyCapturePageBlock } = require('../src/main/services/scraping/harCapturer');
+
+  // 65.1 Défi CAPTCHA → seule situation justifiant une fenêtre interactive.
+  {
+    const d = classifyCapturePageBlock({ blocked: true, kind: 'captcha', reason: 'iframe CAPTCHA détectée' }, 403);
+    assert(d.interactive === true && d.blockCode === 'CAPTCHA_DETECTED',
+      '[65] défi CAPTCHA → fenêtre interactive autorisée (défi humain résoluble)');
+  }
+
+  // 65.2 Page « Accès temporairement restreint » → arrêt, PAS de fenêtre.
+  {
+    const d = classifyCapturePageBlock({ blocked: true, kind: 'restricted', reason: 'page « Accès temporairement restreint »' }, 200);
+    assert(d.interactive === false && d.blockCode === 'ACCESS_RESTRICTED' && d.accessUnverified === true,
+      '[65] restriction durable → arrêt propre (aucune fenêtre CAPTCHA), accès non vérifié');
+  }
+
+  // 65.3 Refus CloudFront → arrêt, PAS de fenêtre, état « accès non vérifié ».
+  {
+    const d = classifyCapturePageBlock({ blocked: true, kind: 'cloudfront', reason: 'page de refus cloudfront' }, 200);
+    assert(d.interactive === false && d.blockCode === 'HTTP_ACCESS_REFUSED' && d.accessUnverified === true,
+      '[65] refus CloudFront → arrêt (aucune fenêtre CAPTCHA), état access_unverified');
+  }
+
+  // 65.4 HTTP 403 nu → refus d'accès, PAS de fenêtre CAPTCHA inutile.
+  {
+    const d = classifyCapturePageBlock({ blocked: true, kind: 'http', reason: 'HTTP 403' }, 403);
+    assert(d.interactive === false && d.blockCode === 'HTTP_ACCESS_REFUSED' && d.accessUnverified === true,
+      '[65] HTTP 403 nu → arrêt (aucune fenêtre CAPTCHA), état access_unverified');
+  }
+
+  // 65.5 HTTP 429 → limitation de débit, PAS de fenêtre CAPTCHA.
+  {
+    const d = classifyCapturePageBlock({ blocked: true, kind: 'http', reason: 'HTTP 429' }, 429);
+    assert(d.interactive === false && d.blockCode === 'HTTP_RATE_LIMITED' && d.accessUnverified === true,
+      '[65] HTTP 429 → arrêt (aucune fenêtre CAPTCHA), état rate_limited');
+  }
+
+  // 65.6 HTTP 404 (URL/annonce introuvable) → erreur dédiée, PAS de fenêtre,
+  //      et ce n'est PAS un refus anti-bot (access_unverified = false).
+  {
+    const d = classifyCapturePageBlock({ blocked: true, kind: 'http', reason: 'HTTP 404' }, 404);
+    assert(d.interactive === false && d.blockCode === 'HTTP_404' && d.accessUnverified === false,
+      '[65] HTTP 404 → erreur dédiée (aucune fenêtre CAPTCHA), pas un refus anti-bot');
+  }
+
+  // 65.7 HTTP 5xx (erreur serveur) → erreur dédiée, PAS de fenêtre CAPTCHA.
+  {
+    const d = classifyCapturePageBlock({ blocked: true, kind: 'http', reason: 'HTTP 503' }, 503);
+    assert(d.interactive === false && d.blockCode === 'HTTP_500' && d.accessUnverified === false,
+      '[65] HTTP 5xx → erreur serveur dédiée (aucune fenêtre CAPTCHA)');
+  }
+
+  // 65.8 Type inconnu mais bloqué → prudence : aucune fenêtre, aucune prétention
+  //      de refus anti-bot.
+  {
+    const d = classifyCapturePageBlock({ blocked: true, kind: null, reason: null }, null);
+    assert(d.interactive === false && d.blockCode === 'HTTP_UNKNOWN' && d.accessUnverified === false,
+      '[65] blocage de type inconnu → aucune fenêtre CAPTCHA, aucune prétention anti-bot');
+  }
+
+  // 65.9 Cohérence : un 403/429 reste un refus anti-bot quel que soit le chemin
+  //      de classification (kind 'http' OU page CloudFront).
+  {
+    const viaHttp = classifyCapturePageBlock({ blocked: true, kind: 'http' }, 403);
+    const viaCf = classifyCapturePageBlock({ blocked: true, kind: 'cloudfront' }, 403);
+    assert(viaHttp.accessUnverified === true && viaCf.accessUnverified === true,
+      '[65] 403 (nu ou CloudFront) → toujours un refus anti-bot (access_unverified)');
+  }
+
+  // 65.10 Le module expose la fonction (contrat d'import pour les tests).
+  assert(typeof classifyCapturePageBlock === 'function',
+    '[65] classifyCapturePageBlock est exporté (testable sans navigateur)');
+
+  // 65.11 Contrat statique : capture() n'ouvre une fenêtre de résolution CAPTCHA
+  //       QUE si la décision `interactive` est vraie (jamais pour un 404/5xx).
+  {
+    const harSrc = fs.readFileSync(path.join(base, 'services/scraping/harCapturer.js'), 'utf8');
+    assert(/classifyCapturePageBlock\(accessBlock/.test(harSrc),
+      '[65] capture() classe le blocage via classifyCapturePageBlock');
+    assert(/if \(!decision\.interactive\)/.test(harSrc),
+      '[65] capture() arrête SANS fenêtre quand le refus n\'est pas un défi CAPTCHA');
+    assert(/interactive: true, reason \}/.test(harSrc),
+      '[65] seul le type captcha produit `interactive: true`');
+    // Défense en profondeur : une page de refus CloudFront détectée via la
+    // détection de page VIDE (HTTP 200 sans carte) est aussi remontée comme un
+    // refus honnête (jamais présentée comme un succès).
+    assert(/emptyCheck\.kind === 'cloudfront'/.test(harSrc) && /HTTP_ACCESS_REFUSED, accessUnverified: true/.test(harSrc),
+      '[65] page vide CloudFront → arrêt honnête (access_unverified), jamais un succès');
+  }
+
+  console.log('\n[65] OK');
+}
 
 console.log(`\n=== RÉSULTAT : ${pass} réussis, ${fail} échoués ===`);
 process.exit(fail > 0 ? 1 : 0);
