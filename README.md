@@ -59,7 +59,7 @@ L'utilisateur choisit parmi **3 profils de données** au moment du scraping :
 - 🏷️ **Catégorie** de l'annonce extraite à la fois sur la liste et la page de détail.
 - ⭐ **Note vendeur + nombre d'avis** extraits défensivement de l'objet `owner`.
 - 🔄 **Rotation de User-Agent** (10 UA réalistes en rotation aléatoire, fixé pour toute la durée d'une capture).
-- 🚀 **Configuration de scraping fixe et automatique** — mode **Ultra rapide** imposé (25 tâches parallèles max, délai nominal 400 ms entre pages), non modifiable par l'utilisateur.
+- 🐢 **Mode de vitesse réglable, prudent par défaut** — « Moyen » (10 tâches parallèles, délai 0,9-1,6 s entre pages) par défaut, « Rapide » (15, 0,6-1,2 s) ou « Ultra-rapide » (20, 0,45-0,9 s) au choix. Bornes absolues : jamais plus de 20 tâches ni moins de 450 ms entre pages.
 - ⏳ **Rate limiting adaptatif** — backoff exponentiel si Leboncoin répond lentement ou bloque (403/429) ; réduction automatique de la concurrence (÷2 après un 429, −25 % après un 403) et respect du `Retry-After`.
 - ⏹️ **Arrêt préventif** après 3 blocages 403/429 consécutifs pendant l'enrichissement (sauvegarde des données collectées).
 - 🧾 **Codes d'erreurs structurés** (`errorCodes.js`) — chaque erreur est catégorisée (`NET_`, `HTTP_`, `CAPTCHA_`, `PARSE_`, `EXTRACTOR_`, `SESSION_`, `BROWSER_`, `STRUCTURE_`, `AD_`).
@@ -185,7 +185,7 @@ npm start
 ### Paramètres
 
 - **Thème** : 3 thèmes (Sombre, Clair, Graphite) avec aperçu temps réel.
-- **Mode de performance** : **⚡ Ultra rapide** (fixe, affiché en lecture seule) — 25 tâches parallèles max, délai nominal 400 ms entre les pages. Non modifiable.
+- **Vitesse de scraping** : « 🐢 Moyen » (recommandé, défaut : 10 tâches parallèles, délai 0,9-1,6 s entre pages), « ⚡ Rapide » (15, 0,6-1,2 s) ou « 🚀 Ultra-rapide » (20, 0,45-0,9 s). Les modes rapides augmentent le risque de blocage par le site (403 / CloudFront) — un avertissement s'affiche.
 - **Mode de capture** : invisible (headless) ou visible (sauf CAPTCHA qui bascule toujours en visible).
 - **Données vendeur** : exclusion systématique des champs vendeur.
 - **Nettoyage auto des .har** (jours, défaut 7).
@@ -474,7 +474,7 @@ Résultat attendu : `=== RÉSULTAT : <N> réussis, 0 échoués ===`
 **Symptôme** : le scraping ou l'enrichissement s'arrête avec un message 403 (accès refusé) ou 429 (limitation de débit).
 **Solution** :
 - Leboncoin a refusé ou limité temporairement les requêtes. **Patientez quelques minutes** avant de relancer — aucune reprise automatique agressive n'est faite (le `Retry-After` du serveur est respecté lorsqu'il est fourni).
-- **N'essayez pas de forcer la vitesse** : la politique (Ultra rapide, 25 parallèles, 400 ms nominal) est fixe et le logiciel **réduit automatiquement la concurrence** et applique un backoff dès qu'il détecte une limitation. Relancer en boucle aggrave le blocage.
+- **N'essayez pas de forcer la vitesse** : le logiciel **réduit automatiquement la concurrence** et applique un backoff dès qu'il détecte une limitation. Relancer en boucle aggrave le blocage. En cas de blocages répétés, repassez en mode **« Moyen »** (le plus prudent).
 - Réduisez le nombre de pages par job pour limiter les rafales de requêtes.
 - Après 3 blocages 403/429 consécutifs, l'enrichissement s'arrête automatiquement et **sauvegarde les annonces déjà extraites**.
 - Le job est alors signalé « **succès partiel** » (jamais « succès ») : les annonces restent exportables même si certaines descriptions manquent.

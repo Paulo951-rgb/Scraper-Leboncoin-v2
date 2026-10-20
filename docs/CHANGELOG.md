@@ -3,6 +3,43 @@
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/). Les entrées
 décrivent des modifications vérifiées (code + tests).
 
+## [Non publié] — Politique de débit : presets de vitesse bornés (safe by default)
+
+### Modifié
+
+- **`src/main/config/scraping.js` (source unique de vérité)** : la politique
+  « fixe ultra-rapide » (concurrence 25, délai de page 400 ms) est remplacée par
+  des **presets de vitesse** bornés, avec un défaut PRUDENT :
+  | Mode | concurrency | pageDelay min/max | enrich min/max |
+  |---|---|---|---|
+  | `moyen` (**DÉFAUT**) | 10 | 900 / 1600 ms | 600 / 3000 ms |
+  | `rapide` | 15 | 600 / 1200 ms | 400 / 2000 ms |
+  | `ultra-rapide` | 20 | 450 / 900 ms | 300 / 1500 ms |
+  Bornes **absolues** jamais franchies : `MAX_CONCURRENCY = 20` (jamais 25) et
+  `MIN_PAGE_DELAY_MS = 450`. `normalizeSpeed()` retombe sur « moyen » pour tout
+  mode inconnu. `getScrapingPolicy(speed)` / `getSpeedPreset(speed)` /
+  `clampConcurrency(n)` exposent la politique bornée.
+- **`harCapturer.js`** : délais de page pris dans la politique du mode
+  (`minPageDelayMs`/`maxPageDelayMs`, jitter conservé). Ajout d'un **backoff de
+  page** (`pageBackoffMs`) après un refus HTTP TRANSITOIRE (403/429 nu) :
+  `pageBaseMs = 3000` doublé à chaque tentative, plafonné à `pageMaxMs = 30000`,
+  borné à 2 reprises (`MAX_TRANSIENT_PAGE_RETRIES`). Un refus DURABLE
+  (restriction/CloudFront) ou une erreur 404/5xx n'est JAMAIS réessayé.
+- **`leboncoin-pipeline.js`** : `policy = getScrapingPolicy(opts.speed)` ; le
+  mode est transmis par `--speed` ; backoff d'enrichissement plafonné à
+  `BACKOFF.enrichMaxMs` (45 s).
+- **`rateLimiter.js`** : nouveau plafond `blockMaxDelayMs` pour le backoff après
+  blocage (par défaut `maxDelayMs`, comportement historique). Un ralentissement
+  (erreur réseau / latence) ne rabaisse plus un délai déjà monté par un blocage.
+- **`ipcHandlers.js`** : `normalizeSpeed(config.speed)` → `getScrapingPolicy(speed)`
+  → délais min/max passés au capturer et mode transmis au pipeline.
+- **Interface** : le mode de vitesse redevient un choix utilisateur
+  (`#speedSelect`, « moyen » par défaut) avec un avertissement de risque
+  (`#speedWarning`) pour les modes rapides. Le mode est mémorisé dans les presets.
+- **Tests** : sections `[31]`, `[41]` réécrites (presets bornés, repli « moyen »,
+  backoff plafonné) et nouvelle section `[66]` (reprise bornée d'une page après
+  refus transitoire, refus durable jamais réessayé, câblage du mode).
+
 ## [Non publié] — Évolution des prix — 2026-10-18
 
 ### Ajouté

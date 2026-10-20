@@ -2484,12 +2484,12 @@ console.log('\n[30] Restauration du moteur historique de scraping');
   const pipeAudit = fs.readFileSync(path.join(base, 'services/scraping/leboncoin-pipeline.js'), 'utf8');
   assert(/BLOCKED_429/.test(pipeAudit), 'pipeline: 429 distinct de 403 (BLOCKED_429)');
   assert(/parseRetryAfterMs/.test(pipeAudit), 'pipeline: Retry-After interprété (parseRetryAfterMs)');
-  // Politique de scraping fixe centralisée dans config/scraping.js ; le pipeline
+  // Politique de scraping centralisée dans config/scraping.js ; le pipeline
   // la consomme via getScrapingPolicy()/clampConcurrency().
   const presetsAudit = fs.readFileSync(path.join(base, 'config/scraping.js'), 'utf8');
-  assert(/concurrency:\s*MAX_CONCURRENCY/.test(presetsAudit) && /const MAX_CONCURRENCY = 25/.test(presetsAudit),
-    'config/scraping: concurrence bornée à MAX_CONCURRENCY = 25');
-  assert(/pageDelayMs:\s*400/.test(presetsAudit), 'config/scraping: délai nominal 400 ms');
+  assert(/const MAX_CONCURRENCY = 20/.test(presetsAudit) && /Math\.min\(p\.concurrency, MAX_CONCURRENCY\)/.test(presetsAudit),
+    'config/scraping: concurrence bornée à MAX_CONCURRENCY = 20');
+  assert(/const MIN_PAGE_DELAY_MS = 450/.test(presetsAudit), 'config/scraping: délai de page minimal 450 ms');
   assert(/getScrapingPolicy/.test(pipeAudit), 'pipeline: consomme getScrapingPolicy() (politique centralisée)');
 
   // renderer : les nouveaux états restent tolérés (aucune régression UI).
@@ -2541,11 +2541,11 @@ console.log('\n[31] Audit 403 : compteurs + backoff + Retry-After');
   assert(!/noWait: true/.test(pipe), '[31] pipeline: plus de noWait (délai adaptatif toujours appliqué)');
   assert(/pendingRetryAfterMs/.test(pipe), '[31] pipeline: pause Retry-After appliquée (pendingRetryAfterMs)');
   assert(/parseRetryAfterMs/.test(pipe), '[31] pipeline: en-tête Retry-After interprété');
-  // Politique fixe : concurrence 25 max, délai nominal 400 ms.
+  // Politique de scraping centralisée : concurrence ≤ 20, délai de page ≥ 450 ms.
   const presetsSrc = fs.readFileSync(path.join(__dirname, '..', 'src/main/config/scraping.js'), 'utf8');
-  assert(/const MAX_CONCURRENCY = 25/.test(presetsSrc), '[31] config: MAX_CONCURRENCY = 25');
-  assert(/concurrency:\s*MAX_CONCURRENCY/.test(presetsSrc), '[31] config: politique concurrence = MAX_CONCURRENCY');
-  assert(/pageDelayMs:\s*400/.test(presetsSrc), '[31] config: délai nominal 400 ms');
+  assert(/const MAX_CONCURRENCY = 20/.test(presetsSrc), '[31] config: MAX_CONCURRENCY = 20');
+  assert(/Math\.min\(p\.concurrency, MAX_CONCURRENCY\)/.test(presetsSrc), '[31] config: concurrence bornée à MAX_CONCURRENCY');
+  assert(/const MIN_PAGE_DELAY_MS = 450/.test(presetsSrc), '[31] config: délai de page minimal 450 ms');
 
   // 31.3b parseRetryAfterMs : formes delta-seconds et date HTTP.
   const { parseRetryAfterMs } = require('../src/main/services/scraping/leboncoin-pipeline');
@@ -2558,15 +2558,15 @@ console.log('\n[31] Audit 403 : compteurs + backoff + Retry-After');
   assert(typeof parsed === 'number' && parsed > 55000 && parsed <= 60000, '[31] Retry-After date HTTP → ~60000 ms');
   assert(parseRetryAfterMs('999999999') === 24 * 3600 * 1000, '[31] Retry-After plafonné à 24h (anti-boucle infinie)');
 
-  // 31.3c Politique fixe : clampConcurrency ne dépasse jamais 25.
+  // 31.3c Politique bornée : clampConcurrency ne dépasse jamais MAX_CONCURRENCY.
   const cfg = require('../src/main/config/scraping');
-  assert(cfg.clampConcurrency(1000) === 25, '[31] clampConcurrency(1000) → 25 (jamais dépassé)');
+  assert(cfg.clampConcurrency(1000) === 20, '[31] clampConcurrency(1000) → 20 (jamais dépassé)');
   assert(cfg.clampConcurrency(7) === 7, '[31] clampConcurrency(7) → 7 (valeur valide conservée)');
-  assert(cfg.clampConcurrency('abc') === 25 && cfg.clampConcurrency(-3) === 25, '[31] clampConcurrency invalide → défaut 25');
-  assert(cfg.getScrapingPolicy().concurrency === 25 && cfg.getScrapingPolicy().pageDelayMs === 400,
-    '[31] politique: concurrence 25 + délai 400 ms');
-  assert(cfg.getSpeedPreset().concurrency === 25 && cfg.getSpeedPreset().minDelayMs === 400,
-    '[31] getSpeedPreset (déprécié) renvoie la politique fixe');
+  assert(cfg.clampConcurrency('abc') === 10 && cfg.clampConcurrency(-3) === 10, '[31] clampConcurrency invalide → défaut du mode moyen (10)');
+  assert(cfg.getScrapingPolicy().concurrency === 10 && cfg.getScrapingPolicy().pageDelayMs === 900,
+    '[31] politique par défaut (moyen): concurrence 10 + délai 900 ms');
+  assert(cfg.getSpeedPreset('moyen').concurrency === 10 && cfg.getSpeedPreset('moyen').minDelayMs === 600,
+    '[31] getSpeedPreset(moyen) → concurrence 10, délai enrichissement 600 ms');
 
   // 31.4 Métrique d'annonces extraites émise par le pipeline.
   assert(/\[METRICS\] \$\{ads\.length\} annonces extraites uniques/.test(pipe), '[31] pipeline: ligne [METRICS] annonces extraites');
@@ -2655,12 +2655,15 @@ console.log('\n[33] Roadmap fiabilité (disjoncteur, journal, reprise, config)')
 // 33.1 config/scraping : source unique des presets (pas d'electron requis).
 {
   const cfg = require('../src/main/config/scraping');
-  // Politique fixe (source unique) : concurrence 25, délai nominal 400 ms.
-  assert(cfg.getScrapingPolicy().concurrency === 25 && cfg.getScrapingPolicy().pageDelayMs === 400,
-    'config/scraping: politique fixe concurrence 25 / délai 400 ms');
-  assert(cfg.SCRAPING_POLICY.mode === 'ultra-rapide', 'config/scraping: mode ultra-rapide');
-  assert(cfg.getSpeedPreset().concurrency === 25 && cfg.getSpeedPreset().minDelayMs === 400,
-    'config/scraping: getSpeedPreset (déprécié) = politique fixe');
+  // Politique par défaut = mode « moyen » (prudent) : concurrence 10, délai page 900 ms.
+  assert(cfg.getScrapingPolicy().concurrency === 10 && cfg.getScrapingPolicy().pageDelayMs === 900,
+    'config/scraping: politique par défaut (moyen) concurrence 10 / délai 900 ms');
+  assert(cfg.SCRAPING_POLICY.mode === 'moyen' && cfg.DEFAULT_SPEED === 'moyen',
+    'config/scraping: mode par défaut = moyen');
+  assert(cfg.getSpeedPreset('ultra-rapide').concurrency === 20 && cfg.getSpeedPreset('ultra-rapide').minDelayMs === 300,
+    'config/scraping: getSpeedPreset(ultra-rapide) → concurrence 20, délai enrichissement 300 ms');
+  assert(cfg.getSpeedPreset('inconnu').concurrency === 10 && cfg.getSpeedPreset('inconnu').mode === 'moyen',
+    'config/scraping: getSpeedPreset(mode inconnu) → repli « moyen »');
   assert(cfg.BLOCK_THRESHOLD >= 1 && cfg.CIRCUIT_STATES.STOPPED === 'stopped',
     'config/scraping: seuil de blocage + états du disjoncteur définis');
   // Le module ne doit PAS dépendre d'electron (importable par le pipeline forké).
@@ -2918,7 +2921,7 @@ console.log('\n[35] Intégration pipeline (fixture HAR → annonces.json)');
     'pipeline: performance.adsPerMinute calculé (débit)');
   assert(typeof report.performance.peakRssMb === 'number' && report.performance.peakRssMb > 0,
     'pipeline: performance.peakRssMb mesuré (pic mémoire)');
-  assert(report.speed === 'ultra-rapide', 'pipeline: report.speed = politique fixe ultra-rapide');
+  assert(report.speed === 'moyen', 'pipeline: report.speed = politique par défaut (moyen)');
 
   // Les codes d'erreur PARSE_NO_ADS ne doivent PAS apparaître (HAR exploitable).
   assert(!/PARSE_NO_ADS/.test(stdout), 'pipeline: aucune erreur PARSE_NO_ADS sur HAR valide');
@@ -3955,71 +3958,106 @@ console.log('\n[40] Extraction des données manquantes (vendeur, détail, fusion
 console.log('\n[40] OK');
 
 // ═══════════════════════════════════════════════════════════════════════════
-// [41] POLITIQUE DE SCRAPING FIXE (non modifiable) — invariants obligatoires
-//   concurrence max 25 · délai nominal 400 ms · mode ultra-rapide
-//   migration des anciens réglages · réduction adaptative · Retry-After
+// [41] POLITIQUE DE DÉBIT — presets de vitesse bornés (safe by default)
+//   mode par défaut « moyen » · concurrence ≤ 20 · délai de page ≥ 450 ms
+//   presets moyen/rapide/ultra-rapide · migration · réduction adaptative ·
+//   Retry-After · backoff plafonné après blocage.
 // ═══════════════════════════════════════════════════════════════════════════
-console.log('\n[41] Politique de scraping fixe');
+console.log('\n[41] Politique de débit (presets bornés, safe by default)');
 {
   const fs = require('fs');
   const path = require('path');
   const cfg = require('../src/main/config/scraping');
   const { parseRetryAfterMs, nextConcurrencyAfterBlock } = require('../src/main/services/scraping/leboncoin-pipeline');
 
-  // 41.1 Valeurs obligatoires.
+  // 41.1 Valeurs par DÉFAUT obligatoires (mode « moyen »).
   const pol = cfg.getScrapingPolicy();
-  assert(pol.concurrency === 25, '[41] concurrence cible = 25');
-  assert(pol.pageDelayMs === 400, '[41] délai nominal entre pages = 400 ms');
-  assert(pol.mode === 'ultra-rapide', '[41] mode de performance = ultra-rapide');
-  assert(cfg.MAX_CONCURRENCY === 25, '[41] MAX_CONCURRENCY exporté = 25');
+  assert(pol.concurrency === 10, '[41] concurrence par défaut = 10');
+  assert(pol.pageDelayMs === 900 && pol.minPageDelayMs === 900 && pol.maxPageDelayMs === 1600,
+    '[41] délai de page par défaut = 900-1600 ms');
+  assert(pol.mode === 'moyen', '[41] mode par défaut = moyen');
+  assert(pol.enrichMinDelayMs === 600, '[41] délai enrichissement par défaut = 600 ms');
+  assert(cfg.DEFAULT_SPEED === 'moyen', '[41] DEFAULT_SPEED = moyen');
+  assert(cfg.MAX_CONCURRENCY === 20, '[41] MAX_CONCURRENCY exporté = 20');
+  assert(cfg.MIN_PAGE_DELAY_MS === 450, '[41] MIN_PAGE_DELAY_MS exporté = 450');
   assert(Object.isFrozen(cfg.SCRAPING_POLICY), '[41] SCRAPING_POLICY figé (immuable)');
 
-  // 41.2 La concurrence ne dépasse JAMAIS 25, quelle que soit la demande.
-  for (const asked of [26, 50, 100, 999999, Infinity, '99', 25.9]) {
-    assert(cfg.clampConcurrency(asked) <= 25, `[41] clampConcurrency(${String(asked)}) ≤ 25`);
+  // 41.2 Les trois presets respectent les bornes absolues.
+  const presets = [
+    { mode: 'moyen', concurrency: 10, minPageDelayMs: 900, maxPageDelayMs: 1600, enrichMinDelayMs: 600, enrichMaxDelayMs: 3000 },
+    { mode: 'rapide', concurrency: 15, minPageDelayMs: 600, maxPageDelayMs: 1200, enrichMinDelayMs: 400, enrichMaxDelayMs: 2000 },
+    { mode: 'ultra-rapide', concurrency: 20, minPageDelayMs: 450, maxPageDelayMs: 900, enrichMinDelayMs: 300, enrichMaxDelayMs: 1500 },
+  ];
+  for (const exp of presets) {
+    const p = cfg.getScrapingPolicy(exp.mode);
+    assert(p.concurrency === exp.concurrency, `[41] ${exp.mode}: concurrence ${exp.concurrency}`);
+    assert(p.minPageDelayMs === exp.minPageDelayMs && p.maxPageDelayMs === exp.maxPageDelayMs,
+      `[41] ${exp.mode}: délai de page ${exp.minPageDelayMs}-${exp.maxPageDelayMs} ms`);
+    assert(p.enrichMinDelayMs === exp.enrichMinDelayMs && p.enrichMaxDelayMs === exp.enrichMaxDelayMs,
+      `[41] ${exp.mode}: délai enrichissement ${exp.enrichMinDelayMs}-${exp.enrichMaxDelayMs} ms`);
+    // Bornes absolues : jamais dépassées, même par un preset.
+    assert(p.concurrency <= cfg.MAX_CONCURRENCY, `[41] ${exp.mode}: concurrence ≤ MAX_CONCURRENCY`);
+    assert(p.minPageDelayMs >= cfg.MIN_PAGE_DELAY_MS, `[41] ${exp.mode}: délai de page ≥ MIN_PAGE_DELAY_MS`);
   }
-  assert(cfg.clampConcurrency(25) === 25, '[41] clampConcurrency(25) = 25');
 
-  // 41.3 getSpeedPreset (déprécié) ne permet plus de relever le débit.
-  for (const legacySpeed of ['moyen', 'rapide', 'ultra-rapide', 'turbo', undefined, null]) {
-    const p = cfg.getSpeedPreset(legacySpeed);
-    assert(p.concurrency === 25 && p.minDelayMs === 400,
-      `[41] getSpeedPreset(${String(legacySpeed)}) → politique fixe 25/400`);
+  // 41.3 Mode inconnu → repli sur « moyen » (jamais un débit plus élevé).
+  for (const bad of ['turbo', '', null, undefined, 42, {}]) {
+    const p = cfg.getScrapingPolicy(bad);
+    assert(p.mode === 'moyen' && p.concurrency === 10,
+      `[41] getScrapingPolicy(${String(bad)}) → repli « moyen » (concurrence 10)`);
   }
 
-  // 41.4 Le pipeline force la politique : impossible de la surcharger via opts.
+  // 41.4 La concurrence ne dépasse JAMAIS MAX_CONCURRENCY (20).
+  for (const asked of [21, 26, 50, 100, 999999, Infinity, '99', 20.9]) {
+    assert(cfg.clampConcurrency(asked) <= 20, `[41] clampConcurrency(${String(asked)}) ≤ 20`);
+  }
+  assert(cfg.clampConcurrency(20) === 20, '[41] clampConcurrency(20) = 20');
+  assert(cfg.clampConcurrency(5) === 5, '[41] clampConcurrency(5) = 5 (valeur valide)');
+
+  // 41.5 getSpeedPreset : borné, reflète le mode demandé.
+  assert(cfg.getSpeedPreset('moyen').concurrency === 10 && cfg.getSpeedPreset('moyen').minDelayMs === 600,
+    '[41] getSpeedPreset(moyen) → 10 / 600');
+  assert(cfg.getSpeedPreset('ultra-rapide').concurrency === 20 && cfg.getSpeedPreset('ultra-rapide').minDelayMs === 300,
+    '[41] getSpeedPreset(ultra-rapide) → 20 / 300');
+  assert(cfg.getSpeedPreset('turbo').mode === 'moyen' && cfg.getSpeedPreset(undefined).mode === 'moyen',
+    '[41] getSpeedPreset(mode inconnu) → repli « moyen »');
+
+  // 41.6 Le pipeline force la politique du mode demandé.
   const pipeSrc = fs.readFileSync(path.join(__dirname, '..', 'src/main/services/scraping/leboncoin-pipeline.js'), 'utf8');
   assert(/opts\.concurrency = clampConcurrency\(policy\.concurrency\)/.test(pipeSrc),
     '[41] pipeline: concurrence forcée via clampConcurrency(policy.concurrency)');
   assert(/opts\.minDelayMs = policy\.enrichMinDelayMs/.test(pipeSrc),
     '[41] pipeline: délai d\'enrichissement forcé depuis la politique');
-  assert(!/getSpeedPreset\(opts\.speed\)/.test(pipeSrc),
-    '[41] pipeline: n\'utilise plus opts.speed pour choisir le preset');
+  assert(/const policy = getScrapingPolicy\(opts\.speed\)/.test(pipeSrc),
+    '[41] pipeline: politique dérivée du mode de vitesse transmis (--speed)');
 
-  // 41.5 Le main process transmet la politique (jamais une valeur utilisateur).
+  // 41.7 Le main process transmet la politique du mode choisi (jamais brute).
   const ipcSrc = fs.readFileSync(path.join(__dirname, '..', 'src/main/core/ipcHandlers.js'), 'utf8');
-  assert(/getScrapingPolicy\(\)/.test(ipcSrc), '[41] ipcHandlers: consomme getScrapingPolicy()');
-  assert(/minPageDelayMs: pageDelay/.test(ipcSrc) && /maxPageDelayMs: pageDelay/.test(ipcSrc),
-    '[41] ipcHandlers: délai de capture = politique (min=max=400 ms)');
+  assert(/getScrapingPolicy\(speed\)/.test(ipcSrc), '[41] ipcHandlers: consomme getScrapingPolicy(speed)');
+  assert(/normalizeSpeed\(config\.speed\)/.test(ipcSrc), '[41] ipcHandlers: normalise le mode de vitesse utilisateur');
+  assert(/minPageDelayMs: policy\.minPageDelayMs/.test(ipcSrc) && /maxPageDelayMs: policy\.maxPageDelayMs/.test(ipcSrc),
+    '[41] ipcHandlers: délai de capture = politique (min/max du preset)');
   assert(/speed: policy\.mode/.test(ipcSrc), '[41] ipcHandlers: mode pipeline = politique');
   assert(!/userSettings\.scrapeSpeed/.test(ipcSrc), '[41] ipcHandlers: ne lit plus scrapeSpeed utilisateur');
   assert(!/userSettings\.pageDelayMs/.test(ipcSrc), '[41] ipcHandlers: ne lit plus pageDelayMs utilisateur');
 
-  // 41.6 harCapturer : délai par défaut = politique (400 ms).
+  // 41.8 harCapturer : délai par défaut = politique (moyen, 900-1600 ms).
   const harSrc = fs.readFileSync(path.join(__dirname, '..', 'src/main/services/scraping/harCapturer.js'), 'utf8');
-  assert(/options\.minPageDelayMs \?\? SCRAPING_POLICY\.pageDelayMs/.test(harSrc),
+  assert(/options\.minPageDelayMs \?\? SCRAPING_POLICY\.minPageDelayMs/.test(harSrc),
     '[41] harCapturer: délai min par défaut = politique');
-  assert(/options\.maxPageDelayMs \?\? SCRAPING_POLICY\.pageDelayMs/.test(harSrc),
+  assert(/options\.maxPageDelayMs \?\? SCRAPING_POLICY\.maxPageDelayMs/.test(harSrc),
     '[41] harCapturer: délai max par défaut = politique');
+  assert(/pageBackoffMs/.test(harSrc) && /BACKOFF\.pageBaseMs/.test(harSrc),
+    '[41] harCapturer: backoff de page après refus transitoire (pageBackoffMs)');
 
-  // 41.7 Réglages de vitesse supprimés des defaults + refusés par le sanitizer.
+  // 41.9 Réglages de vitesse supprimés des defaults + refusés par le sanitizer.
   const settings = require('../src/main/core/settings');
   assert(!('scrapeSpeed' in settings.SETTINGS_DEFAULTS) && !('pageDelayMs' in settings.SETTINGS_DEFAULTS),
     '[41] settings: aucune clé de vitesse dans les défauts');
   assert(Object.keys(settings.sanitizeSettingsPatch({ scrapeSpeed: 'ultra-rapide', pageDelayMs: 1 })).length === 0,
     '[41] settings: patch de vitesse entièrement rejeté (IPC non fiable)');
 
-  // 41.8 Migration : un ancien user-settings.json ne rétablit PAS la vitesse.
+  // 41.10 Migration : un ancien user-settings.json ne rétablit PAS la vitesse.
   {
     const migrated = settings.migrateSettings({ scrapeSpeed: 'moyen', pageDelayMs: 99999, headless: false });
     assert(!('scrapeSpeed' in migrated) && !('pageDelayMs' in migrated),
@@ -4031,23 +4069,27 @@ console.log('\n[41] Politique de scraping fixe');
       '[41] migration: entrée nulle gérée sans clé de vitesse');
   }
 
-  // 41.9 L'interface ne propose plus de contrôle modifiable de vitesse/délai.
+  // 41.11 L'interface propose le choix de vitesse (moyen par défaut) + avertissement.
   const html = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/index.html'), 'utf8');
-  assert(!/id="cfgScrapeSpeed"/.test(html), '[41] UI: plus de sélecteur de vitesse');
-  assert(!/id="cfgPageDelay"/.test(html), '[41] UI: plus de champ de délai');
-  assert(/scraping-mode-readonly/.test(html), '[41] UI: affichage lecture seule du mode fixe');
+  assert(/id="speedSelect"/.test(html), '[41] UI: sélecteur de vitesse présent');
+  assert(/value="moyen" selected/.test(html), '[41] UI: « moyen » est sélectionné par défaut');
+  assert(/id="speedWarning"/.test(html), '[41] UI: avertissement de risque présent');
+  assert(/ultra-rapide/.test(html), '[41] UI: option ultra-rapide disponible');
+  assert(/scraping-mode-readonly/.test(html), '[41] UI: affichage lecture seule du mode par défaut');
   const scraperSrc = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/scraperModule.js'), 'utf8');
   assert(!/scrapeSpeed/.test(scraperSrc) && !/pageDelayMs/.test(scraperSrc),
-    '[41] UI: scraperModule ne lit/écrit plus la vitesse ni le délai');
+    '[41] UI: scraperModule ne lit/écrit plus la vitesse brute ni le délai');
+  assert(/speed: speedSelect \? speedSelect\.value/.test(scraperSrc),
+    '[41] UI: scraperModule transmet le mode de vitesse au main process');
 
-  // 41.10 Réduction adaptative de la concurrence (fonction pure).
-  assert(nextConcurrencyAfterBlock(25, { is429: true }) === 12, '[41] 429: concurrence 25 → 12 (÷2)');
-  assert(nextConcurrencyAfterBlock(25, { is429: false }) === 18, '[41] 403: concurrence 25 → 18 (−25 %)');
+  // 41.12 Réduction adaptative de la concurrence (fonction pure).
+  assert(nextConcurrencyAfterBlock(20, { is429: true }) === 10, '[41] 429: concurrence 20 → 10 (÷2)');
+  assert(nextConcurrencyAfterBlock(20, { is429: false }) === 15, '[41] 403: concurrence 20 → 15 (−25 %)');
   assert(nextConcurrencyAfterBlock(1, { is429: true }) === 1, '[41] réduction bornée à 1 (jamais 0)');
   assert(nextConcurrencyAfterBlock(0, { is429: false }) === 1, '[41] entrée invalide → 1');
   assert(nextConcurrencyAfterBlock(3, { is429: true }) === 1, '[41] 3 → 1 (floor)');
   // Jamais d'augmentation.
-  let c = 25;
+  let c = 20;
   for (let i = 0; i < 10; i++) {
     const n = nextConcurrencyAfterBlock(c, { is429: true });
     assert(n <= c, '[41] la concurrence ne remonte jamais');
@@ -4055,20 +4097,51 @@ console.log('\n[41] Politique de scraping fixe');
   }
   assert(c === 1, '[41] après réductions répétées → plancher 1');
 
-  // 41.11 Retry-After borné (pas de boucle infinie ni de pause démesurée).
+  // 41.13 Backoff d'ENRICHISSEMENT après blocage : ne redescend pas sous un seuil
+  // minimal (base × 2^N) et reste plafonné par blockBackoffMaxMs.
+  {
+    const { AdaptiveRateLimiter } = require('../src/main/utils/rateLimiter');
+    const rl = new AdaptiveRateLimiter({ baseDelayMs: 600, maxDelayMs: 3000, blockMaxDelayMs: 45000 });
+    await rl.waitAfter({ blocked: true, status: 403 });
+    assert(rl.currentDelayMs() === 1200, '[41] backoff: 1 blocage → base×2 = 1200 ms');
+    await rl.waitAfter({ blocked: true, status: 429 });
+    assert(rl.currentDelayMs() === 2400, '[41] backoff: 2 blocages → base×4 = 2400 ms');
+    // Une erreur réseau ne doit PAS rabaisser le délai déjà monté par un blocage.
+    await rl.waitAfter({ error: true });
+    assert(rl.currentDelayMs() === 3600, '[41] backoff: erreur réseau ne redescend pas sous le backoff (3600 ms)');
+    // Montée jusqu'au plafond blockMaxDelayMs puis maintien.
+    const rl2 = new AdaptiveRateLimiter({ baseDelayMs: 600, maxDelayMs: 3000, blockMaxDelayMs: 45000 });
+    for (let i = 0; i < 10; i++) await rl2.waitAfter({ blocked: true, status: 403 });
+    assert(rl2.currentDelayMs() === 45000, '[41] backoff: plafonné à blockBackoffMaxMs (45 s)');
+    // Le plafond par défaut reste maxDelayMs (comportement historique préservé).
+    const rl3 = new AdaptiveRateLimiter({ baseDelayMs: 600, maxDelayMs: 3000 });
+    for (let i = 0; i < 10; i++) await rl3.waitAfter({ blocked: true, status: 403 });
+    assert(rl3.currentDelayMs() === 3000, '[41] backoff: plafond par défaut = maxDelayMs');
+  }
+
+  // 41.14 Backoff de PAGE (capture) après refus transitoire : premier palier
+  // « plusieurs secondes », doublé, plafonné.
+  {
+    const { pageBackoffMs } = require('../src/main/services/scraping/harCapturer');
+    assert(pageBackoffMs(1) === 3000, '[41] backoff de page: 1re tentative → 3000 ms');
+    assert(pageBackoffMs(2) === 6000, '[41] backoff de page: 2e tentative → 6000 ms');
+    assert(pageBackoffMs(3) === 12000, '[41] backoff de page: 3e tentative → 12000 ms');
+    assert(pageBackoffMs(100) <= cfg.BACKOFF.pageMaxMs, '[41] backoff de page: plafonné à pageMaxMs');
+    assert(pageBackoffMs(0) === 3000, '[41] backoff de page: entrée invalide → palier de base');
+  }
+
+  // 41.15 Retry-After borné (pas de boucle infinie ni de pause démesurée).
   assert(parseRetryAfterMs('999999999') <= 24 * 3600 * 1000, '[41] Retry-After plafonné à 24 h');
   assert(parseRetryAfterMs('-5') === null || parseRetryAfterMs('-5') >= 0, '[41] Retry-After négatif géré');
 
-  // 41.12 Le pipeline applique la pause Retry-After (pause inter-batch).
+  // 41.16 Le pipeline applique la pause Retry-After (pause inter-batch).
   assert(/await sleep\(pendingRetryAfterMs\)/.test(pipeSrc), '[41] pipeline: pause Retry-After effective');
 
-  // 41.13 report.json et logs reflètent la politique FIXE, jamais un mode
-  // utilisateur hérité. Un ancien `--speed` ne doit pas réapparaître.
-  assert(/speed: policy\.mode/.test(pipeSrc), '[41] pipeline: report.speed = politique fixe');
-  assert(!/opts\.speed \|\| 'moyen'/.test(pipeSrc), '[41] pipeline: plus de repli « moyen » depuis opts.speed');
+  // 41.17 report.json et logs reflètent la politique du mode demandé.
+  assert(/speed: policy\.mode/.test(pipeSrc), '[41] pipeline: report.speed = politique du mode');
+  assert(/getScrapingPolicy\(opts\.speed\)/.test(pipeSrc), '[41] pipeline: pas de repli « moyen » figé hors mode demandé');
 
-  // 41.14 Mesures de performance reproductibles dans report.json (durée totale,
-  // débit, durée moyenne, pic mémoire) — observées, jamais estimées.
+  // 41.18 Mesures de performance reproductibles dans report.json.
   assert(/report\.performance = \{/.test(pipeSrc), '[41] pipeline: bloc performance écrit dans report.json');
   for (const field of ['totalMs', 'adsPerMinute', 'avgMsPerAd', 'peakRssMb']) {
     assert(new RegExp('\\b' + field + '\\b').test(pipeSrc), `[41] pipeline: mesure performance "${field}" présente`);
@@ -6934,6 +7007,159 @@ console.log('\n[65] Taxonomie des erreurs de page en capture (robustesse)');
   }
 
   console.log('\n[65] OK');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// [66] POLITIQUE DE DÉBIT — reprise bornée d'une page après refus HTTP
+//   transitoire + câblage du mode de vitesse dans le main process.
+//   Vérifie : (1) une page en 403/429 NU est réessayée un nombre BORNÉ de fois
+//   avec un backoff croissant, puis arrête proprement ; (2) une page « Accès
+//   temporairement restreint » / CloudFront n'est JAMAIS réessayée (refus
+//   durable) ; (3) le mode de vitesse choisi est transmis de bout en bout.
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n[66] Politique de débit : reprise bornée d\'une page (refus transitoire)');
+{
+  const os = require('os');
+  const Module = require('module');
+
+  // Base isolée : aucune écriture dans les vraies données utilisateur.
+  const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), 'vendra-rt-'));
+  const sessionPaths = require('../src/main/services/scraping/sessionPaths');
+  const globalPath = sessionPaths.getGlobalSessionPath(tmpBase);
+  const flagPath = sessionPaths.getRestrictedFlagPath(tmpBase);
+
+  // Construit un faux navigateur : `statuses` = suite des statuts HTTP renvoyés
+  // par les navigations successives (le dernier est répété). `bodyHtml` fixe le
+  // contenu (pour distinguer un refus durable d'un 403 nu).
+  const mkBrowser = (statuses, bodyHtml = 'page neutre sans annonce') => {
+    const state = { navigations: 0 };
+    const makeCtx = () => ({
+      async route() {}, async setExtraHTTPHeaders() {}, async addInitScript() {},
+      async newPage() {
+        return {
+          async goto() { const s = statuses[Math.min(state.navigations, statuses.length - 1)]; state.navigations++; return { status: () => s }; },
+          url() { return 'https://www.leboncoin.fr/recherche?text=rtx'; },
+          async waitForLoadState() {},
+          async evaluate() { return { text: bodyHtml, matched: null, hasCaptchaIframe: false, cfChallenge: false, adCards: /\/ad\//.test(bodyHtml) ? 1 : 0 }; },
+          on() {}, async close() {},
+        };
+      },
+      async close() {},
+      async storageState() { return { cookies: [], origins: [] }; },
+      request: { async get() { return { status: () => 403, async text() { return bodyHtml; } }; } },
+    });
+    return { state, async newContext() { return makeCtx(); }, async close() {} };
+  };
+
+  // Charge une instance FRAÎCHE de HarCapturer avec un lancement simulé qui
+  // renvoie le navigateur passé (isole les constantes dans la base temporaire).
+  function loadIsolated(launchImpl) {
+    const constantsPath = require.resolve('../src/main/config/constants');
+    const harPath = require.resolve('../src/main/services/scraping/harCapturer');
+    const sessionPathsPath = require.resolve('../src/main/services/scraping/sessionPaths');
+    const orig = Module._load;
+    const stub = { chromium: { launch: launchImpl } };
+    const isolated = {
+      __esModule: true,
+      BASE_OUT_DIR: tmpBase,
+      GLOBAL_SESSION_PATH: globalPath,
+      RESTRICTED_SESSION_FLAG_PATH: flagPath,
+      APP_NAME: 'Vendra',
+      JOBS_DIR: path.join(tmpBase, 'jobs'),
+    };
+    Module._load = function (request, parent, isMain) {
+      if (request === 'playwright') return stub;
+      if (request === '../../config/constants') return isolated;
+      return orig.apply(this, arguments);
+    };
+    try {
+      for (const p of [constantsPath, harPath, sessionPathsPath]) delete require.cache[p];
+      return require(harPath);
+    } finally {
+      Module._load = orig;
+    }
+  }
+
+  // Backoff de page RÉDUIT injecté pour un test rapide (les valeurs réelles sont
+  // vérifiées séparément via pageBackoffMs, fonction pure).
+  const fastBackoff = () => 5;
+  const origBackoff = require('../src/main/config/scraping').BACKOFF;
+
+  try {
+    // 66.1 Un 403 NU persistant est réessayé un nombre BORNÉ de fois, puis
+    //      arrête la capture avec un état « accès non vérifié » (pas de faux succès).
+    {
+      const { HarCapturer } = loadIsolated(async () => browser);
+      const cap = new HarCapturer({ pageBackoffMs: fastBackoff });
+      cap._warmupSession = async () => ({ verified: true, reason: 'no_captcha' });
+      const browser = mkBrowser([403]);
+      let caught = null;
+      try {
+        await cap.capture({ searchUrl: 'https://www.leboncoin.fr/recherche?text=rtx', maxPages: 1, outputHarPath: path.join(tmpBase, 'j1', 'results', 'capture.har') });
+      } catch (e) { caught = e; }
+      assert(caught && caught.code === 'HTTP_ACCESS_REFUSED' && caught.accessUnverified === true,
+        '[66] 403 nu persistant → arrêt HTTP_ACCESS_REFUSED (accès non vérifié)');
+      // 1 navigation initiale + 2 reprises bornées = 3 navigations.
+      assert(browser.state.navigations === 3,
+        `[66] page en 403 nu réessayée un nombre BORNÉ de fois (3 navigations, obtenu ${browser.state.navigations})`);
+    }
+
+    // 66.2 Un 403 TRANSITOIRE (servi une seule fois) est absorbé : la page
+    //      suivante (200 + annonces) est bien capturée (aucune interruption).
+    {
+      const resultsHtml = '<html><body><a href="https://www.leboncoin.fr/ad/ordinateurs/123">x</a></body></html>';
+      const { HarCapturer } = loadIsolated(async () => browser);
+      const cap = new HarCapturer({ pageBackoffMs: fastBackoff });
+      cap._warmupSession = async () => ({ verified: true, reason: 'no_captcha' });
+      const browser = mkBrowser([403, 200], resultsHtml);
+      let caught = null;
+      try {
+        await cap.capture({ searchUrl: 'https://www.leboncoin.fr/recherche?text=rtx', maxPages: 1, outputHarPath: path.join(tmpBase, 'j2', 'results', 'capture.har') });
+      } catch (e) { caught = e; }
+      assert(!caught, '[66] 403 transitoire absorbé → capture réussie (aucune exception)');
+      assert(browser.state.navigations === 2,
+        `[66] 403 transitoire → 1 reprise puis succès (2 navigations, obtenu ${browser.state.navigations})`);
+    }
+
+    // 66.3 Une page « Accès temporairement restreint » n'est JAMAIS réessayée
+    //      (refus durable) : une seule navigation, arrêt immédiat.
+    {
+      const { HarCapturer } = loadIsolated(async () => browser);
+      const cap = new HarCapturer({ pageBackoffMs: fastBackoff });
+      cap._warmupSession = async () => ({ verified: true, reason: 'no_captcha' });
+      const restrictedHtml = 'Accès temporairement restreint. Pourquoi ce blocage ? Le comportement du navigateur nous a intrigué.';
+      const browser = mkBrowser([200], restrictedHtml);
+      let caught = null;
+      try {
+        await cap.capture({ searchUrl: 'https://www.leboncoin.fr/recherche?text=rtx', maxPages: 1, outputHarPath: path.join(tmpBase, 'j3', 'results', 'capture.har') });
+      } catch (e) { caught = e; }
+      assert(caught && caught.code === 'ACCESS_RESTRICTED',
+        '[66] page « Accès temporairement restreint » → arrêt ACCESS_RESTRICTED');
+      assert(browser.state.navigations === 1,
+        `[66] refus durable jamais réessayé (1 seule navigation, obtenu ${browser.state.navigations})`);
+    }
+
+    // 66.4 pageBackoffMs : bornes exactes (fonction pure), palier ≥ plusieurs secondes.
+    const { pageBackoffMs } = loadIsolated(async () => { throw new Error('no launch'); });
+    const origBase = origBackoff.pageBaseMs;
+    const origMax = origBackoff.pageMaxMs;
+    assert(pageBackoffMs(1) === origBase, `[66] pageBackoffMs(1) = palier de base (${origBase} ms)`);
+    assert(pageBackoffMs(2) === Math.min(origMax, origBase * 2), '[66] pageBackoffMs(2) = base × 2');
+    assert(pageBackoffMs(50) === origMax, '[66] pageBackoffMs plafonné à pageMaxMs');
+    assert(origBase >= 3000, '[66] le palier de base du backoff de page est ≥ 3 s (freine réellement)');
+  } finally {
+    fs.rmSync(tmpBase, { recursive: true, force: true });
+  }
+
+  // 66.5 Le mode de vitesse est câblé de bout en bout côté main process.
+  const ipcSrc = fs.readFileSync(path.join(base, 'core/ipcHandlers.js'), 'utf8');
+  assert(/normalizeSpeed\(config\.speed\)/.test(ipcSrc), '[66] ipcHandlers: mode normalisé depuis la config du job');
+  assert(/getScrapingPolicy\(speed\)/.test(ipcSrc), '[66] ipcHandlers: politique dérivée du mode choisi');
+  assert(/minPageDelayMs: policy\.minPageDelayMs/.test(ipcSrc) && /maxPageDelayMs: policy\.maxPageDelayMs/.test(ipcSrc),
+    '[66] ipcHandlers: le capturer reçoit les délais min/max du preset (jitter)');
+  assert(/speed: policy\.mode/.test(ipcSrc), '[66] ipcHandlers: le pipeline reçoit le mode choisi');
+
+  console.log('\n[66] OK');
 }
 
 console.log(`\n=== RÉSULTAT : ${pass} réussis, ${fail} échoués ===`);

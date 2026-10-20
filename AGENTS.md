@@ -236,55 +236,79 @@ Ce que cela NE fait PAS (limites honnêtes) : aucun solveur de CAPTCHA, aucun
 proxy. Si le blocage persiste malgré l'empreinte cohérente, l'app s'arrête
 proprement (`access_unverified` / `partial`) plutôt que de boucler.
 
-## Politique de scraping FIXE (non configurable) — source unique
+## Politique de débit — presets de vitesse bornés (safe by default)
 
-`src/main/config/scraping.js` → `SCRAPING_POLICY` (figé via `Object.freeze`) est
-la **seule** source de vérité pour la performance de scraping. L'utilisateur ne
-peut plus la modifier : elle est appliquée automatiquement au démarrage par
-toutes les couches.
+`src/main/config/scraping.js` est la **seule** source de vérité de la politique de
+débit (concurrence, délais de page, délais d'enrichissement, backoff). Elle est
+importable par le main process ET le pipeline forké (aucun `require('electron')`).
 
-- `SCRAPING_POLICY = { mode: 'ultra-rapide', label: 'ULTRA RAPIDE',
-  concurrency: 25, pageDelayMs: 400, enrichMinDelayMs: 400, enrichMaxDelayMs: 8000 }`.
-- `getScrapingPolicy()` renvoie une copie ; `clampConcurrency(n)` borne toute
-  concurrence demandée à `MAX_CONCURRENCY` (25) — un renderer compromis ou un
-  ancien paramètre persisté ne peut JAMAIS relever le débit.
-- `harCapturer` et `leboncoin-pipeline` consomment la politique directement.
-  Le pipeline force `opts.concurrency = clampConcurrency(policy.concurrency)`,
-  `opts.minDelayMs`/`opts.maxDelayMs` depuis la politique, et ignore tout
-  `--speed` hérité (`opts.speed = policy.mode`).
-- **UI** : plus aucun contrôle modifiable de vitesse/délai. `index.html` affiche
-  le mode en lecture seule (`.scraping-mode-readonly`). `scraperModule.js` ne
-  lit/écrit plus `scrapeSpeed`/`pageDelayMs`.
+Historique : la politique « fixe ultra-rapide » (concurrence 25, délai 400 ms)
+rendait le scraping agressif → classification robot/CloudFront fréquente. On est
+revenus à un modèle de **presets** avec un défaut PRUDENT, tout en gardant des
+bornes absolues qui ne peuvent jamais être franchies.
+
+- **Presets** (`SPEED_PRESETS`, figés) :
+  | Mode | concurrency | pageDelay min/max | enrich min/max |
+  |---|---|---|---|
+  | `moyen` (**DÉFAUT**) | 10 | 900 / 1600 ms | 600 / 3000 ms |
+  | `rapide` | 15 | 600 / 1200 ms | 400 / 2000 ms |
+  | `ultra-rapide` | 20 | 450 / 900 ms | 300 / 1500 ms |
+- **Bornes ABSOLUES** : `MAX_CONCURRENCY = 20` (jamais 25) et
+  `MIN_PAGE_DELAY_MS = 450`. `clampConcurrency(n)` borne toute concurrence
+  demandée à `MAX_CONCURRENCY` ; `getScrapingPolicy(speed)` borne le délai de
+  page à `MIN_PAGE_DELAY_MS`. Un renderer compromis ou un ancien paramètre
+  persisté ne peut JAMAIS relever le débit.
+- `normalizeSpeed(speed)` : tout mode inconnu/absent retombe sur `moyen` (repli
+  sûr) — un ancien `--speed` invalide ne relève donc pas le débit.
+- `getScrapingPolicy(speed)` renvoie la politique active (copie) ; `getSpeedPreset`
+  conserve la forme historique `{ concurrency, minDelayMs, maxDelayMs, mode }`.
+- **harCapturer** : délais min/max de page pris dans la politique du mode
+  (`minPageDelayMs`/`maxPageDelayMs`), jitter aléatoire conservé. Backoff de page
+  (`pageBackoffMs`, injectable) après un refus HTTP TRANSITOIRE (403/429 nu) :
+  `pageBaseMs = 3000` doublé à chaque tentative, plafonné à `pageMaxMs = 30000`,
+  borné à `MAX_TRANSIENT_PAGE_RETRIES = 2` reprises. Un refus DURABLE
+  (restriction/CloudFront) ou une erreur 404/5xx n'est JAMAIS réessayé.
+- **leboncoin-pipeline** : `policy = getScrapingPolicy(opts.speed)` ;
+  `opts.concurrency = clampConcurrency(policy.concurrency)` ;
+  `opts.minDelayMs`/`opts.maxDelayMs` depuis le preset ; backoff d'enrichissement
+  plafonné à `BACKOFF.enrichMaxMs` (45 s).
+- **ipcHandlers** : `normalizeSpeed(config.speed)` → `getScrapingPolicy(speed)`
+  → délais min/max passés au capturer, `speed: policy.mode` passé au pipeline.
+- **UI** : l'utilisateur choisit le mode (`#speedSelect`, « moyen » par défaut)
+  et un avertissement (`#speedWarning`) signale le risque de blocage accru en mode
+  rapide/ultra-rapide. `scraperModule.js` transmet `speed` dans la config du job
+  et le mémorise dans les presets. Le mode en lecture seule reste affiché
+  (`.scraping-mode-readonly`).
 - **Migration** : `settings.migrateSettings(raw)` retire les clés héritées
-  (`scrapeSpeed`, `pageDelayMs`) à la lecture ; `sanitizeSettingsPatch` les
-  rejette à l'écriture. Un ancien `user-settings.json` ne peut donc pas rétablir
-  une configuration contradictoire.
-- **Invariants testés** : `test/regression.test.js` section `[41]`.
-- Les anciens `SPEED_PRESETS` / `getSpeedPreset()` sont conservés uniquement pour
-  la rétro-compatibilité d'affichage : `getSpeedPreset()` renvoie toujours la
-  politique fixe, quelle que soit la valeur demandée.
+  (`scrapeSpeed`, `pageDelayMs`) ; `sanitizeSettingsPatch` les rejette. Un ancien
+  `user-settings.json` ne peut pas rétablir une configuration contradictoire.
+- **Invariants testés** : `test/regression.test.js` sections `[31]`, `[41]`, `[66]`.
 
 ## Anti-débit (rate limiting) — ne PAS réintroduire la régression
 
 `AdaptiveRateLimiter` (`src/main/utils/rateLimiter.js`) utilise `baseDelayMs`
 comme délai **MINIMAL** (`minDelayMs` par défaut = `baseDelayMs`). Il est
 instancié par `DescriptionEnricher` avec `baseDelayMs = opts.minDelayMs` (dérivé
-de la politique) et `maxDelayMs = opts.maxDelayMs`. Conséquence : **si les
+du preset : 300-600 ms) et `maxDelayMs = opts.maxDelayMs`. Conséquence : **si les
 délais de base sont trop faibles, le backoff après blocage est lui aussi
 minuscule** (ex. base 50 ms → backoff max 250 ms), ce qui ne freine rien face à
-une limitation de débit. C'est pourquoi `enrichMinDelayMs = 400` (jamais 50).
+une limitation de débit. C'est pourquoi `enrichMinDelayMs ≥ 300` (jamais 50).
 
-- Délais issus de la politique : `minDelayMs = 400`, `maxDelayMs = 8000`.
-- Le backoff saute directement à `base × 2^max(N,4)` (×16) dès le premier
-  blocage — cf. commit de diagnostic 403.
+- Délais issus du preset actif : `minDelayMs = 300-600`, `maxDelayMs = 1500-3000`.
+- Backoff après blocage : `base × 2^N`, plafonné par `blockMaxDelayMs`
+  (= `BACKOFF.enrichMaxMs`, 45 s). Le plafond par défaut, si `blockMaxDelayMs`
+  n'est pas fourni, reste `maxDelayMs` (comportement historique préservé).
+- Un ralentissement (erreur réseau / réponse lente) est lui aussi plafonné par
+  `blockMaxDelayMs` : il ne peut PAS rabaisser un délai déjà monté par un
+  backoff de blocage (on ne « redémarre » jamais plus bas après un 403/429).
 - Réduction adaptative de la concurrence (`nextConcurrencyAfterBlock`) : ÷2 après
   un 429, −25 % après un 403, jamais sous 1, jamais en hausse.
 - `Retry-After` (429) est appliqué comme **pause inter-batch**
   `max(délai adaptatif, Retry-After)` : aucune reprise avant le délai indiqué.
 - Le commit `a861165` (« restore fast parallel scraping ») avait remonté la
   concurrence à 25 et baissé les délais à 50 ms → **régression de débit** à ne
-  pas reproduire. Le délai de 400 ms est NOMINAL : il n'autorise pas à ignorer
-  une limitation explicite du site.
+  pas reproduire. Le délai de page (≥ 450 ms) est NOMINAL : il n'autorise pas à
+  ignorer une limitation explicite du site.
 
 ## Fiabilité : signaux structurés, reprise, anti-boucles
 
@@ -402,8 +426,8 @@ widget.html                  widget flottant
 app.js                       orchestration, sidebar, routage
 appState.js                  état global du renderer
 utils.js                     escapeHtml, escapePath, formatage
-scraperModule.js             onglet Scraper (URL, pages, profil, presets, options ;
-                             mode de performance fixe affiché en lecture seule)
+scraperModule.js             onglet Scraper (URL, pages, vitesse, profil, presets, options ;
+                             sélecteur de vitesse moyen/rapide/ultra-rapide, moyen par défaut)
 logsModule.js                onglet Logs (console temps réel, filtrage)
 historyModule.js            onglet Historique (jobs, ouverture, suppression)
 explorerModule.js           onglet Explorateur (table, grille, filtres, tri, fiche)
@@ -589,6 +613,11 @@ historique de prix par produit. **Aucune IA** : tout est déterministe.
   trompeuse). Un 404/5xx n'est PAS un refus anti-bot (`access_unverified=false`),
   un 403/429 l'est. Défense en profondeur : une page vide CloudFront (HTTP 200)
   remonte aussi un arrêt honnête `access_unverified`.
+- `[66]` **POLITIQUE DE DÉBIT — REPRISE BORNÉE D'UNE PAGE** (un 403/429 NU est
+  réessayé un nombre BORNÉ de fois avec un backoff croissant `pageBackoffMs` puis
+  arrête proprement en `access_unverified` ; un 403 TRANSITOIRE servi une seule
+  fois est absorbé ; une page « Accès temporairement restreint » / CloudFront n'est
+  JAMAIS réessayée ; câblage du mode de vitesse de bout en bout côté main process).
 - Le test stub `electron` : BrowserWindow a `webContents.send` mais PAS `isDestroyed`.
 - Test navigateur réel (opt-in) : `VENDRA_REAL_BROWSER_TEST=1 node test/regression.test.js`
   lance le Chromium embarqué et vérifie la valeur EFFECTIVE de `navigator.webdriver`

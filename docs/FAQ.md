@@ -119,7 +119,7 @@ Les erreurs **403** (accès refusé) et **429** (trop de requêtes) indiquent qu
 
 **Solutions** :
 1. **Patienter** : le blocage est temporaire (quelques minutes à quelques heures).
-2. **Ne pas forcer la vitesse** : la politique de performance (Ultra rapide, 25 parallèles max, délai nominal 400 ms) est **fixe et non modifiable**. Le logiciel **réduit automatiquement la concurrence** (÷2 après un 429, −25 % après un 403) et applique un backoff dès qu'il détecte une limitation.
+2. **Ne pas forcer la vitesse** : la politique de performance est **bornée** (jamais plus de 20 tâches parallèles ni moins de 450 ms entre pages) et le mode par défaut « Moyen » est le plus prudent. Le logiciel **réduit automatiquement la concurrence** (÷2 après un 429, −25 % après un 403) et applique un backoff dès qu'il détecte une limitation. En cas de blocages répétés, repassez en mode « Moyen ».
 3. **Réduire le nombre de pages** par job pour limiter les rafales de requêtes.
 4. **Après 3 blocages consécutifs** : l'enrichissement s'arrête automatiquement et sauvegarde les données collectées. Consultez l'onglet Historique.
 
@@ -129,7 +129,7 @@ Les erreurs **403** (accès refusé) et **429** (trop de requêtes) indiquent qu
 
 - Le scraping repose sur la structure actuelle de Leboncoin (`__NEXT_DATA__`, endpoints de recherche) : toute évolution du site peut nécessiter une adaptation du parsing.
 - La résolution de captcha est **manuelle** (l'app ouvre une fenêtre visible), mais la détection de résolution est **automatique**.
-- L'enrichissement des descriptions est parallèle (**jusqu'à 25 simultanées**, politique fixe) : en cas de 403/429, la concurrence est réduite automatiquement et l'enrichissement s'arrête après 3 blocages consécutifs.
+- L'enrichissement des descriptions est parallèle (**jusqu'à 20 simultanées** au maximum, selon le mode de vitesse) : en cas de 403/429, la concurrence est réduite automatiquement et l'enrichissement s'arrête après 3 blocages consécutifs.
 - Un blocage IP déjà actif peut nécessiter d'attendre (le logiciel ne contourne pas les protections anti-abus).
 - Les données sont **100% locales** : aucune analyse par IA, aucune estimation de valeur marché, aucun résumé automatique. L'application scrape, structure et exporte — c'est tout.
 

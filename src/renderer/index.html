@@ -176,6 +176,20 @@
             </div>
           </div>
 
+          <!-- MODE DE VITESSE : débit du scraping. « Moyen » (défaut) est le plus
+               sûr ; « ultra-rapide » augmente le risque de blocage (403 / CloudFront). -->
+          <div class="form-group">
+            <label for="speedSelect">Vitesse de scraping :</label>
+            <select id="speedSelect" style="width:100%;">
+              <option value="moyen" selected>🐢 Moyen (recommandé) — 10 tâches · délai 0,9-1,6 s entre les pages</option>
+              <option value="rapide">⚡ Rapide — 15 tâches · délai 0,6-1,2 s</option>
+              <option value="ultra-rapide">🚀 Ultra-rapide — 20 tâches · délai 0,45-0,9 s</option>
+            </select>
+            <small id="speedWarning" class="form-hint" style="display:none; margin-top:4px; color:var(--warning-color, #f59e0b); font-size:0.72rem;">
+              ⚠️ Le mode « ultra-rapide » augmente le risque d'être bloqué par le site (erreurs 403 / CloudFront / « Accès temporairement restreint »). Préférez « Moyen » pour un scraping longue durée.
+            </small>
+          </div>
+
           <!-- PROFIL DE DONNÉES (Défaut / Maximum / Personnalisé) + sélection des champs -->
           <div class="card subcard">
             <h3>🗂️ Données à récupérer / exporter</h3>
@@ -729,10 +743,10 @@
       <div class="form-group text-left">
         <label style="font-size:0.8rem; color:var(--text-muted); display:block; margin-bottom:5px;">Mode de performance :</label>
         <div class="scraping-mode-readonly" id="scrapingModeReadonly">
-          <strong>⚡ ULTRA RAPIDE</strong> — 25 tâches parallèles · délai nominal 400 ms entre les pages
+          <strong>🐢 MOYEN (par défaut)</strong> — 10 tâches parallèles · délai 0,9-1,6 s entre les pages
         </div>
         <small class="form-hint" style="display:block; margin-top:4px; color:var(--text-muted); font-size:0.72rem;">
-          Configuration fixe et automatique. En cas de limitation (403/429), la concurrence est réduite et un backoff progressif est appliqué automatiquement — le <code>Retry-After</code> du serveur est respecté.
+          La vitesse se choisit sur l'onglet <strong>Scraper</strong> (Moyen / Rapide / Ultra-rapide). En cas de limitation (403/429), la concurrence est réduite et un backoff progressif est appliqué automatiquement — le <code>Retry-After</code> du serveur est respecté.
         </small>
       </div>
 

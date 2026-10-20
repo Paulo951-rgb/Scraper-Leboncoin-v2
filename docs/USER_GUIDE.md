@@ -54,7 +54,7 @@ L'application vérifie automatiquement la présence du navigateur Chromium (néc
    - **Maximum** — toutes les données disponibles.
    - **Personnalisé** — sélection granulaire des champs.
 5. (Optionnel) Ajustez les **options** :
-   - **Mode de performance** : **⚡ Ultra rapide** (fixe, non modifiable) — 25 tâches parallèles max, délai nominal 400 ms entre les pages.
+   - **Vitesse de scraping** : **🐢 Moyen** (recommandé, par défaut), **⚡ Rapide** ou **🚀 Ultra-rapide**. Les modes rapides augmentent le risque de blocage (403 / CloudFront).
    - **Mode de capture** : invisible (headless) ou visible.
 6. Cliquez sur **« Lancer le scraping »**.
 
@@ -184,8 +184,21 @@ Ouvrez les **Paramètres** (icône ⚙️ dans l'en-tête) pour configurer l'app
 ### Thème
 3 thèmes disponibles (aperçu temps réel) : **Sombre**, **Clair** et **Graphite**. Le thème choisi est mémorisé entre les sessions.
 
-### Mode de performance (fixe)
-Le logiciel fonctionne **toujours** en mode **⚡ Ultra rapide** : jusqu'à **25 tâches parallèles** et un **délai nominal de 400 ms** entre deux pages de recherche successives. Cette configuration est **appliquée automatiquement et n'est pas modifiable** (elle est affichée en lecture seule dans les Paramètres).
+### Vitesse de scraping (réglable)
+
+La vitesse se choisit sur l'onglet **Scraper** :
+
+| Mode | Tâches parallèles | Délai entre pages | Risque de blocage |
+|---|---|---|---|
+| 🐢 **Moyen** (défaut) | 10 | 0,9-1,6 s | faible |
+| ⚡ **Rapide** | 15 | 0,6-1,2 s | modéré |
+| 🚀 **Ultra-rapide** | 20 | 0,45-0,9 s | plus élevé |
+
+**Recommandation** : gardez **« Moyen »** pour un scraping longue durée. Les modes
+rapides enchaînent davantage de requêtes par seconde et augmentent le risque que
+le site classe le client comme robot (403, CloudFront, « Accès temporairement
+restreint »). Des **bornes absolues** sont appliquées automatiquement : jamais
+plus de **20 tâches parallèles** ni moins de **450 ms** entre deux pages.
 
 Elle n'est pas fragile pour autant : en cas de limitation du site (403/429), le logiciel **réduit automatiquement la concurrence** (÷2 après un 429, −25 % après un 403) et applique un **backoff progressif**. Le `Retry-After` fourni par le serveur est respecté.
 

@@ -13,7 +13,7 @@ const { getRandomUserAgent } = require('./userAgents');
 const { ErrorCodes, createError } = require('./errorCodes');
 const { NetworkJournal } = require('./networkJournal');
 const { readProgress, writeProgress, mergeHarFiles } = require('./captureState');
-const { SCRAPING_POLICY } = require('../../config/scraping');
+const { SCRAPING_POLICY, BACKOFF } = require('../../config/scraping');
 const { isSafeFetchDestination } = require('../../utils/urlSecurity');
 const {
   createStealthProfile,
@@ -62,6 +62,27 @@ function sanitizeUrlForLog(rawUrl) {
     return '(URL illisible)';
   }
 }
+
+/**
+ * Backoff exponentiel entre deux tentatives de CAPTURE d'une même page après un
+ * refus HTTP transitoire (403/429 nu). Fonction PURE : premier palier
+ * « plusieurs secondes » (`BACKOFF.pageBaseMs`), doublé à chaque tentative,
+ * plafonné (`BACKOFF.pageMaxMs`). `attempt` est 1-indexé.
+ * @param {number} attempt
+ * @returns {number} délai en ms
+ */
+function pageBackoffMs(attempt) {
+  const n = Number.isFinite(attempt) && attempt >= 1 ? Math.floor(attempt) : 1;
+  const base = BACKOFF.pageBaseMs;
+  const max = Math.max(BACKOFF.pageMaxMs, base);
+  return Math.min(max, base * Math.pow(2, n - 1));
+}
+
+/**
+ * Nombre MAXIMAL de nouvelles tentatives d'une page après un refus HTTP
+ * transitoire (403/429 nu) avant d'arrêter proprement. Borné : jamais une boucle.
+ */
+const MAX_TRANSIENT_PAGE_RETRIES = 2;
 
 /**
  * Décide de l'action à mener quand une page de capture est classée « bloquée ».
@@ -116,11 +137,16 @@ class HarCapturer extends EventEmitter {
     // lors du pré-check captcha (voir _warmupSession).
     this.headless = options.headless !== undefined ? options.headless : true;
     this.proxyUrl = options.proxyUrl || null;
-    // Délai entre pages de recherche : politique fixe (400 ms nominal).
-    // Le délai est un délai NOMINAL, pas une autorisation de contourner une
-    // limitation explicite du site (cf. gestion 403/429 pendant la capture).
-    this.minPageDelayMs = options.minPageDelayMs ?? SCRAPING_POLICY.pageDelayMs;
-    this.maxPageDelayMs = options.maxPageDelayMs ?? SCRAPING_POLICY.pageDelayMs;
+    // Délai entre pages de recherche : politique active (mode « moyen » par
+    // défaut → 900-1600 ms). Le délai est un délai NOMINAL : en cas de refus
+    // explicite du site (403/429) on applique un backoff (cf. pageBackoffMs) au
+    // lieu de continuer au rythme nominal. `pageDelayMs` (borne basse) sert de
+    // repli rétro-compatible si seuls min/max sont fournis.
+    this.minPageDelayMs = options.minPageDelayMs ?? SCRAPING_POLICY.minPageDelayMs;
+    this.maxPageDelayMs = options.maxPageDelayMs ?? SCRAPING_POLICY.maxPageDelayMs;
+    // Backoff appliqué entre deux tentatives d'une même page après un refus HTTP
+    // transitoire. Injectable pour les tests ; par défaut `pageBackoffMs`.
+    this._pageBackoffMs = typeof options.pageBackoffMs === 'function' ? options.pageBackoffMs : pageBackoffMs;
     this.isCancelled = false;
     // Journal réseau structuré (compteurs objectifs pour report.json) : compte
     // les navigations, pages réussies/échouées et blocages avec leur URL.
@@ -1253,7 +1279,11 @@ class HarCapturer extends EventEmitter {
       // Erreur fatale différée : un `throw` direct dans le try par-page serait
       // avalé par son `catch (gotoErr)`. On mémorise puis on relance après la boucle.
       let fatalError = null;
+      // Compteur de reprises pour la page COURANTE (refus HTTP transitoire).
+      // Remis à zéro à chaque nouvelle page atteinte normalement.
+      let pageRetry = 0;
 
+      pageLoop:
       for (let pageNum = startPage; pageNum <= maxPages; pageNum++) {
         if (this.isCancelled) {
           this.emit('log', { level: 'debug', message: `[capture] Boucle de capture interrompue à la page ${pageNum} (annulation).` });
@@ -1325,6 +1355,27 @@ class HarCapturer extends EventEmitter {
                 : httpStatus === 404 ? 'http_404'
                 : (typeof httpStatus === 'number' && httpStatus >= 500) ? 'http_5xx'
                 : 'unknown_page';
+
+              // REFUS HTTP TRANSITOIRE (403/429 NU, sans page de restriction ni
+              // CloudFront) : un tel refus peut n'être servi qu'une fois (anti-bot
+              // transitoire). On réessaie la MÊME page un petit nombre de fois
+              // après un backoff croissant (plusieurs secondes) au lieu d'abandonner
+              // immédiatement. Un refus DURABLE (page « Accès temporairement
+              // restreint », CloudFront) ou une erreur HTTP dédiée (404/5xx) n'est
+              // JAMAIS réessayé.
+              const transientRefusal = accessBlock.kind === 'http' && (httpStatus === 403 || httpStatus === 429);
+              if (transientRefusal && pageRetry < MAX_TRANSIENT_PAGE_RETRIES) {
+                pageRetry++;
+                const backoffMs = this._pageBackoffMs(pageRetry);
+                this.emit('log', { level: 'warn', message: `⏳ [Page ${pageNum}] Refus HTTP ${httpStatus} (transitoire possible) — pause de ${Math.round(backoffMs / 1000)}s puis nouvelle tentative ${pageRetry}/${MAX_TRANSIENT_PAGE_RETRIES}.` });
+                this._logAccessDiag({ where: `capture_page_${pageNum}`, url: targetUrl, status: typeof httpStatus === 'number' ? httpStatus : null, outcome: diagOutcome, cloudfront: false, decision: 'retry', persist: false, stopReason: 'transient_retry' });
+                await sleep(backoffMs);
+                // Rejoue la MÊME page : on décrémente puis on `continue` pour que
+                // l'incrément de la boucle restaure le numéro de page (aucun saut).
+                pageNum--;
+                continue pageLoop;
+              }
+
               this.emit('log', { level: 'warn', message: `⛔ [Page ${pageNum}] [${blockCode}] ${reason} — arrêt de la capture, données déjà acquises conservées.` });
               if (isRestricted) this._markSessionRestricted('capture_restricted');
               this._logAccessDiag({ where: `capture_page_${pageNum}`, url: targetUrl, status: typeof httpStatus === 'number' ? httpStatus : null, outcome: diagOutcome, restricted: isRestricted, restrictedMarker: isRestricted ? accessBlock.marker : null, cloudfront: accessBlock.kind === 'cloudfront', decision: 'stop', persist: false, stopReason: isRestricted ? 'access_restricted' : (isRefusal ? 'access_unverified' : 'http_error') });
@@ -1453,6 +1504,9 @@ class HarCapturer extends EventEmitter {
             } catch { /* signature best-effort */ }
 
             this.journal.recordPageResult(true);
+            // Page atteinte normalement → le compteur de reprises transitoires de
+            // CETTE page est remis à zéro (la page suivante repart à 0).
+            pageRetry = 0;
             // Reprise incrémentale : mémorise la dernière page réussie. En cas de
             // blocage ultérieur, le main process peut reprendre à lastPageOk+1 sans
             // re-capturer les pages déjà valides.
@@ -1543,4 +1597,4 @@ class HarCapturer extends EventEmitter {
   }
 }
 
-module.exports = { HarCapturer, classifyCapturePageBlock, sanitizeUrlForLog };
+module.exports = { HarCapturer, classifyCapturePageBlock, pageBackoffMs, sanitizeUrlForLog };

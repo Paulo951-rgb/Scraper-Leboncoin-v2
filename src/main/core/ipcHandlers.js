@@ -9,7 +9,7 @@ const { FileManager } = require('../infrastructure/fileManager');
 const { JobHistoryManager } = require('../services/jobs/jobHistory');
 const { StorageCleaner } = require('../services/maintenance/storageCleaner');
 const { JOBS_DIR, BASE_OUT_DIR } = require('../config/constants');
-const { getScrapingPolicy } = require('../config/scraping');
+const { getScrapingPolicy, normalizeSpeed } = require('../config/scraping');
 const { summarizeAds, formatBytes, describeError } = require('../utils/diagnostics');
 const { readWithChecksum } = require('../utils/integrity');
 const { loadSettings, saveSettings } = require('./settings');
@@ -224,6 +224,10 @@ function setupIpcHandlers(getMainWindow) {
       sendLog({ level: 'error', message: '[job:start] URL de recherche absente — job refusé.' });
       return;
     }
+    // Mode de vitesse choisi par l'utilisateur (moyen / rapide / ultra-rapide).
+    // Un mode inconnu/absent retombe sur « moyen » (prudent) : un renderer
+    // compromis ne peut PAS relever le débit au-delà de la politique bornée.
+    const speed = normalizeSpeed(config.speed);
     isRunning = true;
     // Nouveau token d'annulation pour ce job (bouton « Arrêter »). Réinitialisé
     // à chaque job : un clic Arrêter n'affecte QUE le job en cours.
@@ -267,16 +271,17 @@ function setupIpcHandlers(getMainWindow) {
       sendLog({ level: 'info', message: '--- DÉMARRAGE DU SCRAPING ---' });
       const t0Total = Date.now();
 
-      // Politique de scraping FIXE (config/scraping.js) : concurrence 25 max,
-      // délai nominal 400 ms entre pages. Non modifiable par l'utilisateur.
-      const policy = getScrapingPolicy();
-      const pageDelay = policy.pageDelayMs;
+      // Politique de scraping (config/scraping.js) : concurrence et délais de page
+      // issus du mode de vitesse choisi (défaut « moyen »). Bornée à MAX_CONCURRENCY
+      // (20) et MIN_PAGE_DELAY_MS (450 ms). Le jitter min/max est transmis au
+      // capturer (délai aléatoire entre deux pages de recherche).
+      const policy = getScrapingPolicy(speed);
       activeCapturer = new HarCapturer({
         headless: userSettings.headless !== false,
-        minPageDelayMs: pageDelay,
-        maxPageDelayMs: pageDelay,
+        minPageDelayMs: policy.minPageDelayMs,
+        maxPageDelayMs: policy.maxPageDelayMs,
       });
-      sendLog({ level: 'debug', message: `[job:start] Mode=${policy.label} | concurrence=${policy.concurrency} | délai pages=${pageDelay}ms | headless=${userSettings.headless !== false}` });
+      sendLog({ level: 'debug', message: `[job:start] Mode=${policy.label} (${policy.mode}) | concurrence=${policy.concurrency} | délai pages=${policy.minPageDelayMs}-${policy.maxPageDelayMs}ms | headless=${userSettings.headless !== false}` });
 
       activeCapturer.on('log', (data) => {
         sendLog(data);

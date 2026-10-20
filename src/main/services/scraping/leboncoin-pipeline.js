@@ -30,7 +30,7 @@ const adFields = require('./adFields');
 const { ErrorCodes, createError } = require('./errorCodes');
 const { filterAdByFields, toReadableBlock } = require('../exporting/exportFields');
 const { DEFAULT_PROFILE_FIELDS } = require('../exporting/dataProfiles');
-const { PIPELINE_DEFAULTS, getScrapingPolicy, clampConcurrency, BLOCK_THRESHOLD } = require('../../config/scraping');
+const { PIPELINE_DEFAULTS, getScrapingPolicy, clampConcurrency, BLOCK_THRESHOLD, BACKOFF } = require('../../config/scraping');
 const { CircuitBreaker } = require('./circuitBreaker');
 const { NetworkJournal } = require('./networkJournal');
 const { getJobSessionPathFromResults, getGlobalSessionPath, isSessionRestricted } = require('./sessionPaths');
@@ -66,7 +66,9 @@ function parseArgs(argv) {
       case '--out':
         opts.outDir = argv[++i];
         break;
-       case '--speed':
+      case '--speed':
+        // Mode de vitesse (moyen / rapide / ultra-rapide). Un mode inconnu est
+        // normalisé vers « moyen » par getScrapingPolicy (repli sûr).
         opts.speed = argv[++i];
         break;
       case '--user-agent':
@@ -644,10 +646,14 @@ class DescriptionEnricher {
     };
     process.once('SIGINT', this._onSigint);
     // Rate limiting adaptatif : ajuste dynamiquement les délais selon les
-    // signaux du serveur (latence, 429/403, erreurs réseau).
+    // signaux du serveur (latence, 429/403, erreurs réseau). `baseDelayMs` est le
+    // délai de BASE (= enrichMinDelayMs du preset, jamais 50-200 ms) ; le backoff
+    // après blocage monte base × 2^N jusqu'à `blockBackoffMaxMs` (plafond élevé,
+    // ex. 45 s) pour réellement freiner une rafale de 403/429.
     this.rateLimiter = new AdaptiveRateLimiter({
       baseDelayMs: opts.minDelayMs || 800,
       maxDelayMs: opts.maxDelayMs || 8000,
+      blockMaxDelayMs: opts.blockBackoffMaxMs || opts.maxDelayMs || 8000,
       slowThresholdMs: 3000,
       logger,
     });
@@ -881,11 +887,12 @@ class DescriptionEnricher {
     // nouvelle requête. Appliqué comme pause inter-batch, en plus du délai
     // adaptatif : jamais de reprise avant le délai indiqué par le serveur.
     let pendingRetryAfterMs = 0;
-    // Concurrence effective : démarre au maximum autorisé (politique fixe,
-    // bornée à 25) et peut être RÉDUITE temporairement en cas de blocage. Elle
-    // n'est jamais relevée au-dessus du maximum. La boucle est pilotée par un
-    // curseur (`cursor`) plutôt que par `i += concurrency` : réduire la taille
-    // de lot en cours de route ne réindexe donc pas les annonces déjà traitées.
+    // Concurrence effective : démarre au maximum autorisé (politique du mode
+    // choisi, bornée à MAX_CONCURRENCY = 20) et peut être RÉDUITE temporairement
+    // en cas de blocage. Elle n'est jamais relevée au-dessus du maximum. La
+    // boucle est pilotée par un curseur (`cursor`) plutôt que par `i += concurrency`
+    // : réduire la taille de lot en cours de route ne réindexe donc pas les
+    // annonces déjà traitées.
     const maxConcurrency = this.opts.concurrency || 10;
     let effectiveConcurrency = maxConcurrency;
     let cursor = 0;
@@ -1217,14 +1224,18 @@ async function main() {
     throw err;
   }
 
-  // Politique de scraping FIXE (config/scraping.js) : concurrence 25 maximum,
-  // délai nominal 400 ms. La vitesse n'est plus configurable par l'utilisateur ;
-  // un ancien argument `--speed` est ignoré. On borne malgré tout la concurrence
-  // par sécurité (un appelant ne peut jamais dépasser MAX_CONCURRENCY).
-  const policy = getScrapingPolicy();
+  // Politique de scraping (config/scraping.js) : source unique de vérité, choisie
+  // par le mode de vitesse transmis par le main process (`--speed`). Par défaut,
+  // mode « moyen » (prudent). Un mode inconnu retombe sur « moyen ». La
+  // concurrence est bornée à MAX_CONCURRENCY (20) et le délai d'enrichissement
+  // est au moins égal à `enrichMinDelayMs` du preset (jamais 50-200 ms).
+  const policy = getScrapingPolicy(opts.speed);
   opts.concurrency = clampConcurrency(policy.concurrency);
   opts.minDelayMs = policy.enrichMinDelayMs;
   opts.maxDelayMs = policy.enrichMaxDelayMs;
+  // Plafond du backoff d'enrichissement après blocage : bien plus haut que le
+  // délai nominal, pour ralentir réellement une rafale de 403/429.
+  opts.blockBackoffMaxMs = opts.blockBackoffMaxMs || BACKOFF.enrichMaxMs;
   opts.speed = policy.mode;
   opts.sequential = false;
 
@@ -1265,7 +1276,7 @@ async function main() {
     }
   }
 
-  logger.info(`=== Pipeline Leboncoin (Mode: ${policy.label} — concurrence=${opts.concurrency}, délai nominal=${policy.pageDelayMs}ms) ===`);
+  logger.info(`=== Pipeline Leboncoin (Mode: ${policy.label} — concurrence=${opts.concurrency}, délai pages=${policy.minPageDelayMs}-${policy.maxPageDelayMs}ms) ===`);
   logger.debug(`[main] Options : harPath=${opts.harPath} | outDir=${opts.outDir} | headless=${opts.headless}  noDesc=${opts.noDesc} | limit=${opts.limit ?? '(aucun)'} | fresh=${opts.fresh} | mode=${policy.mode} | concurrency=${opts.concurrency} | minDelay=${opts.minDelayMs} | maxDelay=${opts.maxDelayMs} | profileId=${opts.profileId || 'default'} | profileFields=${opts.profileFields ? `[${opts.profileFields.join(', ')}]` : '(selon profil)'} | includeSellerData=${opts.includeSellerData}`);
 
   const writeOutputs = writeOutputsFactory(opts.outDir, opts);

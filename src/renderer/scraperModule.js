@@ -28,6 +28,32 @@ window.addEventListener('offline', () => setOfflineMode(true));
 setInterval(refreshConnectivity, 60000); // refresh périodique
 refreshConnectivity(); // vérification initiale
 
+// Modes de vitesse de scraping (doivent rester alignés sur SPEED_PRESETS côté
+// main — config/scraping.js). Sert de garde côté renderer : une valeur inconnue
+// (ancien preset) retombe sur « moyen », le plus sûr.
+const SPEED_MODES = ['moyen', 'rapide', 'ultra-rapide'];
+
+// Affiche un avertissement quand un mode rapide est sélectionné (risque de
+// blocage accru) et reflète le mode choisi dans la modale des paramètres.
+const speedSelect = document.getElementById('speedSelect');
+const speedWarningEl = document.getElementById('speedWarning');
+const SPEED_SUMMARY = {
+  moyen: '🐢 MOYEN (recommandé) — 10 tâches · délai 0,9-1,6 s entre les pages',
+  rapide: '⚡ RAPIDE — 15 tâches · délai 0,6-1,2 s',
+  'ultra-rapide': '🚀 ULTRA-RAPIDE — 20 tâches · délai 0,45-0,9 s',
+};
+function updateSpeedWarning() {
+  if (!speedSelect) return;
+  const mode = SPEED_MODES.includes(speedSelect.value) ? speedSelect.value : 'moyen';
+  if (speedWarningEl) speedWarningEl.style.display = mode === 'moyen' ? 'none' : 'block';
+  const readonlyEl = document.getElementById('scrapingModeReadonly');
+  if (readonlyEl) readonlyEl.innerHTML = `<strong>${SPEED_SUMMARY[mode]}</strong>`;
+}
+if (speedSelect) {
+  speedSelect.addEventListener('change', updateSpeedWarning);
+  updateSpeedWarning();
+}
+
 // 🩺 Vérification du binaire Chromium (Playwright) au démarrage. Sans ce
 // binaire, le scraping échoue immédiatement avec « Executable doesn't exist ».
 // On affiche un bandeau rouge tant qu'il manque, avec la commande à lancer.
@@ -234,13 +260,14 @@ function renderPresets() {
     .join('');
 }
 
-// Capture l'intégralité de la configuration de recherche (URL + pages + limite)
-// afin qu'un preset soit réellement une restauration « 1-clic » de la recherche.
+// Capture l'intégralité de la configuration de recherche (URL + pages + limite
+// + vitesse) afin qu'un preset soit réellement une restauration « 1-clic ».
 function collectSearchConfig() {
   return {
     searchUrl: document.getElementById('searchUrl').value.trim(),
     pages: document.getElementById('pages').value,
     limit: document.getElementById('limit').value,
+    speed: speedSelect ? speedSelect.value : 'moyen',
   };
 }
 
@@ -251,6 +278,11 @@ function applySearchConfig(cfg) {
   if (cfg.searchUrl) document.getElementById('searchUrl').value = cfg.searchUrl;
   if (cfg.pages != null) document.getElementById('pages').value = cfg.pages;
   if (cfg.limit != null) document.getElementById('limit').value = cfg.limit;
+  // Un ancien preset sans vitesse retombe sur « moyen » (le plus sûr).
+  if (speedSelect) {
+    speedSelect.value = SPEED_MODES.includes(cfg.speed) ? cfg.speed : 'moyen';
+    updateSpeedWarning();
+  }
 }
 
 // Enregistrement d'un preset : `window.prompt()` n'est PAS supporté par Electron
@@ -483,6 +515,9 @@ startBtn.addEventListener('click', () => {
     searchUrl,
     pages: document.getElementById('pages').value,
     limit: document.getElementById('limit').value,
+    // Vitesse de scraping (moyen / rapide / ultra-rapide). Le main process la
+    // normalise et la borne (jamais au-delà de la politique sûre).
+    speed: speedSelect ? speedSelect.value : 'moyen',
     // Profil de données (Défaut / Maximum / Personnalisé) + champs sélectionnés.
     // Le main process applique ce profil à TOUS les exports : JSON, TXT.
     profileId: getSelectedProfile(),

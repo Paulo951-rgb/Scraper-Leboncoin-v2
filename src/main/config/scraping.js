@@ -1,52 +1,149 @@
 'use strict';
 
 /**
- * Constantes partagées du scraping.
+ * Constantes partagées du scraping — SOURCE UNIQUE DE VÉRITÉ de la politique de
+ * débit.
  *
  * Ce module ne requiert PAS `electron` : il est importable aussi bien par le
  * main process que par le pipeline forké (sous-processus sans accès à `app`).
  * Il centralise les seuils/délais/presets auparavant dispersés entre
  * `leboncoin-pipeline.js`, `ipcHandlers.js` et `harCapturer.js`, afin d'éviter
  * les désynchronisations (une valeur modifiée d'un côté seulement).
+ *
+ * ───────────────────────────────────────────────────────────────────────────
+ * POURQUOI CES VALEURS (robustesse > débit maximal)
+ * ───────────────────────────────────────────────────────────────────────────
+ * Un réglage « ultra-rapide par défaut » (concurrence 25, délai de page 400 ms)
+ * déclenche très vite la classification robot de Leboncoin / CloudFront (403,
+ * page « Accès temporairement restreint »). On rétablit un mode « moyen »
+ * PAR DÉFAUT, prudent, tout en laissant l'utilisateur choisir un mode plus rapide
+ * (au prix d'un risque de blocage plus élevé, clairement signalé dans l'UI).
+ *
+ * Bornes ABSOLUES (jamais franchies, même par un preset ou un renderer compromis) :
+ *   - concurrence ≤ MAX_CONCURRENCY (20) ;
+ *   - délai nominal entre pages ≥ MIN_PAGE_DELAY_MS (450 ms).
+ * ───────────────────────────────────────────────────────────────────────────
  */
 
-// ─────────────────────────────────────────────────────────────────────────────
-// POLITIQUE DE SCRAPING FIXE (source unique de vérité)
-// ─────────────────────────────────────────────────────────────────────────────
+// Presets de vitesse. Chaque preset fixe la concurrence, les délais de page de
+// recherche (min/max, jitter) et les délais d'enrichissement des descriptions.
 //
-// La configuration de scraping n'est PLUS modifiable par l'utilisateur : elle
-// est appliquée automatiquement au démarrage par TOUTES les couches (main
-// process, pipeline forké, capture HAR). Ces valeurs sont des invariants
-// garantis par des tests (test/regression.test.js).
-//
-//   concurrency : nombre MAXIMAL de tâches parallèles (jamais dépassé).
-//   pageDelayMs : délai NOMINAL entre deux pages de recherche successives.
-//
-// Le délai de 400 ms est un délai nominal : il n'autorise JAMAIS à contourner
-// une limitation explicite du site (403/429). En cas de blocage, la concurrence
-// effective est réduite et un backoff progressif est appliqué (cf. rateLimiter).
-const MAX_CONCURRENCY = 25;
+//   concurrency        : nombre MAXIMAL de tâches parallèles (jamais dépassé).
+//   minPageDelayMs     : délai MINIMAL entre deux pages de recherche.
+//   maxPageDelayMs     : délai MAXIMAL entre deux pages de recherche (jitter).
+//   enrichMinDelayMs   : délai de BASE de l'enrichissement (sert aussi de
+//                        PLANCHER de backoff : un baseDelay trop faible rendrait
+//                        le backoff après blocage minuscule, donc inefficace).
+//   enrichMaxDelayMs   : délai maximal du limiteur adaptatif (hors blocage).
+const SPEED_PRESETS = Object.freeze({
+  moyen: Object.freeze({
+    label: 'MOYEN',
+    concurrency: 10,
+    minPageDelayMs: 900,
+    maxPageDelayMs: 1600,
+    enrichMinDelayMs: 600,
+    enrichMaxDelayMs: 3000,
+  }),
+  rapide: Object.freeze({
+    label: 'RAPIDE',
+    concurrency: 15,
+    minPageDelayMs: 600,
+    maxPageDelayMs: 1200,
+    enrichMinDelayMs: 400,
+    enrichMaxDelayMs: 2000,
+  }),
+  'ultra-rapide': Object.freeze({
+    label: 'ULTRA RAPIDE',
+    concurrency: 20,
+    minPageDelayMs: 450,
+    maxPageDelayMs: 900,
+    enrichMinDelayMs: 300,
+    enrichMaxDelayMs: 1500,
+  }),
+});
 
-const SCRAPING_POLICY = Object.freeze({
-  mode: 'ultra-rapide',
-  label: 'ULTRA RAPIDE',
-  concurrency: MAX_CONCURRENCY,   // 25 tâches parallèles maximum
-  pageDelayMs: 400,               // délai nominal entre pages de recherche
-  // Délai de base de l'enrichissement des descriptions. Identique au délai
-  // nominal : un baseDelay trop faible rendrait le backoff après blocage
-  // minuscule (base × 2^N), donc inefficace face à une limitation de débit.
-  enrichMinDelayMs: 400,
-  enrichMaxDelayMs: 8000,
+// Mode par défaut : « moyen » (prudent). L'utilisateur peut choisir plus rapide,
+// jamais plus agressif que « ultra-rapide ».
+const DEFAULT_SPEED = 'moyen';
+const SPEED_MODES = Object.freeze(Object.keys(SPEED_PRESETS));
+
+// Bornes ABSOLUES de sécurité (invariants garantis par les tests).
+const MAX_CONCURRENCY = 20;      // jamais 25 : trop de parallélisme = blocage
+const MIN_PAGE_DELAY_MS = 450;   // jamais sous 450 ms, même en ultra-rapide
+
+// Politique de backoff (ralentissement après un refus d'accès).
+const BACKOFF = Object.freeze({
+  // Plafond du backoff de l'ENRICHISSEMENT après blocage (403/429) : le limiteur
+  // monte base × 2^N jusqu'à ce plafond — assez haut pour freiner réellement une
+  // rafale de blocages, sans pause démesurée.
+  enrichMaxMs: 45000,
+  // Backoff de PAGE en capture après un refus HTTP transitoire (403/429 nu) :
+  // premier palier « plusieurs secondes », puis doublement exponentiel.
+  pageBaseMs: 3000,
+  pageMaxMs: 30000,
 });
 
 /**
- * Renvoie la politique de scraping active, validée et bornée.
- * La concurrence ne peut JAMAIS dépasser MAX_CONCURRENCY.
- * @returns {{mode:string,label:string,concurrency:number,pageDelayMs:number,enrichMinDelayMs:number,enrichMaxDelayMs:number}}
+ * Normalise un mode de vitesse demandé vers un mode connu (repli sur le défaut).
+ * Un mode inconnu (ancien réglage, valeur corrompue) ne peut donc PAS relever le
+ * débit : il retombe sur « moyen ».
+ * @param {*} speed
+ * @returns {string}
  */
-function getScrapingPolicy() {
-  return { ...SCRAPING_POLICY };
+function normalizeSpeed(speed) {
+  return SPEED_MODES.includes(speed) ? speed : DEFAULT_SPEED;
 }
+
+/**
+ * Renvoie une copie du preset de vitesse (bornes appliquées), pour un mode donné.
+ * Conserve la forme historique { concurrency, minDelayMs, maxDelayMs, mode } en
+ * plus des champs de page/enrichissement explicites.
+ * @param {string} [speed]
+ * @returns {{concurrency:number,minDelayMs:number,maxDelayMs:number,minPageDelayMs:number,maxPageDelayMs:number,label:string,mode:string}}
+ */
+function getSpeedPreset(speed) {
+  const mode = normalizeSpeed(speed);
+  const p = SPEED_PRESETS[mode];
+  return {
+    concurrency: Math.min(p.concurrency, MAX_CONCURRENCY),
+    // Alias historiques : minDelayMs/maxDelayMs désignaient l'enrichissement.
+    minDelayMs: p.enrichMinDelayMs,
+    maxDelayMs: p.enrichMaxDelayMs,
+    minPageDelayMs: Math.max(p.minPageDelayMs, MIN_PAGE_DELAY_MS),
+    maxPageDelayMs: Math.max(p.maxPageDelayMs, MIN_PAGE_DELAY_MS),
+    label: p.label,
+    mode,
+  };
+}
+
+/**
+ * Politique de scraping ACTIVE, validée et bornée, pour un mode de vitesse.
+ * La concurrence ne dépasse JAMAIS MAX_CONCURRENCY et le délai de page jamais
+ * MIN_PAGE_DELAY_MS, quel que soit le mode demandé.
+ * @param {string} [speed] mode demandé (défaut : moyen)
+ * @returns {{mode:string,label:string,concurrency:number,pageDelayMs:number,minPageDelayMs:number,maxPageDelayMs:number,enrichMinDelayMs:number,enrichMaxDelayMs:number}}
+ */
+function getScrapingPolicy(speed) {
+  const mode = normalizeSpeed(speed);
+  const p = SPEED_PRESETS[mode];
+  const minPageDelayMs = Math.max(p.minPageDelayMs, MIN_PAGE_DELAY_MS);
+  const maxPageDelayMs = Math.max(p.maxPageDelayMs, minPageDelayMs);
+  return {
+    mode,
+    label: p.label,
+    concurrency: Math.min(p.concurrency, MAX_CONCURRENCY),
+    // Délai nominal (compatibilité) = borne basse de la plage de jitter.
+    pageDelayMs: minPageDelayMs,
+    minPageDelayMs,
+    maxPageDelayMs,
+    enrichMinDelayMs: p.enrichMinDelayMs,
+    enrichMaxDelayMs: p.enrichMaxDelayMs,
+  };
+}
+
+// Politique par DÉFAUT (mode « moyen »), figée : sert de repli sûr partout où un
+// appelant ne précise pas de mode (harCapturer par défaut, pipeline sans --speed).
+const SCRAPING_POLICY = Object.freeze(getScrapingPolicy(DEFAULT_SPEED));
 
 /**
  * Borne une concurrence demandée par un appelant (IPC, ancien script, preset)
@@ -61,37 +158,13 @@ function clampConcurrency(requested) {
   return Math.min(n, MAX_CONCURRENCY);
 }
 
-// Presets historiques : conservés uniquement pour l'affichage / la
-// rétro-compatibilité des anciens fichiers de configuration. Ils ne pilotent
-// PLUS le scraping (cf. getScrapingPolicy). `getSpeedPreset()` renvoie
-// désormais la politique fixe, quelle que soit la valeur demandée.
-const SPEED_PRESETS = {
-  moyen:          { concurrency: 10, minDelayMs: 500, maxDelayMs: 1000, mode: 'parallèle' },
-  rapide:         { concurrency: 15, minDelayMs: 200, maxDelayMs: 600,  mode: 'parallèle' },
-  'ultra-rapide': { concurrency: 25, minDelayMs: 400, maxDelayMs: 8000, mode: 'parallèle' },
-};
-const DEFAULT_SPEED = SCRAPING_POLICY.mode;
-
-/**
- * @deprecated La vitesse n'est plus configurable. Renvoie toujours la politique
- * fixe, en conservant la forme { concurrency, minDelayMs, maxDelayMs, mode }
- * attendue par le pipeline.
- */
-function getSpeedPreset() {
-  return {
-    concurrency: SCRAPING_POLICY.concurrency,
-    minDelayMs: SCRAPING_POLICY.enrichMinDelayMs,
-    maxDelayMs: SCRAPING_POLICY.enrichMaxDelayMs,
-    mode: 'parallèle',
-  };
-}
-
 // Valeurs par défaut du pipeline. La concurrence et les délais effectifs
-// proviennent de la politique fixe (SCRAPING_POLICY) ; ces valeurs ne servent
+// proviennent de la politique active (getScrapingPolicy) ; ces valeurs ne servent
 // que de repli si le pipeline est utilisé en bibliothèque sans configuration.
 const PIPELINE_DEFAULTS = {
   minDelayMs: SCRAPING_POLICY.enrichMinDelayMs,
   maxDelayMs: SCRAPING_POLICY.enrichMaxDelayMs,
+  blockBackoffMaxMs: BACKOFF.enrichMaxMs,
   headless: false,
   outDir: '.',
   concurrency: SCRAPING_POLICY.concurrency,
@@ -119,13 +192,17 @@ const CIRCUIT_STATES = Object.freeze({
 });
 
 module.exports = {
-  SCRAPING_POLICY,
-  MAX_CONCURRENCY,
-  getScrapingPolicy,
-  clampConcurrency,
   SPEED_PRESETS,
+  SPEED_MODES,
   DEFAULT_SPEED,
+  MAX_CONCURRENCY,
+  MIN_PAGE_DELAY_MS,
+  BACKOFF,
+  SCRAPING_POLICY,
+  normalizeSpeed,
+  getScrapingPolicy,
   getSpeedPreset,
+  clampConcurrency,
   PIPELINE_DEFAULTS,
   MAX_PAGES,
   BLOCK_THRESHOLD,
